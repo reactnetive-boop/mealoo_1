@@ -17,6 +17,8 @@ from app.services.auth_service import (
     AuthService
 )
 
+from app.schemas.auth_schema import LoginRequest
+
 router = APIRouter()
 
 
@@ -61,3 +63,24 @@ def verify_otp(
             status_code=400,
             detail=str(e)
         )
+
+@router.post("/login")
+def login(
+    request: LoginRequest,
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        return AuthService.login(
+            db,
+            request.mobile_number,
+            request.password
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )    

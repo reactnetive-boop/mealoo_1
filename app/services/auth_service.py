@@ -17,6 +17,9 @@ from app.repositories.provider_repository import (
     ProviderRepository
 )
 
+from app.core.security import verify_password
+from app.core.security import create_access_token
+
 class AuthService:
 
     @staticmethod
@@ -148,5 +151,55 @@ class AuthService:
 
             "is_profile_completed": (
                 provider.is_profile_completed
+            )
+        }
+    
+    @staticmethod
+    def login(
+        db: Session,
+        mobile_number: str,
+        password: str
+    ):
+
+        provider = (
+            ProviderRepository.get_by_mobile(
+                db,
+                mobile_number
+            )
+        )
+
+        if not provider:
+
+            raise Exception(
+                "Provider not found"
+            )
+
+        is_password_valid = verify_password(
+            password,
+            provider.hashed_password
+        )
+
+        if not is_password_valid:
+
+            raise Exception(
+                "Invalid password"
+            )
+
+        access_token = create_access_token(
+            {
+                "provider_id": str(
+                    provider.provider_id
+                ),
+                "mobile_number": provider.mobile_number
+            }
+        )
+
+        return {
+            "success": True,
+            "message": "Login successful",
+            "access_token": access_token,
+            "token_type": "bearer",
+            "provider_id": str(
+                provider.provider_id
             )
         }
