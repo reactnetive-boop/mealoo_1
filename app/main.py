@@ -5,6 +5,7 @@
 from fastapi import FastAPI
 
 from app.core.config import APP_NAME
+from app.api.v1.api import api_router
 
 app = FastAPI(
     title=APP_NAME
@@ -18,3 +19,8 @@ def health_check():
         "success": True,
         "message": f"{APP_NAME} Running Successfully"
     }
+
+app.include_router(
+    api_router,
+    prefix="/api/v1"
+)

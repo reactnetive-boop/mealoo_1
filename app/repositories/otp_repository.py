@@ -1,0 +1,39 @@
+from sqlalchemy.orm import Session
+
+from app.models.otp_log_model import OTPLog
+
+
+class OTPRepository:
+
+    @staticmethod
+    def create_otp(
+        db: Session,
+        otp_data: dict
+    ):
+
+        otp = OTPLog(**otp_data)
+
+        db.add(otp)
+
+        db.commit()
+
+        db.refresh(otp)
+
+        return otp
+    
+    @staticmethod
+    def get_latest_otp(
+        db: Session,
+        mobile_number: str
+    ):
+
+        return (
+            db.query(OTPLog)
+            .filter(
+                OTPLog.mobile_number == mobile_number
+            )
+            .order_by(
+                OTPLog.created_at.desc()
+            )
+            .first()
+        )
