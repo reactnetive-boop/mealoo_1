@@ -118,7 +118,7 @@ class Provider(Base):
         nullable=True
     )
     house_no = Column(
-        Integer,
+        String(64),
         nullable=True
     )
     landmark = Column(
