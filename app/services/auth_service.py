@@ -120,7 +120,17 @@ class AuthService:
                 mobile_number
             )
         )
-        if not provider:
+
+        if provider:
+
+            provider.hashed_password = (
+                otp_record.hashed_password
+            )
+
+            db.commit()
+            db.refresh(provider)
+
+        else:
 
             provider_data = {
 
