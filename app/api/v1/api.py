@@ -13,5 +13,5 @@ api_router.include_router(
 api_router.include_router(
     provider.router,
     prefix="/provider",
-    tags=["Authentication"]
+    tags=["Provider"]
 )

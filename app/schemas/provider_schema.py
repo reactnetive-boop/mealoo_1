@@ -57,3 +57,13 @@ class ProviderProfileResponse(
     state: Optional[str]
 
     is_profile_completed: bool
+
+class UpdateProfileImageResponse(
+    BaseModel
+):
+
+    success: bool
+
+    message: str
+
+    profile_image: str

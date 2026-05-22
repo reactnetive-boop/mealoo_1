@@ -18,6 +18,8 @@ from app.services.auth_service import (
 )
 
 from app.schemas.auth_schema import LoginRequest
+from app.schemas.auth_schema import LogoutResponse
+
 
 router = APIRouter()
 
@@ -83,4 +85,14 @@ def login(
         raise HTTPException(
             status_code=400,
             detail=str(e)
-        )    
+        )
+
+@router.post(
+    "/logout",
+    response_model=LogoutResponse
+)
+async def logout_provider():
+
+    response = await AuthService.logout_provider()
+
+    return response        

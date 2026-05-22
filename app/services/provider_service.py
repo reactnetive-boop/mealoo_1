@@ -4,6 +4,14 @@ from app.repositories.provider_repository import (
     ProviderRepository
 )
 
+from fastapi import UploadFile
+
+from sqlalchemy.orm import Session
+
+from app.utils.file_helper import (
+    save_profile_image
+)
+
 
 class ProviderService:
 
@@ -82,3 +90,62 @@ class ProviderService:
             )
 
         return provider
+    
+    @staticmethod
+    def update_profile_image(
+        db: Session,
+        provider_id: str,
+        file: UploadFile
+    ):
+
+        provider = (
+            ProviderRepository.get_by_provider_id(
+                db,
+                provider_id
+            )
+        )
+
+        if not provider:
+
+            raise Exception(
+                "Provider not found"
+            )
+
+        allowed_extensions = [
+            "jpg",
+            "jpeg",
+            "png",
+            "webp"
+        ]
+
+        file_extension = (
+            file.filename.split(".")[-1].lower()
+        )
+
+        if file_extension not in allowed_extensions:
+
+            raise Exception(
+                "Invalid image format"
+            )
+
+        image_path = (
+            save_profile_image(file)
+        )
+
+        updated_provider = (
+            ProviderRepository.update_profile_image(
+                db,
+                provider,
+                image_path
+            )
+        )
+
+        return {
+            "success": True,
+            "message": (
+                "Profile image updated successfully"
+            ),
+            "profile_image": (
+                updated_provider.profile_image
+            )
+        }

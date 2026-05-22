@@ -43,3 +43,7 @@ class LoginRequest(BaseModel):
         min_length=8,
         max_length=16
     )
+
+class LogoutResponse(BaseModel):
+    success: bool
+    message: str    

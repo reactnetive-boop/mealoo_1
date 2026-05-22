@@ -71,3 +71,18 @@ class ProviderRepository:
         db.refresh(provider)
 
         return provider
+
+    @staticmethod
+    def update_profile_image(
+        db: Session,
+        provider,
+        profile_image: str
+    ):
+
+        provider.profile_image = profile_image
+
+        db.commit()
+
+        db.refresh(provider)
+
+        return provider    

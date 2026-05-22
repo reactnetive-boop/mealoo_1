@@ -213,3 +213,11 @@ class AuthService:
                 provider.provider_id
             )
         }
+
+    @staticmethod
+    async def logout_provider():
+
+        return {
+            "success": True,
+            "message": "Logged out successfully"
+        }
