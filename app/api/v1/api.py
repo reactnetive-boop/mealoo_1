@@ -1,6 +1,7 @@
 from app.api.v1.endpoints import auth
 from fastapi import APIRouter
 from app.api.v1.endpoints import provider
+from app.api.v1.endpoints import menu
 
 api_router = APIRouter()
 
@@ -14,4 +15,9 @@ api_router.include_router(
     provider.router,
     prefix="/provider",
     tags=["Provider"]
+)
+api_router.include_router(
+    menu.router,
+    prefix="/menu",
+    tags=["Menu"]
 )
