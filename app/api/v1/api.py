@@ -2,7 +2,7 @@ from app.api.v1.endpoints import auth
 from fastapi import APIRouter
 from app.api.v1.endpoints import provider
 from app.api.v1.endpoints import menu
-
+from app.api.v1.endpoints.location_endpoint import router as location_router
 api_router = APIRouter()
 
 api_router.include_router(
@@ -20,4 +20,9 @@ api_router.include_router(
     menu.router,
     prefix="/menu",
     tags=["Menu"]
+)
+api_router.include_router(
+    location_router,
+    prefix="/location",
+    tags=["Location"]
 )

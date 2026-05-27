@@ -85,4 +85,24 @@ class ProviderRepository:
 
         db.refresh(provider)
 
-        return provider    
+        return provider
+        
+    @staticmethod
+    def update_provider_address(
+        db,
+        provider,
+        request
+    ):
+
+        provider.house_no = request.house_no
+        provider.address = request.address
+        provider.landmark = request.landmark
+        provider.city = request.city
+        provider.state = request.state
+        provider.pincode = request.pincode
+        provider.is_profile_completed = True
+
+        db.commit()
+        db.refresh(provider)
+
+        return provider

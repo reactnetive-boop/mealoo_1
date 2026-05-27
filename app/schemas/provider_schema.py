@@ -67,3 +67,13 @@ class UpdateProfileImageResponse(
     message: str
 
     profile_image: str
+
+class ProviderAddressUpdateRequest(BaseModel):
+
+    provider_id: str
+    house_no: str
+    address: str
+    landmark: Optional[str] = None
+    city: str
+    state: str
+    pincode: int    

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.utils.file_helper import (
     save_profile_image
 )
-
+from app.services.pincode_service import PincodeService
 
 class ProviderService:
 
@@ -148,4 +148,40 @@ class ProviderService:
             "profile_image": (
                 updated_provider.profile_image
             )
+        }
+        
+    @staticmethod
+    def update_address(
+        db,
+        request
+    ):
+
+        provider = ProviderRepository.get_by_provider_id(
+            db=db,
+            provider_id=request.provider_id
+        )
+
+        if not provider:
+            return {
+                "success": False,
+                "message": "Provider not found"
+            }
+
+        pincode_check = PincodeService.verify_pincode(
+            db=db,
+            pincode=request.pincode
+        )
+
+        if not pincode_check["serviceable"]:
+            return pincode_check
+
+        ProviderRepository.update_provider_address(
+            db=db,
+            provider=provider,
+            request=request
+        )
+
+        return {
+            "success": True,
+            "message": "Address updated successfully"
         }

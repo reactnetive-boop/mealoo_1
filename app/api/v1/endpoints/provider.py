@@ -18,7 +18,8 @@ from app.dependencies.auth_dependency import (
 from app.schemas.provider_schema import (
     CompleteProfileRequest,
     ProviderProfileResponse,
-    UpdateProfileImageResponse
+    UpdateProfileImageResponse,
+    ProviderAddressUpdateRequest
 )
 
 from app.services.provider_service import (
@@ -87,3 +88,14 @@ async def update_profile_image(
     )
 
     return response
+
+@router.put("/address")
+async def update_provider_address(
+    request: ProviderAddressUpdateRequest,
+    db: Session = Depends(get_db)
+):
+
+    return ProviderService.update_address(
+        db=db,
+        request=request
+    )
