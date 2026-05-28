@@ -1,90 +1,55 @@
-# Mealoo Backend Documentation
+Mealoo Backend Documentation
+Project Overview
 
----
+Mealoo is a hyperlocal digital meal/tiffin platform backend system designed for:
 
-# Project Overview
+Homemade meal delivery
+Daily tiffin services
+Subscription meal systems
+Hyperlocal kitchen operations
+Digital meal package management
 
-Mealoo is a hyperlocal digital meal/tiffin platform backend system.
+The platform architecture is designed to support:
 
-The current backend implementation focuses on provider onboarding and authentication using mobile OTP verification.
-
-Current completed modules:
-- Provider Registration
-- OTP Generation
-- OTP Verification
-- Forgot Password using OTP verification
-
----
-
-# Tech Stack
-
-| Technology | Purpose |
-|---|---|
-| FastAPI | Backend framework |
-| PostgreSQL | Database |
-| SQLAlchemy | ORM |
-| Pydantic | Request/Response validation |
-| Passlib/Bcrypt | Password hashing |
-| JWT | Planned authentication |
-
----
-
-# Current Authentication Flow
-
-## Provider Registration Flow
-
+Providers/Kitchens
+Customers
+Delivery partners
+Subscription systems
+Hyperlocal delivery management
+Current Completed Modules
+Authentication & Onboarding
 Provider Registration
-    ↓
 OTP Generation
-    ↓
 OTP Verification
-    ↓
+Forgot Password Flow
+Provider Management
 Provider Creation
-
----
-
-## Forgot Password Flow
-
-Forgot Password Request
-    ↓
-OTP Generation
-    ↓
-OTP Verification
-    ↓
-Existing Provider Password Updated
-
----
-
-# Folder Structure
-
-```text
-app/
-│
-├── api/
-│   └── v1/
-│       └── endpoints/
-│
-├── core/
-│
-├── middleware/
-│
-├── models/
-│
-├── repositories/
-│
-├── schemas/
-│
-├── services/
-│
-├── utils/
-│
-└── main.py
+Provider Address Update
+Profile Completion Flow
+Pincode Verification
+Package Management
+Create Package API
+Current Pending APIs
+Package Module
+Get Package API
+Update Package API
+Delete Package API
+List Packages API
+Tech Stack
+Technology	Purpose
+FastAPI	Backend framework
+PostgreSQL	Database
+SQLAlchemy	ORM
+Pydantic	Request validation
+Passlib/Bcrypt	Password hashing
+JWT	Planned authentication
+Uvicorn	ASGI server
 Architecture
 
-The backend follows Repository-Service layered architecture.
+Mealoo backend follows:
 
-Request Flow:
-
+Repository-Service Layered Architecture
+Request Flow
 API Endpoint
     ↓
 Service Layer
@@ -94,112 +59,201 @@ Repository Layer
 SQLAlchemy Models
     ↓
 PostgreSQL Database
+Folder Structure
+app/
+│
+├── api/
+│   └── v1/
+│       └── endpoints/
+│           ├── auth_endpoint.py
+│           ├── provider_endpoint.py
+│           ├── location_endpoint.py
+│           └── package_endpoint.py
+│
+├── core/
+│
+├── middleware/
+│
+├── models/
+│   ├── provider_model.py
+│   ├── otp_log_model.py
+│   ├── serviceable_pincode_model.py
+│   └── package_model.py
+│
+├── repositories/
+│   ├── otp_repository.py
+│   ├── provider_repository.py
+│   ├── pincode_repository.py
+│   └── package_repository.py
+│
+├── schemas/
+│   ├── auth_schema.py
+│   ├── provider_schema.py
+│   ├── location_schema.py
+│   └── package_schema.py
+│
+├── services/
+│   ├── auth_service.py
+│   ├── otp_service.py
+│   ├── provider_service.py
+│   ├── pincode_service.py
+│   └── package_service.py
+│
+├── utils/
+│
+└── main.py
 Layer Responsibilities
 API Layer
-
-Location:
-
+Location
 app/api/v1/endpoints/
-
-Responsibilities:
-
+Responsibilities
 Handle HTTP requests
-Handle responses
-Request validation
+Validate request payloads
 Route management
+Response formatting
+Authentication dependencies
 Service Layer
-
-Location:
-
+Location
 app/services/
-
-Responsibilities:
-
+Responsibilities
 Business logic
-Authentication flow
-OTP validation
-Password update logic
-Provider creation flow
+OTP verification
+Provider onboarding
+Address management
+Pincode validation
+Package management logic
 Repository Layer
-
-Location:
-
+Location
 app/repositories/
-
-Responsibilities:
-
+Responsibilities
 Database queries
 CRUD operations
-Table-specific operations
+Data access abstraction
+Transaction handling
 Models Layer
-
-Location:
-
+Location
 app/models/
-
-Responsibilities:
-
-SQLAlchemy ORM models
+Responsibilities
 Database table mapping
+SQLAlchemy ORM models
+Entity relationships
 Schemas Layer
-
-Location:
-
+Location
 app/schemas/
-
-Responsibilities:
-
-Pydantic validation
-Request schemas
+Responsibilities
+Request validation
 Response schemas
+Pydantic models
+Authentication Flow
+Provider Registration Flow
+Provider Registration
+    ↓
+OTP Generation
+    ↓
+OTP Verification
+    ↓
+Provider Creation
+    ↓
+Mobile Verification Complete
+Forgot Password Flow
+Forgot Password Request
+    ↓
+OTP Generation
+    ↓
+OTP Verification
+    ↓
+Password Updated
+Provider Onboarding Flow
+Provider Registration
+    ↓
+OTP Verification
+    ↓
+Provider Creation
+    ↓
+Pincode Verification
+    ↓
+Address Update
+    ↓
+Profile Completion
+Package Creation Flow
+Provider Login
+    ↓
+Profile Completed
+    ↓
+Create Meal Package
+    ↓
+Package Available For Listing
 Database Schema
 providers table
+Purpose
 
-Purpose:
 Stores provider account and profile information.
 
 Column	Type	Description
 id	bigint	Primary key
-mobile_number	varchar	Unique provider mobile number
+provider_id	varchar	Unique provider reference
+mobile_number	varchar	Unique mobile number
+hashed_password	varchar	Password hash
+full_name	varchar	Provider full name
+business_name	varchar	Kitchen/business name
+address	text	Full address
+city	varchar	City
+state	varchar	State
+pincode	integer	Area pincode
+house_no	varchar	House number
+landmark	varchar	Address landmark
+kitchen_type	varchar	Kitchen category
+profile_image	varchar	Profile image
 is_mobile_verified	boolean	Mobile verification status
 is_profile_completed	boolean	Profile completion status
-full_name	varchar	Provider full name
-business_name	varchar	Business name
-city	varchar	City
-area	varchar	Area
-address	text	Full address
-kitchen_type	varchar	Kitchen category
-profile_image	varchar	Provider profile image
 created_at	timestamp	Record creation timestamp
 updated_at	timestamp	Record update timestamp
-provider_id	varchar	Unique provider reference
-hashed_password	varchar	Bcrypt hashed password
-pincode	integer	Area pincode
-house_no	integer	House number
-landmark	varchar	Address landmark
-state	varchar	State
 otp_logs table
+Purpose
 
-Purpose:
-Stores OTP verification logs.
+Stores OTP verification records.
 
-Used for:
-
-Registration
-Forgot Password
 Column	Type	Description
 otp_log_id	bigint	Primary key
 mobile_number	varchar	Mobile number
 otp	varchar	Generated OTP
-expires_at	timestamp	OTP expiry time
-is_verified	boolean	OTP verification status
+expires_at	timestamp	OTP expiry
+is_verified	boolean	Verification status
 attempts	integer	Invalid attempt count
 created_at	timestamp	OTP creation time
-hashed_password	varchar	Temporarily stored password hash
+hashed_password	varchar	Temporary password hash
+serviceable_pincodes table
+Purpose
+
+Stores serviceable delivery pincodes.
+
+Column	Type	Description
+pincode_id	bigint	Primary key
+pincode	integer	Unique pincode
+city	varchar	City
+state	varchar	State
+is_active	boolean	Service availability
+created_at	timestamp	Creation timestamp
+packages table
+Purpose
+
+Stores meal/tiffin packages created by providers.
+
+Column	Type	Description
+package_id	bigint	Primary key
+provider_id	varchar	Provider reference
+package_name	varchar	Package name
+description	text	Package description
+price	numeric	Package price
+meal_type	varchar	Veg/Non-Veg
+duration	varchar	Daily/Weekly/Monthly
+is_active	boolean	Package active status
+created_at	timestamp	Creation timestamp
+updated_at	timestamp	Update timestamp
 Current Implemented APIs
 POST /auth/send-otp
+Purpose
 
-Purpose:
 Generate OTP for provider registration or forgot password.
 
 Request
@@ -212,19 +266,13 @@ Response
     "success": true,
     "message": "OTP sent successfully"
 }
-Database Tables Used
-otp_logs
-Services Used
-otp_service.py
-Repository Used
-otp_repository.py
 POST /auth/verify-otp
+Purpose
 
-Purpose:
 Verify OTP and:
 
 create provider if not exists
-update password if provider already exists
+update password if provider exists
 Request
 {
     "mobile_number": "9999999999",
@@ -237,279 +285,237 @@ Response
     "provider_id": "PROVIDER_001",
     "is_profile_completed": false
 }
-Verification Checks
+POST /location/verify-pincode
+Purpose
 
-The API validates:
+Verify whether a pincode is serviceable.
 
-OTP existence
-OTP expiry
-OTP verification status
-OTP attempt count
-Database Tables Used
-otp_logs
-providers
-Services Used
-auth_service.py
-Repository Used
-otp_repository.py
-provider_repository.py
+Request
+{
+    "pincode": 110001
+}
+Response
+{
+    "success": true,
+    "serviceable": true,
+    "city": "Delhi",
+    "state": "Delhi"
+}
+PUT /provider/address
+Purpose
+
+Update provider address and complete provider profile.
+
+Request
+{
+    "provider_id": "PROVIDER_001",
+    "house_no": "21",
+    "address": "Near Hanuman Mandir",
+    "landmark": "Opposite School",
+    "city": "Delhi",
+    "state": "Delhi",
+    "pincode": 110001
+}
+Response
+{
+    "success": true,
+    "message": "Address updated successfully"
+}
+POST /package/create
+Purpose
+
+Create new meal/tiffin package.
+
+Request
+{
+    "provider_id": "PROVIDER_001",
+    "package_name": "Monthly Veg Tiffin",
+    "description": "Homemade daily veg meals",
+    "price": 2500,
+    "meal_type": "Veg",
+    "duration": "Monthly"
+}
+Response
+{
+    "success": true,
+    "message": "Package created successfully"
+}
+Package Business Flow
+Provider Login
+    ↓
+Profile Validation
+    ↓
+Create Package
+    ↓
+Package Stored
+    ↓
+Package Published
 File Responsibilities
 app/models/provider_model.py
-
-Purpose:
-Stores provider profile and authentication information.
-
-Important Fields:
-
-mobile_number
-hashed_password
-is_profile_completed
-is_mobile_verified
-app/models/otp_log_model.py
-
-Purpose:
-Stores OTP verification records.
-
-Important Fields:
-
-otp
-expires_at
-attempts
-hashed_password
+Responsibilities
+Provider authentication
+Provider profile information
+Address information
+app/models/package_model.py
+Responsibilities
+Package information
+Pricing
+Meal configuration
+Package availability
+app/models/serviceable_pincode_model.py
+Responsibilities
+Pincode serviceability
+Hyperlocal delivery coverage
 app/services/auth_service.py
-
-Responsibilities:
-
-Provider registration logic
-OTP verification logic
-Forgot password flow
-Provider creation
-Password update logic
-
-Dependencies:
-
-otp_repository.py
-provider_repository.py
-
-Database Tables:
-
-providers
-otp_logs
-app/services/otp_service.py
-
-Responsibilities:
-
-OTP generation
-OTP expiration handling
-OTP validation support
-app/repositories/provider_repository.py
-
-Responsibilities:
-
-Create provider
-Get provider by mobile number
-Update provider password
-Provider database operations
-app/repositories/otp_repository.py
-
-Responsibilities:
-
-Store OTP records
-Fetch latest OTP
-Update OTP verification status
-app/core/security.py
-
-Responsibilities:
-
-Password hashing
-Password verification
-Security utilities
-app/utils/otp_generator.py
-
-Responsibilities:
-
-Generate random OTPs
+Responsibilities
+OTP verification
+Password update
+Provider registration
+app/services/provider_service.py
+Responsibilities
+Provider onboarding
+Address update
+Profile completion
+app/services/pincode_service.py
+Responsibilities
+Pincode validation
+Hyperlocal verification
+Delivery area checks
+app/services/package_service.py
+Responsibilities
+Package creation
+Package validation
+Package management business logic
+app/repositories/package_repository.py
+Responsibilities
+Create package
+Package DB operations
+Future package CRUD support
 Security Implementation
 
 Current security mechanisms:
 
 Password hashing using bcrypt
+OTP verification
 OTP expiration validation
-OTP attempt tracking
-OTP verification status check
+Invalid attempt tracking
 Current Business Logic
 New Provider Flow
-
-If provider does not exist:
-
-OTP verified
-New provider created
-Mobile marked verified
-Profile marked incomplete
-Existing Provider Flow
-
-If provider already exists:
-
-OTP verified
-Existing password updated
-Used for forgot password functionality
+OTP Verification
+    ↓
+Provider Created
+    ↓
+Mobile Verified
+    ↓
+Profile Incomplete
+Profile Completion Flow
+Verify Pincode
+    ↓
+Update Address
+    ↓
+Profile Completed
+Package Creation Logic
+Provider Login
+    ↓
+Check Profile Completion
+    ↓
+Create Package
+    ↓
+Store Package
 Future Planned Modules
 Authentication
 JWT Authentication
-Refresh Token
+Refresh Tokens
 Access Token Middleware
+Device Session Management
 Provider Module
-Profile Completion API
-Kitchen Setup API
-Address Management API
+Provider Dashboard
+Kitchen Setup
 Profile Image Upload
+Provider Analytics
+Package Module
+Completed
+Create Package API
+Pending
+Get Package API
+Update Package API
+Delete Package API
+List Packages API
 Meal System
-Meal Management
-Menu Management
+Daily Menu Management
 Meal Scheduling
+Meal Availability
+Meal Category Management
 Subscription System
 Subscription Plans
 Daily Meal Booking
-Subscription Renewal
+Renewal System
+Pause Subscription
 Order System
-Order Placement
+Place Order
 Order Tracking
 Order History
+Order Cancellation
 Delivery System
 Delivery Partner Management
-Live Tracking
-Delivery Status
-Future Recommended Improvements
-OTP Improvements
-Add OTP purpose field
-Add rate limiting
-Add resend OTP limit
-Security Improvements
-JWT authentication
-Refresh token rotation
-Device session management
-Database Improvements
-Add foreign key relationships
-Add indexing optimization
-Add soft delete support
+Delivery Tracking
+Delivery Charges
+Delivery Radius Management
+Hyperlocal Scalability
+
+The pincode module architecture supports future implementation of:
+
+Nearby kitchen discovery
+Geo-based meal search
+Delivery ETA calculation
+Dynamic delivery pricing
+Delivery zone mapping
+Smart kitchen allocation
 Current Development Status
 Module	Status
 Provider Registration	Completed
 OTP Generation	Completed
 OTP Verification	Completed
 Forgot Password Flow	Completed
+Pincode Verification API	Completed
+Provider Address Update API	Completed
+Provider Profile Completion	Completed
+Create Package API	Completed
+Get Package API	Pending
+Update Package API	Pending
+Delete Package API	Pending
+List Packages API	Pending
 JWT Login	Pending
-Provider Profile APIs	Pending
-Meal APIs	Pending
+Subscription APIs	Pending
 Order APIs	Pending
+Delivery APIs	Pending
+Recommended Next API Flow
+Immediate Next APIs
+Package Module Completion
+Get Package API
+List Packages API
+Update Package API
+Delete Package API
+After Package Module
+Meal Menu APIs
+Create Menu API
+Add Meal Items API
+Daily Menu API
+Menu Availability API
+Then Customer Side APIs
+Customer Registration
+Customer Address
+Package Browsing
+Subscription Purchase
 Important Notes
 
-Current system architecture is designed to be:
+Current system architecture is:
 
 scalable
 modular
 reusable
 repository-service based
+hyperlocal ready
+subscription ready
 
-The documentation is intentionally detailed so future modifications can be implemented using only this README without requiring the complete source code initially.
-
-have you merge all reccomended md files to this readme.md ?
-
-Yes.
-The single README.md I created already merges the content and responsibilities of all recommended documentation files into one master document.
-
-It includes merged sections from:
-
-Recommended File	Merged Into README.md
-project-overview.md	✅ Project Overview
-architecture.md	✅ Architecture + Layer Responsibilities
-auth-flow.md	✅ Authentication Flow
-database-schema.md	✅ Database Schema
-api-reference.md	✅ Current Implemented APIs
-folder-structure.md	✅ Folder Structure
-provider-module.md	✅ File Responsibilities + Provider Flow
-otp-flow.md	✅ OTP Verification Logic
-future-roadmap.md	✅ Future Planned Modules
-changelog.md	Partially via Development Status
-Your Current README.md Already Contains
-Business Understanding
-What Mealoo is
-Current implemented modules
-Future modules
-Technical Architecture
-Layered architecture
-Request lifecycle
-Repository-service pattern
-Database Understanding
-providers table
-otp_logs table
-important fields
-future scalability understanding
-API Understanding
-endpoints
-request/response
-business purpose
-DB impact
-services/repositories used
-File-Level Understanding
-service responsibilities
-repository responsibilities
-model responsibilities
-utility responsibilities
-Authentication Logic
-registration flow
-OTP flow
-forgot password flow
-Future Scalability
-JWT
-refresh token
-delivery system
-subscriptions
-meal management
-This Is Exactly Why It Is Powerful
-
-Later you can simply send ONLY:
-
-README.md
-
-and I can still understand:
-
-overall backend structure,
-architecture,
-DB flow,
-auth logic,
-dependencies,
-extension points,
-impacted files.
-What Is Still Missing (Later)
-
-As your project grows, later you may additionally add:
-
-1. ER Diagram Section
-
-DB relationships.
-
-2. Environment Variables Section
-
-Example:
-
-DATABASE_URL=
-JWT_SECRET=
-OTP_EXPIRY=
-3. Deployment Section
-Docker
-Nginx
-Gunicorn/Uvicorn
-CI/CD
-4. API Versioning Strategy
-5. Naming Conventions
-Current README Quality
-
-Your current merged README is already enough for:
-
-future AI-assisted development,
-onboarding developers,
-architecture understanding,
-scalable extension planning.
-
-For your current project stage, this is a very good foundation.
+This README is intentionally detailed so future development can continue using only this documentation without requiring the complete source code initially.

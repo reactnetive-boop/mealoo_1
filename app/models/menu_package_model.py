@@ -17,6 +17,7 @@ from sqlalchemy.sql import func
 
 from app.core.database import Base
 
+from sqlalchemy.orm import relationship
 
 class MenuPackage(Base):
 
@@ -113,4 +114,16 @@ class MenuPackage(Base):
         TIMESTAMP(timezone=True),
         server_default=func.now(),
         onupdate=func.now()
+    )
+
+    items = relationship(
+        "MenuPackageItem",
+        back_populates="menu_package",
+        cascade="all, delete-orphan"
+    )
+
+    images = relationship(
+        "MenuPackageImage",
+        back_populates="menu_package",
+        cascade="all, delete-orphan"
     )

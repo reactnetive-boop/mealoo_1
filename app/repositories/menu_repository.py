@@ -13,6 +13,8 @@ from app.models.menu_package_item_model import (
 )
 
 
+from app.models.menu_package_image_model import MenuPackageImage
+
 class MenuRepository:
 
     @staticmethod
@@ -78,3 +80,48 @@ class MenuRepository:
             )
             .first()
         )
+    
+    @staticmethod
+    def list_provider_packages(
+        db,
+        provider_id
+    ):
+
+        return (
+            db.query(MenuPackage)
+            .filter(
+                MenuPackage.provider_id == provider_id,
+                MenuPackage.is_active == True
+            )
+            .order_by(MenuPackage.created_at.desc())
+            .all()
+        )
+    
+    @staticmethod
+    def update_package(
+        db,
+        package,
+        update_data
+    ):
+
+        for key, value in update_data.items():
+
+            setattr(package, key, value)
+
+        db.commit()
+
+        db.refresh(package)
+
+        return package
+    
+    @staticmethod
+    def delete_package(
+        db,
+        package
+    ):
+
+        package.is_active = False
+
+        db.commit()
+
+        return True

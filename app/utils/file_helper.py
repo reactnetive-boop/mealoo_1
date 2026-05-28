@@ -4,18 +4,48 @@ import uuid
 from fastapi import UploadFile
 
 
-UPLOAD_DIR = (
+PROFILE_UPLOAD_DIR = (
     "uploads/providers/profile"
 )
 
+PACKAGE_UPLOAD_DIR = (
+    "uploads/package_images"
+)
+
 os.makedirs(
-    UPLOAD_DIR,
+    PROFILE_UPLOAD_DIR,
+    exist_ok=True
+)
+
+os.makedirs(
+    PACKAGE_UPLOAD_DIR,
     exist_ok=True
 )
 
 
 def save_profile_image(
     file: UploadFile
+):
+
+    return save_file(
+        file=file,
+        upload_dir=PROFILE_UPLOAD_DIR
+    )
+
+
+def save_package_image(
+    file: UploadFile
+):
+
+    return save_file(
+        file=file,
+        upload_dir=PACKAGE_UPLOAD_DIR
+    )
+
+
+def save_file(
+    file: UploadFile,
+    upload_dir: str
 ):
 
     file_extension = (
@@ -27,10 +57,13 @@ def save_profile_image(
     )
 
     file_path = (
-        f"{UPLOAD_DIR}/{unique_filename}"
+        f"{upload_dir}/{unique_filename}"
     )
 
-    with open(file_path, "wb") as buffer:
+    with open(
+        file_path,
+        "wb"
+    ) as buffer:
 
         buffer.write(
             file.file.read()

@@ -14,6 +14,7 @@ from sqlalchemy.sql import func
 
 from app.core.database import Base
 
+from sqlalchemy.orm import relationship
 
 class MenuPackageItem(Base):
 
@@ -61,4 +62,9 @@ class MenuPackageItem(Base):
     created_at = Column(
         TIMESTAMP(timezone=True),
         server_default=func.now()
+    )
+
+    menu_package = relationship(
+        "MenuPackage",
+        back_populates="items"
     )
