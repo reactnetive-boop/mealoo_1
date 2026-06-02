@@ -1,0 +1,126 @@
+import uuid
+
+from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, Text, Date
+from sqlalchemy.dialects.postgresql import UUID
+
+from datetime import datetime, timezone
+
+from app.core.database import Base
+
+
+class User(Base):
+
+    __tablename__ = "users"
+
+    __table_args__ = {
+        "schema": "auth"
+    }
+
+    # Internal DB primary key
+    id = Column(
+        BigInteger,
+        primary_key=True,
+        index=True
+    )
+
+    # Public UUID
+    user_id = Column(
+        UUID(as_uuid=True),
+        default=uuid.uuid4,
+        unique=True,
+        nullable=False,
+        index=True
+    )
+
+    email = Column(
+        String,
+        unique=True,
+        nullable=True
+    )
+
+    phone = Column(
+        String(15),
+        unique=True,
+        nullable=True,
+        index=True
+    )
+
+    phone_verified = Column(
+        Boolean,
+        default=False
+    )
+
+    email_verified = Column(
+        Boolean,
+        default=False
+    )
+
+    # Nullable — users registered via OTP-only have no password
+    password_hash = Column(
+        Text,
+        nullable=True
+    )
+
+    full_name = Column(
+        String(100),
+        nullable=True
+    )
+
+    # 'male' | 'female' | 'other' | 'prefer_not_to_say'
+    gender = Column(
+        String(20),
+        nullable=True
+    )
+
+    date_of_birth = Column(
+        Date,
+        nullable=True
+    )
+
+    avatar_url = Column(
+        Text,
+        nullable=True
+    )
+
+    is_profile_completed = Column(
+        Boolean,
+        default=False
+    )
+
+    # 'active' | 'inactive' | 'suspended' | 'deleted'
+    status = Column(
+        String(20),
+        default="active"
+    )
+
+    referral_code = Column(
+        String(12),
+        unique=True,
+        nullable=True
+    )
+
+    referred_by = Column(
+        UUID(as_uuid=True),
+        nullable=True
+    )
+
+    last_login_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
+
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    deleted_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )

@@ -8,6 +8,8 @@ from app.api.v1.endpoints.package_image import (
     router as package_image_router
 )
 from app.api.v1.endpoints.provider_selected_package_endpoint import router as provider_selected_package_router
+from app.api.v1.endpoints.user_auth import router as user_auth_router
+
 api_router = APIRouter()
 
 api_router.include_router(
@@ -43,4 +45,10 @@ api_router.include_router(
     provider_selected_package_router,
     prefix="/provider-package",
     tags=["Provider"]
+)
+
+api_router.include_router(
+    user_auth_router,
+    prefix="/user/auth",
+    tags=["User Authentication"]
 )
