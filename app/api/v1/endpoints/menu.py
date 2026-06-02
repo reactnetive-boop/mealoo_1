@@ -33,6 +33,7 @@ router = APIRouter()
     "/categories",
     response_model=GetMenuCategoryListResponse
 )
+
 async def get_menu_categories(
     db: Session = Depends(get_db)
 ):

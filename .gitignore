@@ -25,3 +25,6 @@ htmlcov/
 
 # Environment Variables
 .env
+
+uploads
+uploads/*

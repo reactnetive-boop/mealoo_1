@@ -1,7 +1,17 @@
 from pydantic import BaseModel
 from typing import Optional
 from uuid import UUID
+from enum import Enum as PyEnum
 
+class MealServiceType(str, PyEnum):
+    BREAKFAST = "Breakfast"
+    LUNCH = "Lunch"
+    DINNER = "Dinner"
+    LUNCH_AND_DINNER = "Lunch and Dinner"
+    LUNCH_AND_BREAKFAST = "Lunch and Breakfast"
+    BREAKFAST_AND_DINNER = "Breakfast and Dinner"
+    LUNCH_DINNER_BREAKFAST = "Lunch and Dinner and Breakfast"
+    FULL_DAY = "Full Day"
 
 class CompleteProfileRequest(
     BaseModel
@@ -27,6 +37,7 @@ class CompleteProfileRequest(
 
     state: str
 
+    meal_service_type: Optional[MealServiceType] = None
 
 class ProviderProfileResponse(
     BaseModel
@@ -57,6 +68,9 @@ class ProviderProfileResponse(
     state: Optional[str]
 
     is_profile_completed: bool
+
+    meal_service_type: Optional[MealServiceType]
+
 
 class UpdateProfileImageResponse(
     BaseModel

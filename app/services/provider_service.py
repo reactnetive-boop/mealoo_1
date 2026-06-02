@@ -169,7 +169,8 @@ class ProviderService:
 
         pincode_check = PincodeService.verify_pincode(
             db=db,
-            pincode=request.pincode
+            pincode=request.pincode,
+            request=request
         )
 
         if not pincode_check["serviceable"]:

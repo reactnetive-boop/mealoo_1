@@ -7,7 +7,7 @@ from app.api.v1.endpoints.package_item import router as package_item_router
 from app.api.v1.endpoints.package_image import (
     router as package_image_router
 )
-
+from app.api.v1.endpoints.provider_selected_package_endpoint import router as provider_selected_package_router
 api_router = APIRouter()
 
 api_router.include_router(
@@ -38,4 +38,9 @@ api_router.include_router(package_item_router,  prefix="/package/item",
 
 api_router.include_router(package_image_router,  prefix="/package/image",
     tags=["Package Image"]
+)
+api_router.include_router(
+    provider_selected_package_router,
+    prefix="/provider-package",
+    tags=["Provider"]
 )

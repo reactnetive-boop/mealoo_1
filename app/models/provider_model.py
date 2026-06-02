@@ -7,6 +7,7 @@ from sqlalchemy import Boolean
 from sqlalchemy import DateTime
 from sqlalchemy import Text
 from sqlalchemy import Integer
+from sqlalchemy import Enum
 
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -14,6 +15,17 @@ from datetime import datetime
 from datetime import timezone
 
 from app.core.database import Base
+from enum import Enum as PyEnum
+
+class MealServiceType(str, PyEnum):
+    BREAKFAST = "Breakfast"
+    LUNCH = "Lunch"
+    DINNER = "Dinner"
+    LUNCH_AND_DINNER = "Lunch and Dinner"
+    LUNCH_AND_BREAKFAST = "Lunch and Breakfast"
+    BREAKFAST_AND_DINNER = "Breakfast and Dinner"
+    LUNCH_DINNER_BREAKFAST = "Lunch and Dinner and Breakfast"
+    FULL_DAY = "Full Day"
 
 
 class Provider(Base):
@@ -129,4 +141,12 @@ class Provider(Base):
         String(128),
         nullable=True
     )
-
+    meal_service_type = Column(
+        Enum(
+            MealServiceType,
+            values_callable=lambda x: [e.value for e in x],
+            name="meal_service_type",
+            schema="provider"
+        ),
+        nullable=True
+    )

@@ -234,25 +234,120 @@ city	varchar	City
 state	varchar	State
 is_active	boolean	Service availability
 created_at	timestamp	Creation timestamp
-packages table
+Updated Package & Menu Database Schema
+menu_categories table
 Purpose
 
-Stores meal/tiffin packages created by providers.
+Stores package/menu categories for organizing meal packages.
+
+Examples:
+
+Breakfast
+Lunch
+Dinner
+Weekly Plans
+Diet Meals
+High Protein Meals
+Column	Type	Description
+id	bigint	Primary key
+category_id	uuid	Unique category ID
+category_name	varchar(150)	Category name
+category_slug	varchar(150)	URL friendly slug
+description	text	Category description
+display_order	integer	UI sorting order
+is_active	boolean	Category active status
+created_at	timestamp	Record creation timestamp
+menu_packages table
+Purpose
+
+Stores meal/tiffin package details created by providers.
+
+This is the main package master table.
 
 Column	Type	Description
-package_id	bigint	Primary key
-provider_id	varchar	Provider reference
-package_name	varchar	Package name
-description	text	Package description
-price	numeric	Package price
-meal_type	varchar	Veg/Non-Veg
-duration	varchar	Daily/Weekly/Monthly
-is_active	boolean	Package active status
-created_at	timestamp	Creation timestamp
-updated_at	timestamp	Update timestamp
-Current Implemented APIs
-POST /auth/send-otp
+id	bigint	Primary key
+package_id	uuid	Unique package ID
+provider_id	uuid	Provider reference
+category_id	uuid	Package category reference
+package_name	varchar(255)	Package name
+short_description	varchar(500)	Short summary
+description	text	Full package description
+meal_type	varchar(50)	Breakfast/Lunch/Dinner
+food_type	varchar(50)	Veg/Non-Veg/Vegan
+price	numeric(10,2)	Package price
+discounted_price	numeric(10,2)	Discounted price
+is_subscription_based	boolean	Subscription package flag
+subscription_price	numeric(10,2)	Subscription pricing
+duration_type	varchar(50)	Daily/Weekly/Monthly
+calories	integer	Calories information
+protein_grams	integer	Protein quantity
+carbs_grams	integer	Carbohydrates quantity
+fats_grams	integer	Fat quantity
+serving_persons	integer	Number of servings
+spice_level	varchar(20)	Mild/Medium/Spicy
+preparation_time	integer	Preparation time in minutes
+is_available	boolean	Availability status
+is_active	boolean	Active status
+created_at	timestamp	Record creation timestamp
+updated_at	timestamp	Record update timestamp
+menu_package_items table
 Purpose
+
+Stores individual meal items included inside a package.
+
+Examples:
+
+4 Roti
+Paneer Sabji
+Rice
+Salad
+Dal
+Column	Type	Description
+id	bigint	Primary key
+item_id	uuid	Unique item ID
+package_id	uuid	Package reference
+item_name	varchar(255)	Meal item name
+quantity	varchar(100)	Quantity/portion
+item_order	integer	Item display order
+created_at	timestamp	Record creation timestamp
+menu_package_images table
+Purpose
+
+Stores package images/gallery.
+
+Supports multiple images per package.
+
+Column	Type	Description
+id	bigint	Primary key
+image_id	uuid	Unique image ID
+package_id	uuid	Package reference
+image_url	text	Package image URL
+is_primary	boolean	Primary thumbnail flag
+display_order	integer	Image sorting order
+created_at	timestamp	Record creation timestamp
+Updated Package Architecture
+Category
+   ↓
+Package
+   ↓
+Package Items
+   ↓
+Package Images
+Updated Package Creation Flow
+Provider Login
+    ↓
+Profile Verification
+    ↓
+Select Category
+    ↓
+Create Package
+    ↓
+Add Package Items
+    ↓
+Upload Package Images
+    ↓
+Package Published
+
 
 Generate OTP for provider registration or forgot password.
 
@@ -512,7 +607,7 @@ Important Notes
 Current system architecture is:
 
 scalable
-modular
+modular  
 reusable
 repository-service based
 hyperlocal ready

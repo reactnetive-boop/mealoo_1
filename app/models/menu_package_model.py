@@ -127,3 +127,4 @@ class MenuPackage(Base):
         back_populates="menu_package",
         cascade="all, delete-orphan"
     )
+    

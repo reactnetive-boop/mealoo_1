@@ -21,5 +21,5 @@ async def verify_pincode(
 
     return PincodeService.verify_pincode(
         db=db,
-        pincode=request.pincode
+        request=request
     )
