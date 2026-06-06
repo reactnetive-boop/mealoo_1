@@ -1,0 +1,104 @@
+import uuid
+
+from sqlalchemy import Column, String, Text, DateTime
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy.sql import func
+
+from app.core.database import Base
+
+
+class Complaint(Base):
+
+    __tablename__ = "complaints"
+
+    __table_args__ = {
+        "schema": "provider"
+    }
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        index=True
+    )
+
+    user_id = Column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True
+    )
+
+    subscription_id = Column(
+        UUID(as_uuid=True),
+        nullable=True
+    )
+
+    vendor_id = Column(
+        UUID(as_uuid=True),
+        nullable=True
+    )
+
+    order_id = Column(
+        UUID(as_uuid=True),
+        nullable=True
+    )
+
+    # 'vendor' | 'platform' | 'delivery' | 'package'
+    against = Column(
+        String(30),
+        nullable=False
+    )
+
+    # 'open' | 'in_progress' | 'resolved' | 'closed' | 'rejected'
+    status = Column(
+        String(20),
+        nullable=False,
+        default="open"
+    )
+
+    subject = Column(
+        String(255),
+        nullable=False
+    )
+
+    description = Column(
+        Text,
+        nullable=False
+    )
+
+    evidence_urls = Column(
+        ARRAY(Text),
+        nullable=True,
+        default=[]
+    )
+
+    admin_notes = Column(
+        Text,
+        nullable=True
+    )
+
+    resolved_by = Column(
+        UUID(as_uuid=True),
+        nullable=True
+    )
+
+    resolution = Column(
+        Text,
+        nullable=True
+    )
+
+    resolved_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )

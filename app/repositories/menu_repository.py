@@ -12,8 +12,9 @@ from app.models.menu_package_item_model import (
     MenuPackageItem
 )
 
-
 from app.models.menu_package_image_model import MenuPackageImage
+
+from app.models.provider_model import Provider
 
 class MenuRepository:
 
@@ -125,3 +126,68 @@ class MenuRepository:
         db.commit()
 
         return True
+
+    @staticmethod
+    def get_packages_by_category_and_pincode(
+        db: Session,
+        category_id,
+        pin_code: int
+    ):
+
+        return (
+            db.query(MenuPackage)
+            .join(
+                Provider,
+                MenuPackage.provider_id == Provider.provider_id
+            )
+            .filter(
+                MenuPackage.category_id == category_id,
+                MenuPackage.is_available == True,
+                MenuPackage.is_active == True,
+                Provider.pincode == pin_code
+            )
+            .order_by(
+                MenuPackage.created_at.desc()
+            )
+            .all()
+        )
+
+    @staticmethod
+    def get_active_package_by_id(
+        db: Session,
+        package_id
+    ):
+
+        return (
+            db.query(MenuPackage)
+            .filter(
+                MenuPackage.package_id == package_id,
+                MenuPackage.is_available == True,
+                MenuPackage.is_active == True
+            )
+            .first()
+        )
+
+    @staticmethod
+    def get_subscribable_packages_by_pincode(
+        db: Session,
+        pin_code: int
+    ):
+
+        return (
+            db.query(MenuPackage)
+            .join(
+                Provider,
+                MenuPackage.provider_id == Provider.provider_id
+            )
+            .filter(
+                MenuPackage.is_subscription_available == True,
+                MenuPackage.is_available == True,
+                MenuPackage.is_active == True,
+                Provider.pincode == pin_code
+            )
+            .order_by(
+                MenuPackage.created_at.desc()
+            )
+            .all()
+        )

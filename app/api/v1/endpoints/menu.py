@@ -9,6 +9,7 @@ from app.core.database import get_db
 
 from app.schemas.menu_schema import (
     GetMenuCategoryListResponse,
+    MenuCategoryResponse,
     CreateMenuPackageRequest,
     MenuPackageResponse,
     GetMenuPackageResponse,
@@ -52,6 +53,24 @@ async def get_menu_categories(
         ),
         "data": categories
     }
+
+@router.get(
+    "/categories/{category_id}",
+    response_model=MenuCategoryResponse
+)
+async def get_menu_category(
+    category_id: UUID,
+    db: Session = Depends(get_db)
+):
+
+    return (
+        MenuCategoryService
+        .get_category(
+            db=db,
+            category_id=category_id
+        )
+    )
+
 
 @router.post(
     "/package",

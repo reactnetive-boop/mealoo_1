@@ -22,3 +22,18 @@ class MenuCategoryRepository:
             )
             .all()
         )
+
+    @staticmethod
+    def get_by_category_id(
+        db: Session,
+        category_id
+    ):
+
+        return (
+            db.query(MenuCategory)
+            .filter(
+                MenuCategory.category_id == category_id,
+                MenuCategory.is_active == True
+            )
+            .first()
+        )

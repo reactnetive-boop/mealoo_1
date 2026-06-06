@@ -64,3 +64,24 @@ class UserRepository:
         db.refresh(user)
 
         return user
+
+    @staticmethod
+    def update_user(
+        db: Session,
+        user: User,
+        update_data: dict
+    ):
+
+        for key, value in update_data.items():
+
+            setattr(
+                user,
+                key,
+                value
+            )
+
+        db.commit()
+
+        db.refresh(user)
+
+        return user
