@@ -176,21 +176,39 @@ class MenuRepository:
         pin_code: int
     ):
 
-        return (
-            db.query(MenuPackage)
+        # package_ids selected by providers in this pincode
+        selected_by_local_providers = (
+            db.query(ProviderSelectedPackage.package_id)
             .join(
                 Provider,
-                MenuPackage.provider_id == Provider.provider_id
+                ProviderSelectedPackage.provider_id == Provider.provider_id
             )
+            .filter(
+                Provider.pincode == pin_code,
+                ProviderSelectedPackage.is_active == True
+            )
+            .subquery()
+        )
+
+        # provider_ids in this pincode (for directly owned packages)
+        local_provider_ids = (
+            db.query(Provider.provider_id)
+            .filter(Provider.pincode == pin_code)
+            .subquery()
+        )
+
+        return (
+            db.query(MenuPackage)
             .filter(
                 MenuPackage.category_id == category_id,
                 MenuPackage.is_available == True,
                 MenuPackage.is_active == True,
-                Provider.pincode == pin_code
+                or_(
+                    MenuPackage.provider_id.in_(local_provider_ids),
+                    MenuPackage.package_id.in_(selected_by_local_providers)
+                )
             )
-            .order_by(
-                MenuPackage.created_at.desc()
-            )
+            .order_by(MenuPackage.created_at.desc())
             .all()
         )
 

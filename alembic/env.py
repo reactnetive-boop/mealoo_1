@@ -1,6 +1,6 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
+from sqlalchemy import engine_from_config, text
 from sqlalchemy import pool
 
 from alembic import context
@@ -22,6 +22,16 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+
+SCHEMAS = ["auth", "master", "provider", "subscription"]
+
+
+def create_schemas(connection):
+    for schema in SCHEMAS:
+        connection.execute(
+            text(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        )
+    connection.commit()
 
 
 def run_migrations_offline():
@@ -53,6 +63,8 @@ def run_migrations_online():
     )
 
     with connectable.connect() as connection:
+
+        create_schemas(connection)
 
         context.configure(
             connection=connection,

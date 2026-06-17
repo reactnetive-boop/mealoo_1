@@ -40,6 +40,21 @@ class UserAddressRepository:
         )
 
     @staticmethod
+    def count_by_user(
+        db: Session,
+        user_id
+    ):
+
+        return (
+            db.query(UserAddress)
+            .filter(
+                UserAddress.user_id == user_id,
+                UserAddress.is_active == True
+            )
+            .count()
+        )
+
+    @staticmethod
     def unset_default(
         db: Session,
         user_id
