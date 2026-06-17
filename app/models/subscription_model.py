@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, SmallInteger, Numeric, Text, Date, DateTime
+from sqlalchemy import Column, String, SmallInteger, Numeric, Text, Date, DateTime, ForeignKey, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -12,9 +12,16 @@ class Subscription(Base):
 
     __tablename__ = "subscriptions"
 
-    __table_args__ = {
-        "schema": "subscription"
-    }
+    __table_args__ = (
+        CheckConstraint("final_amount > 0", name="chk_sub_amount"),
+        CheckConstraint("end_date > start_date", name="chk_sub_dates"),
+        CheckConstraint("free_skips_used <= free_skips_total", name="chk_sub_skips"),
+        Index("idx_subscriptions_user", "user_id"),
+        Index("idx_subscriptions_vendor", "vendor_id"),
+        Index("idx_subscriptions_status", "status"),
+        Index("idx_subscriptions_dates", "start_date", "end_date"),
+        {"schema": "subscription"},
+    )
 
     id = Column(
         UUID(as_uuid=True),
@@ -25,22 +32,26 @@ class Subscription(Base):
 
     user_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("auth.users.user_id", name="subscriptions_user_id_fkey"),
         nullable=False,
         index=True
     )
 
     vendor_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("provider.providers.provider_id", name="subscriptions_vendor_id_fkey"),
         nullable=False
     )
 
     plan_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("master.subscription_plans.id", name="subscriptions_plan_id_fkey"),
         nullable=False
     )
 
     user_address_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("auth.user_addresses.id", name="subscriptions_user_address_id_fkey"),
         nullable=False
     )
 

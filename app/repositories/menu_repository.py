@@ -1,3 +1,4 @@
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.menu_category_model import (
@@ -15,6 +16,8 @@ from app.models.menu_package_item_model import (
 from app.models.menu_package_image_model import MenuPackageImage
 
 from app.models.provider_model import Provider
+
+from app.models.provider_selected_package_model import ProviderSelectedPackage
 
 class MenuRepository:
 
@@ -88,11 +91,50 @@ class MenuRepository:
         provider_id
     ):
 
+        selected_package_ids = (
+            db.query(ProviderSelectedPackage.package_id)
+            .filter(
+                ProviderSelectedPackage.provider_id == provider_id,
+                ProviderSelectedPackage.is_active == True
+            )
+            .subquery()
+        )
+
         return (
             db.query(MenuPackage)
             .filter(
-                MenuPackage.provider_id == provider_id,
-                MenuPackage.is_active == True
+                MenuPackage.is_active == True,
+                or_(
+                    MenuPackage.provider_id == provider_id,
+                    MenuPackage.package_id.in_(selected_package_ids)
+                )
+            )
+            .order_by(MenuPackage.created_at.desc())
+            .all()
+        )
+
+    @staticmethod
+    def list_predefined_packages_not_selected(
+        db,
+        admin_id,
+        current_provider_id
+    ):
+        already_selected = (
+            db.query(ProviderSelectedPackage.package_id)
+            .filter(
+                ProviderSelectedPackage.provider_id == current_provider_id,
+                ProviderSelectedPackage.is_active == True
+            )
+            .subquery()
+        )
+
+        return (
+            db.query(MenuPackage)
+            .filter(
+                MenuPackage.provider_id == admin_id,
+                MenuPackage.is_predefined == True,
+                MenuPackage.is_active == True,
+                MenuPackage.package_id.notin_(already_selected)
             )
             .order_by(MenuPackage.created_at.desc())
             .all()

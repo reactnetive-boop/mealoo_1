@@ -125,8 +125,17 @@ class MenuService:
     @staticmethod
     def list_provider_packages(
         db,
-        provider_id
+        provider_id,
+        is_predefined: bool = False,
+        current_provider_id: str = None
     ):
+
+        if is_predefined:
+            return MenuRepository.list_predefined_packages_not_selected(
+                db,
+                admin_id=provider_id,
+                current_provider_id=current_provider_id
+            )
 
         return MenuRepository.list_provider_packages(
             db,

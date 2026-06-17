@@ -3,9 +3,7 @@ from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import DateTime
 from sqlalchemy import Boolean
-
-from datetime import datetime
-from datetime import timedelta
+from sqlalchemy.sql import func
 
 from app.core.database import Base
 from sqlalchemy.dialects.postgresql import UUID
@@ -48,13 +46,13 @@ class OTPLog(Base):
     )
 
     expires_at = Column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=False
     )
 
     created_at = Column(
-        DateTime,
-        default=datetime.utcnow
+        DateTime(timezone=True),
+        server_default=func.now()
     )
 
     hashed_password = Column(

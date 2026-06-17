@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, Text, Numeric, DateTime
+from sqlalchemy import Column, String, Text, Numeric, DateTime, ForeignKey, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -11,9 +11,12 @@ class WalletTransaction(Base):
 
     __tablename__ = "wallet_transactions"
 
-    __table_args__ = {
-        "schema": "subscription"
-    }
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="chk_wtxn_amount"),
+        Index("idx_wallet_txn_user", "user_id"),
+        Index("idx_wallet_txn_wallet", "wallet_id"),
+        {"schema": "subscription"},
+    )
 
     id = Column(
         UUID(as_uuid=True),
@@ -24,11 +27,13 @@ class WalletTransaction(Base):
 
     wallet_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("subscription.wallets.id", name="wallet_transactions_wallet_id_fkey"),
         nullable=False
     )
 
     user_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("auth.users.user_id", name="wallet_transactions_user_id_fkey"),
         nullable=False,
         index=True
     )

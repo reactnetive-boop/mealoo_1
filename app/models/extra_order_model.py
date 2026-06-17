@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, Numeric, SmallInteger, Date, DateTime
+from sqlalchemy import Column, String, Numeric, SmallInteger, Date, DateTime, ForeignKey, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -11,9 +11,15 @@ class ExtraOrder(Base):
 
     __tablename__ = "extra_orders"
 
-    __table_args__ = {
-        "schema": "subscription"
-    }
+    __table_args__ = (
+        CheckConstraint(
+            "quantity >= 1 AND quantity <= 5",
+            name="chk_extra_qty"
+        ),
+        Index("idx_extra_orders_user", "user_id"),
+        Index("idx_extra_orders_vendor", "vendor_id"),
+        {"schema": "subscription"},
+    )
 
     id = Column(
         UUID(as_uuid=True),
@@ -24,22 +30,26 @@ class ExtraOrder(Base):
 
     user_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("auth.users.user_id", name="extra_orders_user_id_fkey"),
         nullable=False,
         index=True
     )
 
     vendor_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("provider.providers.provider_id", name="extra_orders_vendor_id_fkey"),
         nullable=False
     )
 
     address_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("auth.user_addresses.id", name="extra_orders_address_id_fkey"),
         nullable=False
     )
 
     package_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("master.menu_packages.package_id", name="extra_orders_package_id_fkey"),
         nullable=False
     )
 

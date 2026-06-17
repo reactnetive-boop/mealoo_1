@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, SmallInteger, Numeric, DateTime, ForeignKey
+from sqlalchemy import Column, SmallInteger, Numeric, DateTime, ForeignKey, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -12,9 +12,11 @@ class SubscriptionPackage(Base):
 
     __tablename__ = "subscription_packages"
 
-    __table_args__ = {
-        "schema": "subscription"
-    }
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="chk_sub_pkg_qty"),
+        Index("idx_sub_packages_subscription", "subscription_id"),
+        {"schema": "subscription"},
+    )
 
     id = Column(
         UUID(as_uuid=True),
@@ -31,6 +33,7 @@ class SubscriptionPackage(Base):
 
     package_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("master.menu_packages.package_id", name="subscription_packages_package_id_fkey"),
         nullable=False
     )
 

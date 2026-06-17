@@ -1,6 +1,9 @@
 import uuid
 
-from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, Text, Date
+from sqlalchemy import (
+    Column, BigInteger, String, Boolean, DateTime, Text, Date,
+    ForeignKey, CheckConstraint, UniqueConstraint, Index
+)
 from sqlalchemy.dialects.postgresql import UUID
 
 from datetime import datetime, timezone
@@ -12,9 +15,18 @@ class User(Base):
 
     __tablename__ = "users"
 
-    __table_args__ = {
-        "schema": "auth"
-    }
+    __table_args__ = (
+        CheckConstraint(
+            "email IS NOT NULL OR phone IS NOT NULL",
+            name="chk_users_contact"
+        ),
+        UniqueConstraint("phone", name="users_phone_key"),
+        UniqueConstraint("user_id", name="users_user_id_key"),
+        Index("idx_users_email", "email"),
+        Index("idx_users_phone", "phone"),
+        Index("idx_users_status", "status"),
+        {"schema": "auth"},
+    )
 
     # Internal DB primary key
     id = Column(
@@ -101,6 +113,7 @@ class User(Base):
 
     referred_by = Column(
         UUID(as_uuid=True),
+        ForeignKey("auth.users.user_id", name="fk_referred_by"),
         nullable=True
     )
 

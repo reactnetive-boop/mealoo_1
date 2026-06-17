@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, Text, DateTime
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.sql import func
 
@@ -11,9 +11,12 @@ class Complaint(Base):
 
     __tablename__ = "complaints"
 
-    __table_args__ = {
-        "schema": "provider"
-    }
+    __table_args__ = (
+        Index("idx_complaints_user", "user_id"),
+        Index("idx_complaints_vendor", "vendor_id"),
+        Index("idx_complaints_status", "status"),
+        {"schema": "provider"},
+    )
 
     id = Column(
         UUID(as_uuid=True),
@@ -24,22 +27,26 @@ class Complaint(Base):
 
     user_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("auth.users.user_id", name="complaints_user_id_fkey"),
         nullable=False,
         index=True
     )
 
     subscription_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("subscription.subscriptions.id", name="complaints_subscription_id_fkey"),
         nullable=True
     )
 
     vendor_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("provider.providers.provider_id", name="complaints_vendor_id_fkey"),
         nullable=True
     )
 
     order_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("subscription.extra_orders.id", name="complaints_order_id_fkey"),
         nullable=True
     )
 

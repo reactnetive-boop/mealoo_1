@@ -8,7 +8,8 @@ from sqlalchemy import (
     Numeric,
     Text,
     ForeignKey,
-    TIMESTAMP
+    TIMESTAMP,
+    Index
 )
 
 from sqlalchemy.dialects.postgresql import UUID
@@ -19,13 +20,18 @@ from app.core.database import Base
 
 from sqlalchemy.orm import relationship
 
+
 class MenuPackage(Base):
 
     __tablename__ = "menu_packages"
 
-    __table_args__ = {
-        "schema": "master"
-    }
+    __table_args__ = (
+        Index("idx_menu_packages_provider", "provider_id"),
+        Index("idx_menu_packages_category", "category_id"),
+        Index("idx_menu_packages_active", "is_active"),
+        Index("idx_menu_packages_available", "is_available"),
+        {"schema": "master"},
+    )
 
     id = Column(
         Integer,
@@ -42,9 +48,6 @@ class MenuPackage(Base):
 
     provider_id = Column(
         UUID(as_uuid=True),
-        ForeignKey(
-            "provider.providers.provider_id"
-        ),
         nullable=False
     )
 
@@ -100,9 +103,16 @@ class MenuPackage(Base):
         default=True
     )
 
+    is_predefined = Column(
+        Boolean,
+        server_default='false',
+        default=False
+    )
+
     is_active = Column(
         Boolean,
-        default=True
+        server_default='false',
+        default=False
     )
 
     created_at = Column(

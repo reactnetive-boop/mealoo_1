@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, SmallInteger, Numeric, Boolean, DateTime
+from sqlalchemy import Column, String, SmallInteger, Numeric, Boolean, DateTime, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -11,9 +11,14 @@ class SubscriptionPlan(Base):
 
     __tablename__ = "subscription_plans"
 
-    __table_args__ = {
-        "schema": "master"
-    }
+    __table_args__ = (
+        UniqueConstraint(
+            "subscription_type",
+            "meal_slot",
+            name="subscription_plans_subscription_type_meal_slot_key"
+        ),
+        {"schema": "master"},
+    )
 
     id = Column(
         UUID(as_uuid=True),

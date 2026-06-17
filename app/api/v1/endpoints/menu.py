@@ -1,6 +1,7 @@
 from fastapi import (
     APIRouter,
-    Depends
+    Depends,
+    Query
 )
 
 from sqlalchemy.orm import Session
@@ -115,12 +116,16 @@ def get_package(
 )
 def list_packages(
     provider_id: str,
-    db: Session = Depends(get_db)
+    is_predefined: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    current_provider = Depends(get_current_provider)
 ):
 
     return MenuService.list_provider_packages(
         db,
-        provider_id
+        provider_id,
+        is_predefined=is_predefined,
+        current_provider_id=str(current_provider['provider_id'])
     )
 
 @router.put(

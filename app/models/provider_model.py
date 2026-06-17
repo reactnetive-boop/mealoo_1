@@ -16,6 +16,7 @@ from datetime import timezone
 
 from app.core.database import Base
 from enum import Enum as PyEnum
+from sqlalchemy import UniqueConstraint
 
 class MealServiceType(str, PyEnum):
     BREAKFAST = "Breakfast"
@@ -32,9 +33,10 @@ class Provider(Base):
 
     __tablename__ = "providers"
 
-    __table_args__ = {
-        "schema": "provider"
-    }
+    __table_args__ = (
+        UniqueConstraint("provider_id", name="uq_provider_provider_id"),
+        {"schema": "provider"},
+    )
 
     # Internal DB Primary Key
     id = Column(

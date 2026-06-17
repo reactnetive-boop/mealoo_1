@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, Text, Numeric, DateTime
+from sqlalchemy import Column, String, Text, Numeric, DateTime, ForeignKey, CheckConstraint, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 
@@ -11,9 +11,18 @@ class Payment(Base):
 
     __tablename__ = "payments"
 
-    __table_args__ = {
-        "schema": "subscription"
-    }
+    __table_args__ = (
+        CheckConstraint(
+            "amount > 0",
+            name="chk_payment_amount"
+        ),
+        CheckConstraint(
+            "subscription_id IS NOT NULL OR extra_order_id IS NOT NULL",
+            name="chk_payment_ref"
+        ),
+        UniqueConstraint("gateway_txn_id", name="payments_gateway_txn_id_key"),
+        {"schema": "subscription"},
+    )
 
     id = Column(
         UUID(as_uuid=True),
@@ -24,17 +33,20 @@ class Payment(Base):
 
     subscription_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("subscription.subscriptions.id", name="payments_subscription_id_fkey"),
         nullable=True
     )
 
     user_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("auth.users.user_id", name="payments_user_id_fkey"),
         nullable=False,
         index=True
     )
 
     extra_order_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("subscription.extra_orders.id", name="payments_extra_order_id_fkey"),
         nullable=True
     )
 

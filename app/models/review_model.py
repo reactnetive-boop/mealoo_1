@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, SmallInteger, Text, Boolean, Date, DateTime
+from sqlalchemy import Column, SmallInteger, Text, Boolean, Date, DateTime, ForeignKey, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -11,9 +11,20 @@ class Review(Base):
 
     __tablename__ = "reviews"
 
-    __table_args__ = {
-        "schema": "provider"
-    }
+    __table_args__ = (
+        CheckConstraint(
+            "vendor_rating >= 1 AND vendor_rating <= 5",
+            name="chk_vendor_rating"
+        ),
+        CheckConstraint(
+            "package_rating IS NULL OR (package_rating >= 1 AND package_rating <= 5)",
+            name="chk_pkg_rating2"
+        ),
+        Index("idx_reviews_vendor", "vendor_id"),
+        Index("idx_reviews_pkg", "package_id"),
+        Index("idx_reviews_unique_daily", "user_id", "vendor_id", "review_date", unique=True),
+        {"schema": "provider"},
+    )
 
     id = Column(
         UUID(as_uuid=True),
@@ -24,28 +35,33 @@ class Review(Base):
 
     user_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("auth.users.user_id", name="reviews_user_id_fkey"),
         nullable=False,
         index=True
     )
 
     subscription_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("subscription.subscriptions.id", name="reviews_subscription_id_fkey"),
         nullable=True
     )
 
     vendor_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("provider.providers.provider_id", name="reviews_vendor_id_fkey"),
         nullable=False,
         index=True
     )
 
     order_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("subscription.extra_orders.id", name="reviews_order_id_fkey"),
         nullable=True
     )
 
     package_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("master.menu_packages.package_id", name="reviews_package_id_fkey"),
         nullable=True
     )
 
