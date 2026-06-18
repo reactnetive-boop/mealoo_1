@@ -56,3 +56,69 @@ def get_current_provider(
             status_code=401,
             detail="Invalid token"
         )
+
+
+def get_current_admin(
+    credentials = Depends(security)
+):
+
+    token = credentials.credentials
+
+    try:
+
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM]
+        )
+
+        if "admin_id" not in payload:
+            raise HTTPException(
+                status_code=403,
+                detail="Not an admin token"
+            )
+
+        return payload
+
+    except HTTPException:
+        raise
+
+    except Exception:
+
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token"
+        )
+
+
+def get_current_delivery_boy(
+    credentials = Depends(security)
+):
+
+    token = credentials.credentials
+
+    try:
+
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM]
+        )
+
+        if "delivery_boy_id" not in payload:
+            raise HTTPException(
+                status_code=403,
+                detail="Not a delivery boy token"
+            )
+
+        return payload
+
+    except HTTPException:
+        raise
+
+    except Exception:
+
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token"
+        )

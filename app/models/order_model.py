@@ -100,6 +100,13 @@ class Order(Base):
         nullable=True
     )
 
+    delivery_boy_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("delivery.delivery_boys.delivery_boy_id", name="orders_delivery_boy_id_fkey"),
+        nullable=True,
+        index=True
+    )
+
     otp_for_delivery = Column(
         String(6),
         nullable=True

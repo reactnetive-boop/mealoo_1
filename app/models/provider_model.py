@@ -71,6 +71,20 @@ class Provider(Base):
         default=False
     )
 
+    is_active = Column(
+        Boolean,
+        default=True,
+        nullable=False,
+        server_default='true'
+    )
+
+    is_accepting_orders = Column(
+        Boolean,
+        default=True,
+        nullable=False,
+        server_default='true'
+    )
+
     is_profile_completed = Column(
         Boolean,
         default=False

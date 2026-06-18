@@ -14,6 +14,15 @@ class SubscriptionType(str, Enum):
     YEARLY = "yearly"
 
 
+# ── Plan Options ─────────────────────────────────────────
+
+class SubscriptionPlanOptionsResponse(BaseModel):
+
+    meal_slots: List[str]
+
+    subscription_types: List[str]
+
+
 # ── Plans ────────────────────────────────────────────────
 
 class SubscriptionPlanResponse(BaseModel):

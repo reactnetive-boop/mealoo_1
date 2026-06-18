@@ -63,7 +63,7 @@ class ExtraOrderService:
                 )
 
             unit_price = (
-                package.discounted_price
+                package.price - package.discounted_price
                 if package.discounted_price
                 else package.price
             )

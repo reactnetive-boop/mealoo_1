@@ -23,7 +23,7 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-SCHEMAS = ["auth", "master", "provider", "subscription"]
+SCHEMAS = ["auth", "master", "provider", "subscription", "delivery"]
 
 
 def create_schemas(connection):

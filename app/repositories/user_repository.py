@@ -85,3 +85,18 @@ class UserRepository:
         db.refresh(user)
 
         return user
+
+    @staticmethod
+    def update_profile_image(
+        db: Session,
+        user: User,
+        avatar_url: str
+    ):
+
+        user.avatar_url = avatar_url
+
+        db.commit()
+
+        db.refresh(user)
+
+        return user

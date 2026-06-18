@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.dependencies.auth_dependency import get_current_user
 from app.schemas.subscription_schema import (
     SubscriptionPlanListResponse,
+    SubscriptionPlanOptionsResponse,
     CreateSubscriptionRequest,
     CreateSubscriptionResponse,
     SubscriptionListResponse,
@@ -21,32 +22,52 @@ router = APIRouter()
 
 
 @router.get(
-    "/plans",
-    response_model=SubscriptionPlanListResponse
+    "/plans/options",
+    response_model=SubscriptionPlanOptionsResponse
 )
-def list_subscription_plans(
+def get_plan_options(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
 
-    return SubscriptionService.list_plans(db)
+    return SubscriptionService.get_plan_options(db)
 
 
 @router.get(
-    "/packages"
+    "/plans",
+    response_model=SubscriptionPlanListResponse
 )
-def list_subscribable_packages(
-    pin_code: int = Query(
-        ...,
-        description="Pincode to filter providers in your area"
+def list_subscription_plans(
+    meal_slot: str = Query(
+        default=None,
+        description="Filter by meal slot e.g. breakfast, lunch, dinner, breakfast_lunch, lunch_dinner, breakfast_dinner, all_slots"
+    ),
+    subscription_type: str = Query(
+        default=None,
+        description="Filter by subscription type e.g. weekly, monthly, quarterly, half_yearly, annually, custom"
     ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
 
-    return SubscriptionService.list_subscribable_packages(
+    return SubscriptionService.list_plans(
         db,
-        pin_code
+        meal_slot=meal_slot,
+        subscription_type=subscription_type
+    )
+
+
+@router.get(
+    "/packages"
+)
+def list_subscribed_packages(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+
+    return SubscriptionService.list_subscribed_packages(
+        db,
+        current_user["user_id"]
     )
 
 

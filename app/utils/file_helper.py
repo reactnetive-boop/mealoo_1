@@ -8,12 +8,21 @@ PROFILE_UPLOAD_DIR = (
     "uploads/providers/profile"
 )
 
+USER_PROFILE_UPLOAD_DIR = (
+    "uploads/users/profile"
+)
+
 PACKAGE_UPLOAD_DIR = (
     "uploads/package_images"
 )
 
 os.makedirs(
     PROFILE_UPLOAD_DIR,
+    exist_ok=True
+)
+
+os.makedirs(
+    USER_PROFILE_UPLOAD_DIR,
     exist_ok=True
 )
 
@@ -30,6 +39,16 @@ def save_profile_image(
     return save_file(
         file=file,
         upload_dir=PROFILE_UPLOAD_DIR
+    )
+
+
+def save_user_profile_image(
+    file: UploadFile
+):
+
+    return save_file(
+        file=file,
+        upload_dir=USER_PROFILE_UPLOAD_DIR
     )
 
 

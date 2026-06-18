@@ -10,22 +10,22 @@ class UserMenuService:
     @staticmethod
     def list_packages(
         db: Session,
-        category_id,
+        category_ids: list,
         pin_code: int
     ):
 
-        packages = (
+        results = (
             MenuRepository
-            .get_packages_by_category_and_pincode(
+            .get_packages_by_categories_and_pincode(
                 db,
-                category_id,
+                category_ids,
                 pin_code
             )
         )
 
         package_list = []
 
-        for pkg in packages:
+        for psp, pkg in results:
 
             primary_image = None
 
@@ -40,23 +40,15 @@ class UserMenuService:
             package_list.append({
                 "package_id": pkg.package_id,
                 "category_id": pkg.category_id,
-                "provider_id": pkg.provider_id,
+                "provider_id": psp.provider_id,
                 "package_name": pkg.package_name,
-                "short_description": (
-                    pkg.short_description
-                ),
+                "short_description": pkg.short_description,
                 "meal_type": pkg.meal_type,
                 "food_type": pkg.food_type,
                 "price": pkg.price,
-                "discounted_price": (
-                    pkg.discounted_price
-                ),
-                "is_subscription_available": (
-                    pkg.is_subscription_available
-                ),
-                "subscription_price": (
-                    pkg.subscription_price
-                ),
+                "discounted_price": pkg.discounted_price,
+                "is_subscription_available": pkg.is_subscription_available,
+                "subscription_price": pkg.subscription_price,
                 "is_available": pkg.is_available,
                 "primary_image": primary_image
             })

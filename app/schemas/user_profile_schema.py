@@ -32,6 +32,15 @@ class UserProfileResponse(BaseModel):
     created_at: Optional[datetime]
 
 
+class UpdateProfileImageResponse(BaseModel):
+
+    success: bool
+
+    message: str
+
+    avatar_url: str
+
+
 class UpdateUserProfileRequest(BaseModel):
 
     full_name: Optional[str] = Field(

@@ -17,6 +17,22 @@ from app.api.v1.endpoints.user_wallet import router as user_wallet_router
 from app.api.v1.endpoints.user_subscription import router as user_subscription_router
 from app.api.v1.endpoints.user_review import router as user_review_router
 from app.api.v1.endpoints.user_complaint import router as user_complaint_router
+from app.api.v1.endpoints.provider_orders import router as provider_orders_router
+from app.api.v1.endpoints.provider_wallet import router as provider_wallet_router
+from app.api.v1.endpoints.delivery_auth import router as delivery_auth_router
+from app.api.v1.endpoints.delivery_orders import router as delivery_orders_router
+from app.api.v1.endpoints.provider_complaint import router as provider_complaint_router
+from app.api.v1.endpoints.admin_auth import router as admin_auth_router
+from app.api.v1.endpoints.admin_users import router as admin_users_router
+from app.api.v1.endpoints.admin_providers import router as admin_providers_router
+from app.api.v1.endpoints.admin_delivery_boys import router as admin_delivery_boys_router
+from app.api.v1.endpoints.admin_packages import router as admin_packages_router
+from app.api.v1.endpoints.admin_plans import router as admin_plans_router
+from app.api.v1.endpoints.admin_complaints import router as admin_complaints_router
+from app.api.v1.endpoints.admin_reviews import router as admin_reviews_router
+from app.api.v1.endpoints.admin_orders import router as admin_orders_router
+from app.api.v1.endpoints.admin_pincodes import router as admin_pincodes_router
+from app.api.v1.endpoints.admin_dashboard import router as admin_dashboard_router
 
 api_router = APIRouter()
 
@@ -108,3 +124,46 @@ api_router.include_router(
     prefix="/user/complaint",
     tags=["User Complaint"]
 )
+
+api_router.include_router(
+    provider_orders_router,
+    prefix="/provider/orders",
+    tags=["Provider Orders"]
+)
+
+api_router.include_router(
+    provider_wallet_router,
+    prefix="/provider/wallet",
+    tags=["Provider Wallet"]
+)
+
+api_router.include_router(
+    delivery_auth_router,
+    prefix="/delivery/auth",
+    tags=["Delivery Boy Auth"]
+)
+
+api_router.include_router(
+    delivery_orders_router,
+    prefix="/delivery",
+    tags=["Delivery Boy"]
+)
+
+api_router.include_router(
+    provider_complaint_router,
+    prefix="/provider/complaint",
+    tags=["Provider Complaint"]
+)
+
+# ── Admin ─────────────────────────────────────────────────
+api_router.include_router(admin_auth_router,          prefix="/admin/auth",          tags=["Admin Auth"])
+api_router.include_router(admin_dashboard_router,     prefix="/admin/dashboard",     tags=["Admin Dashboard"])
+api_router.include_router(admin_users_router,         prefix="/admin/users",         tags=["Admin — Users"])
+api_router.include_router(admin_providers_router,     prefix="/admin/providers",     tags=["Admin — Providers"])
+api_router.include_router(admin_delivery_boys_router, prefix="/admin/delivery-boys", tags=["Admin — Delivery Boys"])
+api_router.include_router(admin_packages_router,      prefix="/admin/packages",      tags=["Admin — Packages"])
+api_router.include_router(admin_plans_router,         prefix="/admin/plans",         tags=["Admin — Plans"])
+api_router.include_router(admin_complaints_router,    prefix="/admin/complaints",    tags=["Admin — Complaints"])
+api_router.include_router(admin_reviews_router,       prefix="/admin/reviews",       tags=["Admin — Reviews"])
+api_router.include_router(admin_orders_router,        prefix="/admin/orders",        tags=["Admin — Orders"])
+api_router.include_router(admin_pincodes_router,      prefix="/admin/pincodes",      tags=["Admin — Pincodes"])

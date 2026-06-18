@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 
 from sqlalchemy.orm import Session
 
+from typing import List
 from uuid import UUID
 
 from app.core.database import get_db
@@ -20,9 +21,9 @@ router = APIRouter()
     response_model=UserPackageListResponse
 )
 def list_packages(
-    category_id: UUID = Query(
+    category_ids: List[UUID] = Query(
         ...,
-        description="Category UUID to filter packages"
+        description="One or more category UUIDs to filter packages"
     ),
     pin_code: int = Query(
         ...,
@@ -34,7 +35,7 @@ def list_packages(
 
     return UserMenuService.list_packages(
         db,
-        category_id,
+        category_ids,
         pin_code
     )
 

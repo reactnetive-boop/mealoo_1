@@ -170,43 +170,27 @@ class MenuRepository:
         return True
 
     @staticmethod
-    def get_packages_by_category_and_pincode(
+    def get_packages_by_categories_and_pincode(
         db: Session,
-        category_id,
+        category_ids: list,
         pin_code: int
     ):
-
-        # package_ids selected by providers in this pincode
-        selected_by_local_providers = (
-            db.query(ProviderSelectedPackage.package_id)
+        return (
+            db.query(ProviderSelectedPackage, MenuPackage)
+            .join(
+                MenuPackage,
+                ProviderSelectedPackage.package_id == MenuPackage.package_id
+            )
             .join(
                 Provider,
                 ProviderSelectedPackage.provider_id == Provider.provider_id
             )
             .filter(
-                Provider.pincode == pin_code,
-                ProviderSelectedPackage.is_active == True
-            )
-            .subquery()
-        )
-
-        # provider_ids in this pincode (for directly owned packages)
-        local_provider_ids = (
-            db.query(Provider.provider_id)
-            .filter(Provider.pincode == pin_code)
-            .subquery()
-        )
-
-        return (
-            db.query(MenuPackage)
-            .filter(
-                MenuPackage.category_id == category_id,
+                MenuPackage.category_id.in_(category_ids),
                 MenuPackage.is_available == True,
                 MenuPackage.is_active == True,
-                or_(
-                    MenuPackage.provider_id.in_(local_provider_ids),
-                    MenuPackage.package_id.in_(selected_by_local_providers)
-                )
+                ProviderSelectedPackage.is_active == True,
+                Provider.pincode == pin_code
             )
             .order_by(MenuPackage.created_at.desc())
             .all()

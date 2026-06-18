@@ -80,6 +80,13 @@ class ExtraOrder(Base):
         nullable=False
     )
 
+    delivery_boy_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("delivery.delivery_boys.delivery_boy_id", name="extra_orders_delivery_boy_id_fkey"),
+        nullable=True,
+        index=True
+    )
+
     # 'pending' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled'
     status = Column(
         String(30),

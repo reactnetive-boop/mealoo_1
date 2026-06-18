@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File
 
 from sqlalchemy.orm import Session
 
@@ -6,7 +6,8 @@ from app.core.database import get_db
 from app.dependencies.auth_dependency import get_current_user
 from app.schemas.user_profile_schema import (
     UserProfileResponse,
-    UpdateUserProfileRequest
+    UpdateUserProfileRequest,
+    UpdateProfileImageResponse
 )
 from app.services.user_profile_service import UserProfileService
 
@@ -39,4 +40,21 @@ def update_profile(
         db,
         current_user["user_id"],
         payload
+    )
+
+
+@router.put(
+    "/profile/image",
+    response_model=UpdateProfileImageResponse
+)
+async def update_profile_image(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+
+    return UserProfileService.update_profile_image(
+        db,
+        current_user["user_id"],
+        file
     )

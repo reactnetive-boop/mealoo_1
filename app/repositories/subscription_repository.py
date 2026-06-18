@@ -1,7 +1,11 @@
+from datetime import date as date_type
+
 from sqlalchemy.orm import Session
 
 from app.models.subscription_model import Subscription
 from app.models.subscription_package_model import SubscriptionPackage
+from app.models.menu_package_model import MenuPackage
+from app.models.order_model import Order
 
 
 class SubscriptionRepository:
@@ -79,6 +83,101 @@ class SubscriptionRepository:
         db.flush()
 
         return sub_package
+
+    @staticmethod
+    def get_subscribed_packages_by_user(
+        db: Session,
+        user_id
+    ):
+        return (
+            db.query(SubscriptionPackage, MenuPackage, Subscription)
+            .join(
+                Subscription,
+                SubscriptionPackage.subscription_id == Subscription.id
+            )
+            .join(
+                MenuPackage,
+                SubscriptionPackage.package_id == MenuPackage.package_id
+            )
+            .filter(
+                Subscription.user_id == user_id
+            )
+            .order_by(Subscription.created_at.desc())
+            .all()
+        )
+
+    @staticmethod
+    def get_all_by_vendor(
+        db: Session,
+        vendor_id,
+        status: str = None
+    ):
+        query = (
+            db.query(Subscription)
+            .filter(Subscription.vendor_id == vendor_id)
+        )
+        if status:
+            query = query.filter(Subscription.status == status)
+        return query.order_by(Subscription.created_at.desc()).all()
+
+    @staticmethod
+    def get_by_id_and_vendor(
+        db: Session,
+        subscription_id,
+        vendor_id
+    ):
+        return (
+            db.query(Subscription)
+            .filter(
+                Subscription.id == subscription_id,
+                Subscription.vendor_id == vendor_id
+            )
+            .first()
+        )
+
+    @staticmethod
+    def get_orders_by_vendor(
+        db: Session,
+        vendor_id,
+        order_date: date_type = None,
+        status: str = None
+    ):
+        query = (
+            db.query(Order)
+            .filter(Order.vendor_id == vendor_id)
+        )
+        if order_date:
+            query = query.filter(Order.order_date == order_date)
+        if status:
+            query = query.filter(Order.status == status)
+        return query.order_by(Order.order_date.asc(), Order.meal_slot.asc()).all()
+
+    @staticmethod
+    def get_order_by_id_and_vendor(
+        db: Session,
+        order_id,
+        vendor_id
+    ):
+        return (
+            db.query(Order)
+            .filter(
+                Order.id == order_id,
+                Order.vendor_id == vendor_id
+            )
+            .first()
+        )
+
+    @staticmethod
+    def get_orders_by_subscription(
+        db: Session,
+        subscription_id
+    ):
+        return (
+            db.query(Order)
+            .filter(Order.subscription_id == subscription_id)
+            .order_by(Order.order_date.asc(), Order.meal_slot.asc())
+            .all()
+        )
 
     @staticmethod
     def cancel(

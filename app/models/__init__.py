@@ -4,6 +4,12 @@ from .user_otp_log_model import *
 
 from .provider_model import *
 from .provider_selected_package_model import *
+from .provider_wallet_model import *
+from .provider_wallet_transaction_model import *
+from .delivery_boy_model import *
+from .delivery_boy_otp_log_model import *
+from .provider_complaint_model import *
+from .provider_unavailability_model import *
 
 from .menu_category_model import *
 from .menu_package_model import *

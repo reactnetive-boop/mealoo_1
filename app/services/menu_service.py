@@ -3,6 +3,9 @@ from sqlalchemy.orm import Session
 from app.repositories.menu_repository import (
     MenuRepository
 )
+from app.repositories.provider_selected_package_repository import (
+    ProviderSelectedPackageRepository
+)
 
 from fastapi import HTTPException
 
@@ -61,6 +64,12 @@ class MenuService:
                 db,
                 package_data
             )
+        )
+
+        ProviderSelectedPackageRepository.create(
+            db,
+            provider_id=provider_id,
+            package_id=package.package_id
         )
 
         for item in request.items:

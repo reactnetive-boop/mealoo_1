@@ -13,12 +13,38 @@ from app.repositories.user_address_repository import UserAddressRepository
 from app.repositories.wallet_repository import WalletRepository
 
 
+MEAL_SLOT_MULTIPLIER = {
+    "breakfast": 1,
+    "lunch": 1,
+    "dinner": 1,
+    "breakfast_lunch": 2,
+    "lunch_dinner": 2,
+    "breakfast_dinner": 2,
+    "all_slots": 3,
+}
+
+
 class SubscriptionService:
 
     @staticmethod
-    def list_plans(db: Session):
+    def get_plan_options(db: Session):
+        return {
+            "meal_slots": SubscriptionPlanRepository.get_distinct_meal_slots(db),
+            "subscription_types": SubscriptionPlanRepository.get_distinct_subscription_types(db)
+        }
 
-        plans = SubscriptionPlanRepository.get_all_active(db)
+    @staticmethod
+    def list_plans(
+        db: Session,
+        meal_slot: str = None,
+        subscription_type: str = None
+    ):
+
+        plans = SubscriptionPlanRepository.get_all_active(
+            db,
+            meal_slot=meal_slot,
+            subscription_type=subscription_type
+        )
 
         return {
             "success": True,
@@ -27,22 +53,19 @@ class SubscriptionService:
         }
 
     @staticmethod
-    def list_subscribable_packages(
+    def list_subscribed_packages(
         db: Session,
-        pin_code: int
+        user_id: str
     ):
 
-        packages = (
-            MenuRepository
-            .get_subscribable_packages_by_pincode(
-                db,
-                pin_code
-            )
+        results = SubscriptionRepository.get_subscribed_packages_by_user(
+            db,
+            user_id
         )
 
         package_list = []
 
-        for pkg in packages:
+        for sub_pkg, pkg, sub in results:
 
             primary_image = None
 
@@ -55,15 +78,22 @@ class SubscriptionService:
                     break
 
             package_list.append({
-                "package_id": pkg.package_id,
-                "category_id": pkg.category_id,
-                "provider_id": pkg.provider_id,
+                "subscription_id": str(sub.id),
+                "subscription_status": sub.status,
+                "meal_slot": sub.meal_slot,
+                "start_date": str(sub.start_date),
+                "end_date": str(sub.end_date),
+                "package_id": str(pkg.package_id),
+                "category_id": str(pkg.category_id),
+                "provider_id": str(sub.vendor_id),
                 "package_name": pkg.package_name,
                 "short_description": pkg.short_description,
                 "meal_type": pkg.meal_type,
                 "food_type": pkg.food_type,
                 "price": pkg.price,
                 "subscription_price": pkg.subscription_price,
+                "quantity": sub_pkg.quantity,
+                "unit_price": sub_pkg.unit_price,
                 "is_available": pkg.is_available,
                 "primary_image": primary_image
             })
@@ -159,26 +189,29 @@ class SubscriptionService:
                     )
                 )
 
-            unit_price = (
-                package.subscription_price
-                if package.subscription_price
-                else package.price
+            # Effective daily price per meal = price minus discount amount
+            effective_price = (
+                Decimal(str(package.price)) - Decimal(str(package.discounted_price))
+                if package.discounted_price
+                else Decimal(str(package.price))
             )
 
             resolved_items.append({
                 "package_id": package.package_id,
-                "unit_price": unit_price,
+                "unit_price": effective_price,
                 "quantity": item.quantity
             })
 
         # 5. Calculate amounts
-        # total per day × duration_days
+        # meal_slot_multiplier accounts for how many meals per day the plan covers
+        meal_slot_multiplier = MEAL_SLOT_MULTIPLIER.get(plan.meal_slot, 1)
+
         daily_total = sum(
-            Decimal(str(i["unit_price"])) * i["quantity"]
+            i["unit_price"] * i["quantity"]
             for i in resolved_items
         )
 
-        total_amount = daily_total * plan.duration_days
+        total_amount = daily_total * meal_slot_multiplier * plan.duration_days
 
         discount_amount = (
             total_amount * Decimal(str(plan.discount_percent)) / 100
