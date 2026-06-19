@@ -1,4 +1,4 @@
-from datetime import date as date_type
+from datetime import date as date_type, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -178,6 +178,37 @@ class SubscriptionRepository:
             .order_by(Order.order_date.asc(), Order.meal_slot.asc())
             .all()
         )
+
+    @staticmethod
+    def pause(
+        db: Session,
+        subscription: Subscription,
+        pause_start_date: date_type
+    ) -> Subscription:
+
+        subscription.status = "paused"
+        subscription.pause_start_date = pause_start_date
+
+        db.flush()
+
+        return subscription
+
+    @staticmethod
+    def resume(
+        db: Session,
+        subscription: Subscription,
+        days_paused: int,
+        new_end_date: date_type
+    ) -> Subscription:
+
+        subscription.status = "active"
+        subscription.end_date = new_end_date
+        subscription.total_days_paused = (subscription.total_days_paused or 0) + days_paused
+        subscription.pause_start_date = None
+
+        db.flush()
+
+        return subscription
 
     @staticmethod
     def cancel(

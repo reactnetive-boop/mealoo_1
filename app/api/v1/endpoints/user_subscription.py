@@ -13,7 +13,9 @@ from app.schemas.subscription_schema import (
     CreateSubscriptionResponse,
     SubscriptionListResponse,
     SubscriptionResponse,
-    CancelSubscriptionRequest
+    CancelSubscriptionRequest,
+    PauseSubscriptionResponse,
+    ResumeSubscriptionResponse,
 )
 from app.schemas.user_menu_schema import UserPackageListResponse
 from app.services.subscription_service import SubscriptionService
@@ -135,4 +137,38 @@ def cancel_subscription(
         current_user["user_id"],
         subscription_id,
         payload
+    )
+
+
+@router.put(
+    "/{subscription_id}/pause",
+    response_model=PauseSubscriptionResponse
+)
+def pause_subscription(
+    subscription_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+
+    return SubscriptionService.pause_subscription(
+        db,
+        current_user["user_id"],
+        subscription_id
+    )
+
+
+@router.put(
+    "/{subscription_id}/resume",
+    response_model=ResumeSubscriptionResponse
+)
+def resume_subscription(
+    subscription_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+
+    return SubscriptionService.resume_subscription(
+        db,
+        current_user["user_id"],
+        subscription_id
     )

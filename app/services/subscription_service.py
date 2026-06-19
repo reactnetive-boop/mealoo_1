@@ -1,3 +1,5 @@
+import uuid
+import random
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -7,10 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.repositories.subscription_plan_repository import SubscriptionPlanRepository
 from app.repositories.subscription_repository import SubscriptionRepository
-from app.repositories.payment_repository import PaymentRepository
 from app.repositories.menu_repository import MenuRepository
 from app.repositories.user_address_repository import UserAddressRepository
 from app.repositories.wallet_repository import WalletRepository
+from app.repositories.package_capacity_repository import PackageCapacityRepository
+from app.models.order_model import Order
 
 
 MEAL_SLOT_MULTIPLIER = {
@@ -21,6 +24,16 @@ MEAL_SLOT_MULTIPLIER = {
     "lunch_dinner": 2,
     "breakfast_dinner": 2,
     "all_slots": 3,
+}
+
+MEAL_SLOT_EXPANSION = {
+    "breakfast":        ["breakfast"],
+    "lunch":            ["lunch"],
+    "dinner":           ["dinner"],
+    "breakfast_lunch":  ["breakfast", "lunch"],
+    "lunch_dinner":     ["lunch", "dinner"],
+    "breakfast_dinner": ["breakfast", "dinner"],
+    "all_slots":        ["breakfast", "lunch", "dinner"],
 }
 
 
@@ -198,11 +211,25 @@ class SubscriptionService:
 
             resolved_items.append({
                 "package_id": package.package_id,
+                "package_name": package.package_name,
                 "unit_price": effective_price,
                 "quantity": item.quantity
             })
 
-        # 5. Calculate amounts
+        # 5. Check provider daily capacity per package per individual meal slot
+        individual_slots = MEAL_SLOT_EXPANSION.get(plan.meal_slot, [plan.meal_slot])
+
+        for item in resolved_items:
+            PackageCapacityRepository.check_and_raise_subscription(
+                db=db,
+                vendor_id=payload.vendor_id,
+                package_id=item["package_id"],
+                package_name=item["package_name"],
+                requested_qty=item["quantity"],
+                individual_slots=individual_slots,
+            )
+
+        # 7. Calculate amounts
         # meal_slot_multiplier accounts for how many meals per day the plan covers
         meal_slot_multiplier = MEAL_SLOT_MULTIPLIER.get(plan.meal_slot, 1)
 
@@ -219,7 +246,7 @@ class SubscriptionService:
 
         final_amount = total_amount - discount_amount
 
-        # 6. Check wallet balance
+        # 8. Check wallet balance
         wallet = WalletRepository.get_by_user_id(db, user_id)
 
         if not wallet:
@@ -240,7 +267,7 @@ class SubscriptionService:
                 )
             )
 
-        # 7. Atomic: create subscription + packages + deduct wallet + payment
+        # 9. Atomic: create subscription + packages (wallet deducted per order, not here)
         try:
 
             end_date = payload.start_date + timedelta(
@@ -280,46 +307,6 @@ class SubscriptionService:
                     }
                 )
 
-            balance_before = Decimal(str(wallet.balance))
-
-            WalletRepository.deduct_balance(
-                db, wallet, final_amount
-            )
-
-            balance_after = Decimal(str(wallet.balance))
-
-            WalletRepository.create_transaction(
-                db,
-                {
-                    "wallet_id": wallet.id,
-                    "user_id": user_id,
-                    "type": "debit",
-                    "reason": "subscription",
-                    "amount": final_amount,
-                    "balance_before": balance_before,
-                    "balance_after": balance_after,
-                    "reference_id": subscription.id,
-                    "reference_type": "subscription",
-                    "description": (
-                        f"{plan.subscription_type.capitalize()} "
-                        f"subscription payment"
-                    ),
-                    "created_by": user_id
-                }
-            )
-
-            PaymentRepository.create(
-                db,
-                {
-                    "subscription_id": subscription.id,
-                    "user_id": user_id,
-                    "amount": final_amount,
-                    "currency": "INR",
-                    "method": "wallet",
-                    "status": "completed"
-                }
-            )
-
             db.commit()
 
             db.refresh(subscription)
@@ -331,7 +318,7 @@ class SubscriptionService:
                 "total_amount": total_amount,
                 "discount_amount": discount_amount,
                 "final_amount": final_amount,
-                "wallet_balance_after": balance_after
+                "wallet_balance": wallet.balance
             }
 
         except HTTPException:
@@ -439,3 +426,140 @@ class SubscriptionService:
             "success": True,
             "message": "Subscription cancelled successfully"
         }
+
+    @staticmethod
+    def pause_subscription(
+        db: Session,
+        user_id: str,
+        subscription_id
+    ):
+        subscription = SubscriptionRepository.get_by_id(db, subscription_id)
+
+        if not subscription:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+
+        if str(subscription.user_id) != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        if subscription.status != "active":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot pause a subscription that is {subscription.status}"
+            )
+
+        pause_start_date = date.today() + timedelta(days=1)
+
+        if pause_start_date >= subscription.end_date:
+            raise HTTPException(
+                status_code=400,
+                detail="Subscription ends before the pause would take effect"
+            )
+
+        try:
+            # Cancel all future scheduled orders from the pause date onwards
+            db.query(Order).filter(
+                Order.subscription_id == subscription.id,
+                Order.order_date >= pause_start_date,
+                Order.status == "scheduled"
+            ).update({"status": "cancelled"}, synchronize_session=False)
+
+            SubscriptionRepository.pause(db, subscription, pause_start_date)
+
+            db.commit()
+
+            return {
+                "success": True,
+                "message": "Subscription paused successfully",
+                "pause_start_date": str(pause_start_date)
+            }
+
+        except HTTPException:
+            db.rollback()
+            raise
+
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Pause failed: {str(e)}")
+
+    @staticmethod
+    def resume_subscription(
+        db: Session,
+        user_id: str,
+        subscription_id
+    ):
+        subscription = SubscriptionRepository.get_by_id(db, subscription_id)
+
+        if not subscription:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+
+        if str(subscription.user_id) != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        if subscription.status != "paused":
+            raise HTTPException(
+                status_code=400,
+                detail="Only a paused subscription can be resumed"
+            )
+
+        resume_date = date.today() + timedelta(days=1)
+        days_paused = (resume_date - subscription.pause_start_date).days
+        old_end_date = subscription.end_date
+        new_end_date = old_end_date + timedelta(days=days_paused)
+
+        try:
+            # Reactivate cancelled orders that fall within the resumed window
+            # (resume_date up to but not including old_end_date)
+            db.query(Order).filter(
+                Order.subscription_id == subscription.id,
+                Order.order_date >= resume_date,
+                Order.order_date < old_end_date,
+                Order.status == "cancelled"
+            ).update({"status": "scheduled"}, synchronize_session=False)
+
+            # Create new orders for the extension period (old_end_date → new_end_date)
+            individual_slots = MEAL_SLOT_EXPANSION.get(
+                subscription.meal_slot, [subscription.meal_slot]
+            )
+
+            new_orders = []
+            current_date = old_end_date
+
+            while current_date < new_end_date:
+                for slot in individual_slots:
+                    new_orders.append({
+                        "id": uuid.uuid4(),
+                        "subscription_id": subscription.id,
+                        "user_id": subscription.user_id,
+                        "vendor_id": subscription.vendor_id,
+                        "delivery_address_id": subscription.user_address_id,
+                        "order_date": current_date,
+                        "meal_slot": slot,
+                        "status": "scheduled",
+                        "is_free_skip": False,
+                        "otp_for_delivery": str(random.randint(100000, 999999)),
+                    })
+                current_date += timedelta(days=1)
+
+            if new_orders:
+                db.bulk_insert_mappings(Order, new_orders)
+
+            SubscriptionRepository.resume(db, subscription, days_paused, new_end_date)
+
+            db.commit()
+
+            return {
+                "success": True,
+                "message": "Subscription resumed successfully",
+                "resume_date": str(resume_date),
+                "new_end_date": str(new_end_date),
+                "days_paused": days_paused,
+                "new_orders_created": len(new_orders)
+            }
+
+        except HTTPException:
+            db.rollback()
+            raise
+
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Resume failed: {str(e)}")

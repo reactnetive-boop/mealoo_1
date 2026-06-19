@@ -130,6 +130,10 @@ class SubscriptionResponse(BaseModel):
 
     final_amount: Decimal
 
+    pause_start_date: Optional[date]
+
+    total_days_paused: int
+
     notes: Optional[str]
 
     cancelled_at: Optional[datetime]
@@ -155,7 +159,7 @@ class CreateSubscriptionResponse(BaseModel):
 
     final_amount: Decimal
 
-    wallet_balance_after: Decimal
+    wallet_balance: Decimal
 
 
 class SubscriptionListResponse(BaseModel):
@@ -173,3 +177,27 @@ class CancelSubscriptionRequest(BaseModel):
         None,
         max_length=500
     )
+
+
+class PauseSubscriptionResponse(BaseModel):
+
+    success: bool
+
+    message: str
+
+    pause_start_date: str
+
+
+class ResumeSubscriptionResponse(BaseModel):
+
+    success: bool
+
+    message: str
+
+    resume_date: str
+
+    new_end_date: str
+
+    days_paused: int
+
+    new_orders_created: int

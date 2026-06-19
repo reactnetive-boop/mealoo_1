@@ -70,7 +70,7 @@ def generate_subscription_orders():
             new_orders = []
             current_date = sub.start_date
 
-            while current_date <= sub.end_date:
+            while current_date < sub.end_date:
 
                 for slot in individual_slots:
 

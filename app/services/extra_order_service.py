@@ -8,6 +8,7 @@ from app.repositories.menu_repository import MenuRepository
 from app.repositories.user_address_repository import UserAddressRepository
 from app.repositories.wallet_repository import WalletRepository
 from app.repositories.extra_order_repository import ExtraOrderRepository
+from app.repositories.package_capacity_repository import PackageCapacityRepository
 
 
 class ExtraOrderService:
@@ -61,6 +62,17 @@ class ExtraOrderService:
                         f"All packages must be from the same provider."
                     )
                 )
+
+            # Check provider daily capacity for this package on the delivery date
+            PackageCapacityRepository.check_and_raise_extra_order(
+                db=db,
+                vendor_id=payload.vendor_id,
+                package_id=item.package_id,
+                package_name=package.package_name,
+                requested_qty=item.quantity,
+                delivery_date=payload.delivery_date,
+                meal_slot=payload.meal_slot.value,
+            )
 
             unit_price = (
                 package.price - package.discounted_price

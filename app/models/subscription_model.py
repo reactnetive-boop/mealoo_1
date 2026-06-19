@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, SmallInteger, Numeric, Text, Date, DateTime, ForeignKey, CheckConstraint, Index
+from sqlalchemy import Column, String, SmallInteger, Integer, Numeric, Text, Date, DateTime, ForeignKey, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -107,6 +107,19 @@ class Subscription(Base):
     final_amount = Column(
         Numeric(10, 2),
         nullable=False
+    )
+
+    # Set when subscription is paused; cleared on resume
+    pause_start_date = Column(
+        Date,
+        nullable=True
+    )
+
+    # Cumulative calendar days paused across all pause/resume cycles
+    total_days_paused = Column(
+        Integer,
+        nullable=False,
+        default=0
     )
 
     notes = Column(
