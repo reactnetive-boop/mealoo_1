@@ -170,9 +170,8 @@ class MenuRepository:
         return True
 
     @staticmethod
-    def get_packages_by_categories_and_pincode(
+    def get_packages_by_pincode(
         db: Session,
-        category_ids: list,
         pin_code: int
     ):
         return (
@@ -186,7 +185,6 @@ class MenuRepository:
                 ProviderSelectedPackage.provider_id == Provider.provider_id
             )
             .filter(
-                MenuPackage.category_id.in_(category_ids),
                 MenuPackage.is_available == True,
                 MenuPackage.is_active == True,
                 ProviderSelectedPackage.is_active == True,

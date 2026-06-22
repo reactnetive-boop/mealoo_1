@@ -10,15 +10,13 @@ class UserMenuService:
     @staticmethod
     def list_packages(
         db: Session,
-        category_ids: list,
         pin_code: int
     ):
 
         results = (
             MenuRepository
-            .get_packages_by_categories_and_pincode(
+            .get_packages_by_pincode(
                 db,
-                category_ids,
                 pin_code
             )
         )
