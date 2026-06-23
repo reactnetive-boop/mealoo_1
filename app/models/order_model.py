@@ -16,43 +16,43 @@ class Order(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "subscription_id", "order_date", "meal_slot",
+            "subscription_reference_id", "order_date", "meal_slot",
             name="orders_subscription_id_order_date_meal_slot_key"
         ),
-        Index("idx_orders_sub", "subscription_id"),
-        Index("idx_orders_user", "user_id"),
-        Index("idx_orders_vendor", "vendor_id"),
+        Index("idx_orders_sub", "subscription_reference_id"),
+        Index("idx_orders_user", "user_reference_id"),
+        Index("idx_orders_vendor", "vendor_reference_id"),
         Index("idx_orders_date_status", "order_date", "status"),
         {"schema": "subscription"},
     )
 
-    id = Column(
+    order_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4
     )
 
-    subscription_id = Column(
+    subscription_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("subscription.subscriptions.id", name="orders_subscription_id_fkey"),
+        ForeignKey("subscription.subscriptions.subscription_id", name="orders_subscription_id_fkey"),
         nullable=False
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("auth.users.user_id", name="orders_user_id_fkey"),
         nullable=False
     )
 
-    vendor_id = Column(
+    vendor_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("provider.providers.provider_id", name="orders_vendor_id_fkey"),
         nullable=False
     )
 
-    delivery_address_id = Column(
+    delivery_address_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("auth.user_addresses.id", name="orders_delivery_address_id_fkey"),
+        ForeignKey("auth.user_addresses.user_address_id", name="orders_delivery_address_id_fkey"),
         nullable=False
     )
 
@@ -100,7 +100,7 @@ class Order(Base):
         nullable=True
     )
 
-    delivery_boy_id = Column(
+    delivery_boy_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("delivery.delivery_boys.delivery_boy_id", name="orders_delivery_boy_id_fkey"),
         nullable=True,

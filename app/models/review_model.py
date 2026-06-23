@@ -20,46 +20,46 @@ class Review(Base):
             "package_rating IS NULL OR (package_rating >= 1 AND package_rating <= 5)",
             name="chk_pkg_rating2"
         ),
-        Index("idx_reviews_vendor", "vendor_id"),
-        Index("idx_reviews_pkg", "package_id"),
-        Index("idx_reviews_unique_daily", "user_id", "vendor_id", "review_date", unique=True),
+        Index("idx_reviews_vendor", "vendor_reference_id"),
+        Index("idx_reviews_pkg", "package_reference_id"),
+        Index("idx_reviews_unique_daily", "user_reference_id", "vendor_reference_id", "review_date", unique=True),
         {"schema": "provider"},
     )
 
-    id = Column(
+    review_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("auth.users.user_id", name="reviews_user_id_fkey"),
         nullable=False,
         index=True
     )
 
-    subscription_id = Column(
+    subscription_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("subscription.subscriptions.id", name="reviews_subscription_id_fkey"),
+        ForeignKey("subscription.subscriptions.subscription_id", name="reviews_subscription_id_fkey"),
         nullable=True
     )
 
-    vendor_id = Column(
+    vendor_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("provider.providers.provider_id", name="reviews_vendor_id_fkey"),
         nullable=False,
         index=True
     )
 
-    order_id = Column(
+    order_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("subscription.extra_orders.id", name="reviews_order_id_fkey"),
+        ForeignKey("subscription.extra_orders.extra_order_id", name="reviews_order_id_fkey"),
         nullable=True
     )
 
-    package_id = Column(
+    package_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("master.menu_packages.package_id", name="reviews_package_id_fkey"),
         nullable=True

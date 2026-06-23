@@ -11,7 +11,7 @@ class AdminReviewService:
                      max_rating: int = None, is_visible: bool = None, page: int = 1, limit: int = 20):
         query = db.query(Review)
         if vendor_id:
-            query = query.filter(Review.vendor_id == vendor_id)
+            query = query.filter(Review.vendor_reference_id == vendor_id)
         if min_rating is not None:
             query = query.filter(Review.vendor_rating >= min_rating)
         if max_rating is not None:
@@ -25,7 +25,7 @@ class AdminReviewService:
 
     @staticmethod
     def set_visibility(db: Session, review_id: str, is_visible: bool):
-        review = db.query(Review).filter(Review.id == review_id).first()
+        review = db.query(Review).filter(Review.review_id == review_id).first()
         if not review:
             raise HTTPException(status_code=404, detail="Review not found")
 
@@ -37,7 +37,7 @@ class AdminReviewService:
 
     @staticmethod
     def delete_review(db: Session, review_id: str):
-        review = db.query(Review).filter(Review.id == review_id).first()
+        review = db.query(Review).filter(Review.review_id == review_id).first()
         if not review:
             raise HTTPException(status_code=404, detail="Review not found")
 

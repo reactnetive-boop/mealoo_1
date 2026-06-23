@@ -30,7 +30,7 @@ class ComplaintRepository:
         return (
             db.query(Complaint)
             .filter(
-                Complaint.id == complaint_id
+                Complaint.complaint_id == complaint_id
             )
             .first()
         )
@@ -44,7 +44,7 @@ class ComplaintRepository:
         return (
             db.query(Complaint)
             .filter(
-                Complaint.user_id == user_id
+                Complaint.user_reference_id == user_id
             )
             .order_by(
                 Complaint.created_at.desc()

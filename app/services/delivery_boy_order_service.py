@@ -63,7 +63,7 @@ class DeliveryBoyOrderService:
 
         order, user, address, subscription = row
 
-        sp_rows = Repo.get_subscription_packages_for_order(db, subscription.id)
+        sp_rows = Repo.get_subscription_packages_for_order(db, subscription.subscription_id)
         packages = [
             {
                 "package_id": mp.package_id,
@@ -103,7 +103,7 @@ class DeliveryBoyOrderService:
         return {
             "success": True,
             "message": "Order picked up — marked as out for delivery",
-            "order_id": order.id,
+            "order_id": order.order_id,
             "status": order.status
         }
 
@@ -130,25 +130,25 @@ class DeliveryBoyOrderService:
         # Credit provider wallet for this delivery
         sub_packages = (
             db.query(SubscriptionPackage)
-            .filter(SubscriptionPackage.subscription_id == order.subscription_id)
+            .filter(SubscriptionPackage.subscription_reference_id == order.subscription_reference_id)
             .all()
         )
         order_amount = sum(
             Decimal(str(sp.unit_price)) * sp.quantity for sp in sub_packages
         )
         if order_amount > 0:
-            wallet = ProviderWalletRepository.get_or_create(db, order.vendor_id)
+            wallet = ProviderWalletRepository.get_or_create(db, order.vendor_reference_id)
             balance_before = Decimal(str(wallet.balance))
             ProviderWalletRepository.credit(db, wallet, order_amount)
             ProviderWalletRepository.create_transaction(db, {
-                "wallet_id": wallet.id,
-                "provider_id": order.vendor_id,
+                "wallet_reference_id": wallet.provider_wallet_id,
+                "provider_reference_id": order.vendor_reference_id,
                 "type": "credit",
                 "reason": "order_delivered",
                 "amount": order_amount,
                 "balance_before": balance_before,
                 "balance_after": Decimal(str(wallet.balance)),
-                "reference_id": order.id,
+                "reference_id": order.order_id,
                 "reference_type": "order",
                 "description": f"Delivery confirmed for {order.order_date} ({order.meal_slot})",
             })
@@ -159,7 +159,7 @@ class DeliveryBoyOrderService:
         return {
             "success": True,
             "message": "Order delivered successfully",
-            "order_id": order.id,
+            "order_id": order.order_id,
             "status": order.status
         }
 
@@ -219,7 +219,7 @@ class DeliveryBoyOrderService:
         return {
             "success": True,
             "message": "Extra order picked up — marked as out for delivery",
-            "order_id": order.id,
+            "order_id": order.extra_order_id,
             "status": order.status
         }
 
@@ -240,18 +240,18 @@ class DeliveryBoyOrderService:
         # Credit provider wallet
         order_amount = Decimal(str(order.total_price))
         if order_amount > 0:
-            wallet = ProviderWalletRepository.get_or_create(db, order.vendor_id)
+            wallet = ProviderWalletRepository.get_or_create(db, order.vendor_reference_id)
             balance_before = Decimal(str(wallet.balance))
             ProviderWalletRepository.credit(db, wallet, order_amount)
             ProviderWalletRepository.create_transaction(db, {
-                "wallet_id": wallet.id,
-                "provider_id": order.vendor_id,
+                "wallet_reference_id": wallet.provider_wallet_id,
+                "provider_reference_id": order.vendor_reference_id,
                 "type": "credit",
                 "reason": "order_delivered",
                 "amount": order_amount,
                 "balance_before": balance_before,
                 "balance_after": Decimal(str(wallet.balance)),
-                "reference_id": order.id,
+                "reference_id": order.extra_order_id,
                 "reference_type": "extra_order",
                 "description": f"Extra order delivered on {order.delivery_date} ({order.meal_slot})",
             })
@@ -262,6 +262,6 @@ class DeliveryBoyOrderService:
         return {
             "success": True,
             "message": "Extra order delivered successfully",
-            "order_id": order.id,
+            "order_id": order.extra_order_id,
             "status": order.status
         }

@@ -21,7 +21,7 @@ class AdminDeliveryBoyService:
         if is_active is not None:
             query = query.filter(DeliveryBoy.is_active == is_active)
         if provider_id:
-            query = query.filter(DeliveryBoy.assigned_provider_id == provider_id)
+            query = query.filter(DeliveryBoy.assigned_provider_reference_id == provider_id)
 
         total = query.count()
         boys = query.order_by(DeliveryBoy.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
@@ -34,12 +34,12 @@ class AdminDeliveryBoyService:
             raise HTTPException(status_code=404, detail="Delivery boy not found")
 
         active_orders = db.query(Order).filter(
-            Order.delivery_boy_id == delivery_boy_id,
+            Order.delivery_boy_reference_id == delivery_boy_id,
             Order.status.in_(["scheduled", "preparing", "out_for_delivery"])
         ).count()
 
         delivered_total = db.query(Order).filter(
-            Order.delivery_boy_id == delivery_boy_id,
+            Order.delivery_boy_reference_id == delivery_boy_id,
             Order.status == "delivered"
         ).count()
 
@@ -62,7 +62,7 @@ class AdminDeliveryBoyService:
 
         if "is_active" in update_data and not update_data["is_active"]:
             pending = db.query(Order).filter(
-                Order.delivery_boy_id == delivery_boy_id,
+                Order.delivery_boy_reference_id == delivery_boy_id,
                 Order.status.in_(["out_for_delivery"])
             ).count()
             if pending:
@@ -84,12 +84,12 @@ class AdminDeliveryBoyService:
         if not boy:
             raise HTTPException(status_code=404, detail="Delivery boy not found")
 
-        boy.assigned_provider_id = provider_id
+        boy.assigned_provider_reference_id = provider_id
         db.commit()
 
         return {
             "success": True,
             "message": "Provider assigned to delivery boy",
             "delivery_boy_id": delivery_boy_id,
-            "assigned_provider_id": provider_id
+            "assigned_provider_reference_id": provider_id
         }

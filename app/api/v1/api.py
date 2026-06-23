@@ -13,6 +13,7 @@ from app.api.v1.endpoints.user_profile import router as user_profile_router
 from app.api.v1.endpoints.user_address import router as user_address_router
 from app.api.v1.endpoints.user_menu import router as user_menu_router
 from app.api.v1.endpoints.user_order import router as user_order_router
+from app.api.v1.endpoints.user_cart import router as user_cart_router
 from app.api.v1.endpoints.user_wallet import router as user_wallet_router
 from app.api.v1.endpoints.user_subscription import router as user_subscription_router
 from app.api.v1.endpoints.user_review import router as user_review_router
@@ -99,6 +100,12 @@ api_router.include_router(
     user_order_router,
     prefix="/user/order",
     tags=["User Order"]
+)
+
+api_router.include_router(
+    user_cart_router,
+    prefix="/user/cart",
+    tags=["User Cart"]
 )
 
 api_router.include_router(

@@ -13,7 +13,7 @@ class DeliveryBoyOTPLog(Base):
 
     __table_args__ = {"schema": "delivery"}
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    delivery_boy_otp_log_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
 
     mobile_number = Column(String(15), nullable=False, index=True)
 

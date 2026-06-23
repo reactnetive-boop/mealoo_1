@@ -17,7 +17,7 @@ class ProviderComplaintRepository:
     def get_by_id(db: Session, complaint_id) -> ProviderComplaint:
         return (
             db.query(ProviderComplaint)
-            .filter(ProviderComplaint.id == complaint_id)
+            .filter(ProviderComplaint.provider_complaint_id == complaint_id)
             .first()
         )
 
@@ -26,8 +26,8 @@ class ProviderComplaintRepository:
         return (
             db.query(ProviderComplaint)
             .filter(
-                ProviderComplaint.id == complaint_id,
-                ProviderComplaint.provider_id == provider_id
+                ProviderComplaint.provider_complaint_id == complaint_id,
+                ProviderComplaint.provider_reference_id == provider_id
             )
             .first()
         )
@@ -36,7 +36,7 @@ class ProviderComplaintRepository:
     def get_all_by_provider(db: Session, provider_id, against: str = None, status: str = None):
         query = (
             db.query(ProviderComplaint)
-            .filter(ProviderComplaint.provider_id == provider_id)
+            .filter(ProviderComplaint.provider_reference_id == provider_id)
         )
         if against:
             query = query.filter(ProviderComplaint.against == against)

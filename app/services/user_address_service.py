@@ -19,7 +19,7 @@ class UserAddressService:
         is_first_address = existing_count == 0
 
         address_data = payload.model_dump()
-        address_data["user_id"] = user_id
+        address_data["user_reference_id"] = user_id
 
         if is_first_address:
             address_data["is_default"] = True
@@ -43,7 +43,7 @@ class UserAddressService:
         return {
             "success": True,
             "message": "Address added successfully",
-            "address_id": str(address.id)
+            "address_id": str(address.user_address_id)
         }
 
     @staticmethod
@@ -65,7 +65,7 @@ class UserAddressService:
                 detail="Address not found"
             )
 
-        if str(address.user_id) != user_id:
+        if str(address.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,
@@ -111,7 +111,7 @@ class UserAddressService:
                 detail="Address not found"
             )
 
-        if str(address.user_id) != user_id:
+        if str(address.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,
@@ -138,7 +138,7 @@ class UserAddressService:
         return {
             "success": True,
             "message": "Address updated successfully",
-            "address_id": str(updated_address.id)
+            "address_id": str(updated_address.user_address_id)
         }
 
     @staticmethod
@@ -160,7 +160,7 @@ class UserAddressService:
                 detail="Address not found"
             )
 
-        if str(address.user_id) != user_id:
+        if str(address.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,

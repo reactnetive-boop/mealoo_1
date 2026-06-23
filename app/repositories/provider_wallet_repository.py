@@ -12,7 +12,7 @@ class ProviderWalletRepository:
     def get_by_provider_id(db: Session, provider_id):
         return (
             db.query(ProviderWallet)
-            .filter(ProviderWallet.provider_id == provider_id)
+            .filter(ProviderWallet.provider_reference_id == provider_id)
             .first()
         )
 
@@ -20,12 +20,12 @@ class ProviderWalletRepository:
     def get_or_create(db: Session, provider_id) -> ProviderWallet:
         wallet = (
             db.query(ProviderWallet)
-            .filter(ProviderWallet.provider_id == provider_id)
+            .filter(ProviderWallet.provider_reference_id == provider_id)
             .first()
         )
         if not wallet:
             wallet = ProviderWallet(
-                provider_id=provider_id,
+                provider_reference_id=provider_id,
                 balance=Decimal("0.00"),
                 total_earned=Decimal("0.00"),
                 total_withdrawn=Decimal("0.00"),
@@ -64,7 +64,7 @@ class ProviderWalletRepository:
     ):
         query = (
             db.query(ProviderWalletTransaction)
-            .filter(ProviderWalletTransaction.provider_id == provider_id)
+            .filter(ProviderWalletTransaction.provider_reference_id == provider_id)
         )
         if txn_type:
             query = query.filter(ProviderWalletTransaction.type == txn_type)

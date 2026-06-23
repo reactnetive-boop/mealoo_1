@@ -46,15 +46,15 @@ class ExtraOrderResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    extra_order_id: UUID
 
-    user_id: UUID
+    user_reference_id: UUID
 
-    vendor_id: UUID
+    vendor_reference_id: UUID
 
-    address_id: UUID
+    address_reference_id: UUID
 
-    package_id: UUID
+    package_reference_id: UUID
 
     quantity: int
 

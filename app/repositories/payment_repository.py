@@ -28,7 +28,7 @@ class PaymentRepository:
         return (
             db.query(Payment)
             .filter(
-                Payment.user_id == user_id
+                Payment.user_reference_id == user_id
             )
             .order_by(
                 Payment.created_at.desc()

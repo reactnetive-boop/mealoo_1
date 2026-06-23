@@ -60,7 +60,7 @@ def generate_subscription_orders():
             # 2. Bulk-fetch existing (order_date, meal_slot) for this subscription
             existing_rows = (
                 db.query(Order.order_date, Order.meal_slot)
-                .filter(Order.subscription_id == sub.id)
+                .filter(Order.subscription_reference_id == sub.subscription_id)
                 .all()
             )
 
@@ -77,11 +77,11 @@ def generate_subscription_orders():
                     if (current_date, slot) not in existing_set:
 
                         new_orders.append({
-                            "id": uuid.uuid4(),
-                            "subscription_id": sub.id,
-                            "user_id": sub.user_id,
-                            "vendor_id": sub.vendor_id,
-                            "delivery_address_id": sub.user_address_id,
+                            "order_id": uuid.uuid4(),
+                            "subscription_reference_id": sub.subscription_id,
+                            "user_reference_id": sub.user_reference_id,
+                            "vendor_reference_id": sub.vendor_reference_id,
+                            "delivery_address_reference_id": sub.user_address_reference_id,
                             "order_date": current_date,
                             "meal_slot": slot,
                             "status": "scheduled",

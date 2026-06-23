@@ -24,7 +24,7 @@ class AdminAuthService:
         db.commit()
 
         token = create_access_token({
-            "admin_id": str(admin.id),
+            "admin_id": str(admin.admin_user_id),
             "email": admin.email,
             "role": admin.role or "admin",
         })
@@ -32,7 +32,7 @@ class AdminAuthService:
         return {
             "success": True,
             "message": "Login successful",
-            "admin_id": admin.id,
+            "admin_id": admin.admin_user_id,
             "role": admin.role,
             "access_token": token,
             "token_type": "bearer"
@@ -40,14 +40,14 @@ class AdminAuthService:
 
     @staticmethod
     def get_profile(db: Session, admin_id: str):
-        admin = db.query(AdminUser).filter(AdminUser.id == admin_id).first()
+        admin = db.query(AdminUser).filter(AdminUser.admin_user_id == admin_id).first()
         if not admin:
             raise HTTPException(status_code=404, detail="Admin not found")
         return {"success": True, "admin": admin}
 
     @staticmethod
     def change_password(db: Session, admin_id: str, payload):
-        admin = db.query(AdminUser).filter(AdminUser.id == admin_id).first()
+        admin = db.query(AdminUser).filter(AdminUser.admin_user_id == admin_id).first()
         if not admin:
             raise HTTPException(status_code=404, detail="Admin not found")
         if not verify_password(payload.current_password, admin.password_hash):

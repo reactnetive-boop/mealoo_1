@@ -39,3 +39,4 @@ from .service_unavailable_log import *
 from .otp_log_model import *
 from .notification_model import *
 from .user_session_model import *
+from .cart_model import *

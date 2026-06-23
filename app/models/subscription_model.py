@@ -16,42 +16,42 @@ class Subscription(Base):
         CheckConstraint("final_amount > 0", name="chk_sub_amount"),
         CheckConstraint("end_date > start_date", name="chk_sub_dates"),
         CheckConstraint("free_skips_used <= free_skips_total", name="chk_sub_skips"),
-        Index("idx_subscriptions_user", "user_id"),
-        Index("idx_subscriptions_vendor", "vendor_id"),
+        Index("idx_subscriptions_user", "user_reference_id"),
+        Index("idx_subscriptions_vendor", "vendor_reference_id"),
         Index("idx_subscriptions_status", "status"),
         Index("idx_subscriptions_dates", "start_date", "end_date"),
         {"schema": "subscription"},
     )
 
-    id = Column(
+    subscription_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("auth.users.user_id", name="subscriptions_user_id_fkey"),
         nullable=False,
         index=True
     )
 
-    vendor_id = Column(
+    vendor_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("provider.providers.provider_id", name="subscriptions_vendor_id_fkey"),
         nullable=False
     )
 
-    plan_id = Column(
+    plan_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("master.subscription_plans.id", name="subscriptions_plan_id_fkey"),
+        ForeignKey("master.subscription_plans.subscription_plan_id", name="subscriptions_plan_id_fkey"),
         nullable=False
     )
 
-    user_address_id = Column(
+    user_address_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("auth.user_addresses.id", name="subscriptions_user_address_id_fkey"),
+        ForeignKey("auth.user_addresses.user_address_id", name="subscriptions_user_address_id_fkey"),
         nullable=False
     )
 

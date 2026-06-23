@@ -61,17 +61,11 @@ class UserVerifyOTPRequest(BaseModel):
 
 class UserLoginRequest(BaseModel):
 
-    phone: Optional[str] = Field(
-        None,
+    phone: str = Field(
+        ...,
         min_length=10,
         max_length=15,
-        description="User mobile number"
-    )
-
-    email: Optional[str] = Field(
-        None,
-        max_length=255,
-        description="User email address"
+        description="Registered mobile number"
     )
 
     password: str = Field(
@@ -79,9 +73,3 @@ class UserLoginRequest(BaseModel):
         min_length=8,
         max_length=64
     )
-
-    @model_validator(mode="after")
-    def check_phone_or_email(self):
-        if not self.phone and not self.email:
-            raise ValueError("Either phone or email is required")
-        return self

@@ -49,7 +49,7 @@ class AdminProviderService:
         )
         subscriptions = (
             db.query(Subscription)
-            .filter(Subscription.vendor_id == provider_id)
+            .filter(Subscription.vendor_reference_id == provider_id)
             .order_by(Subscription.created_at.desc())
             .limit(10)
             .all()
@@ -57,7 +57,7 @@ class AdminProviderService:
         wallet = db.query(ProviderWallet).filter(ProviderWallet.provider_id == provider_id).first()
         txns = (
             db.query(ProviderWalletTransaction)
-            .filter(ProviderWalletTransaction.provider_id == provider_id)
+            .filter(ProviderWalletTransaction.provider_reference_id == provider_id)
             .order_by(ProviderWalletTransaction.created_at.desc())
             .limit(20)
             .all()
@@ -94,7 +94,7 @@ class AdminProviderService:
 
         if not is_active:
             active_subs = db.query(Subscription).filter(
-                Subscription.vendor_id == provider_id,
+                Subscription.vendor_reference_id == provider_id,
                 Subscription.status == "active"
             ).count()
             if active_subs:
@@ -125,7 +125,7 @@ class AdminProviderService:
             raise HTTPException(status_code=404, detail="Provider not found")
 
         existing = db.query(ProviderUnavailability).filter(
-            ProviderUnavailability.provider_id == provider_id,
+            ProviderUnavailability.provider_reference_id == provider_id,
             ProviderUnavailability.unavailable_date == payload.date
         ).first()
         if existing:
@@ -135,7 +135,7 @@ class AdminProviderService:
             )
 
         record = ProviderUnavailability(
-            provider_id=provider_id,
+            provider_reference_id=provider_id,
             unavailable_date=payload.date,
             reason=payload.reason,
         )
@@ -147,7 +147,7 @@ class AdminProviderService:
     @staticmethod
     def remove_unavailability(db: Session, provider_id: str, unavailable_date: Date):
         record = db.query(ProviderUnavailability).filter(
-            ProviderUnavailability.provider_id == provider_id,
+            ProviderUnavailability.provider_reference_id == provider_id,
             ProviderUnavailability.unavailable_date == unavailable_date
         ).first()
         if not record:
@@ -163,7 +163,7 @@ class AdminProviderService:
             raise HTTPException(status_code=404, detail="Provider not found")
         records = (
             db.query(ProviderUnavailability)
-            .filter(ProviderUnavailability.provider_id == provider_id)
+            .filter(ProviderUnavailability.provider_reference_id == provider_id)
             .order_by(ProviderUnavailability.unavailable_date.desc())
             .all()
         )
@@ -191,8 +191,8 @@ class AdminProviderService:
             ProviderWalletRepository.debit(db, wallet, amount)
 
         ProviderWalletRepository.create_transaction(db, {
-            "wallet_id": wallet.id,
-            "provider_id": provider_id,
+            "wallet_reference_id": wallet.provider_wallet_id,
+            "provider_reference_id": provider_id,
             "type": payload.type,
             "reason": "manual_credit" if payload.type == "credit" else "adjustment",
             "amount": amount,

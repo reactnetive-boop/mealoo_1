@@ -10,7 +10,7 @@ class ProviderWalletTransactionResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    provider_wallet_transaction_id: UUID
     type: str
     reason: str
     amount: Decimal
@@ -26,8 +26,8 @@ class ProviderWalletResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    provider_id: UUID
+    provider_wallet_id: UUID
+    provider_reference_id: UUID
     balance: Decimal
     total_earned: Decimal
     total_withdrawn: Decimal

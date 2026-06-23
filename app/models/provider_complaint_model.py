@@ -12,16 +12,16 @@ class ProviderComplaint(Base):
     __tablename__ = "provider_complaints"
 
     __table_args__ = (
-        Index("idx_provider_complaints_provider", "provider_id"),
+        Index("idx_provider_complaints_provider", "provider_reference_id"),
         Index("idx_provider_complaints_against", "against"),
         Index("idx_provider_complaints_status", "status"),
-        Index("idx_provider_complaints_delivery_boy", "delivery_boy_id"),
+        Index("idx_provider_complaints_delivery_boy", "delivery_boy_reference_id"),
         {"schema": "provider"},
     )
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    provider_complaint_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
 
-    provider_id = Column(
+    provider_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("provider.providers.provider_id", name="provider_complaints_provider_id_fkey"),
         nullable=False,
@@ -32,7 +32,7 @@ class ProviderComplaint(Base):
     against = Column(String(30), nullable=False)
 
     # Required when against = 'delivery_boy'
-    delivery_boy_id = Column(
+    delivery_boy_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey(
             "delivery.delivery_boys.delivery_boy_id",

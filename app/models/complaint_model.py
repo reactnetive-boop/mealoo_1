@@ -12,41 +12,41 @@ class Complaint(Base):
     __tablename__ = "complaints"
 
     __table_args__ = (
-        Index("idx_complaints_user", "user_id"),
-        Index("idx_complaints_vendor", "vendor_id"),
+        Index("idx_complaints_user", "user_reference_id"),
+        Index("idx_complaints_vendor", "vendor_reference_id"),
         Index("idx_complaints_status", "status"),
         {"schema": "provider"},
     )
 
-    id = Column(
+    complaint_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("auth.users.user_id", name="complaints_user_id_fkey"),
         nullable=False,
         index=True
     )
 
-    subscription_id = Column(
+    subscription_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("subscription.subscriptions.id", name="complaints_subscription_id_fkey"),
+        ForeignKey("subscription.subscriptions.subscription_id", name="complaints_subscription_id_fkey"),
         nullable=True
     )
 
-    vendor_id = Column(
+    vendor_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("provider.providers.provider_id", name="complaints_vendor_id_fkey"),
         nullable=True
     )
 
-    order_id = Column(
+    order_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("subscription.extra_orders.id", name="complaints_order_id_fkey"),
+        ForeignKey("subscription.extra_orders.extra_order_id", name="complaints_order_id_fkey"),
         nullable=True
     )
 

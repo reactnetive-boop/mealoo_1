@@ -19,7 +19,18 @@ router = APIRouter()
 
 @router.post(
     "/extra",
-    response_model=PlaceOrderResponse
+    response_model=PlaceOrderResponse,
+    summary="Place a One-Time Extra Order",
+    description=(
+        "**Order a meal once without a subscription.**\n\n"
+        "This is for users who want to order on-demand rather than subscribing. "
+        "Requires `package_id`, `vendor_id`, `address_id`, `meal_slot`, and `delivery_date`. "
+        "Payment is deducted from the user's wallet.\n\n"
+        "**Prerequisite:** Wallet must have sufficient balance (`GET /user/wallet`). "
+        "Package must be available and active.\n\n"
+        "**Flow:** Browse packages → check wallet balance → `POST /user/order/extra` → "
+        "`GET /user/order/extra` to view order status"
+    )
 )
 def place_extra_order(
     payload: PlaceExtraOrderRequest,
@@ -36,7 +47,14 @@ def place_extra_order(
 
 @router.get(
     "/extra",
-    response_model=ExtraOrderListResponse
+    response_model=ExtraOrderListResponse,
+    summary="List My Extra Orders",
+    description=(
+        "**Fetch the complete history of one-time (extra) orders placed by the user.**\n\n"
+        "Returns order status, delivery date, meal slot, package, and amount paid. "
+        "Use `order_id` from this list to get full details.\n\n"
+        "**When to call:** On the 'Order History' screen."
+    )
 )
 def get_order_list(
     db: Session = Depends(get_db),
@@ -51,7 +69,14 @@ def get_order_list(
 
 @router.get(
     "/extra/{order_id}",
-    response_model=ExtraOrderResponse
+    response_model=ExtraOrderResponse,
+    summary="Get Extra Order Detail",
+    description=(
+        "**Fetch full details of a specific one-time order.**\n\n"
+        "Returns order status, delivery address, package items, amount, and timestamps. "
+        "Use `order_id` from the `GET /user/order/extra` list response.\n\n"
+        "**When to call:** When the user taps on an order in the history list."
+    )
 )
 def get_order(
     order_id: UUID,

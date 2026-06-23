@@ -35,7 +35,7 @@ class AdminPackageService:
 
         for item in payload.items:
             MenuRepository.create_package_item(db, {
-                "package_id": package.package_id,
+                "package_reference_id": package.package_id,
                 "item_name": item.item_name,
                 "quantity": item.quantity,
             })
@@ -78,9 +78,9 @@ class AdminPackageService:
 
         if "is_active" in update_data and not update_data["is_active"]:
             in_use = db.query(SubscriptionPackage).join(
-                Subscription, SubscriptionPackage.subscription_id == Subscription.id
+                Subscription, SubscriptionPackage.subscription_reference_id == Subscription.subscription_id
             ).filter(
-                SubscriptionPackage.package_id == package_id,
+                SubscriptionPackage.package_reference_id == package_id,
                 Subscription.status == "active"
             ).count()
             if in_use:
@@ -103,9 +103,9 @@ class AdminPackageService:
             raise HTTPException(status_code=404, detail="Package not found")
 
         in_use = db.query(SubscriptionPackage).join(
-            Subscription, SubscriptionPackage.subscription_id == Subscription.id
+            Subscription, SubscriptionPackage.subscription_reference_id == Subscription.subscription_id
         ).filter(
-            SubscriptionPackage.package_id == package_id,
+            SubscriptionPackage.package_reference_id == package_id,
             Subscription.status == "active"
         ).count()
         if in_use:
@@ -158,14 +158,14 @@ class AdminPlanService:
 
     @staticmethod
     def get_plan(db: Session, plan_id: str):
-        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == plan_id).first()
+        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.subscription_plan_id == plan_id).first()
         if not plan:
             raise HTTPException(status_code=404, detail="Plan not found")
         return plan
 
     @staticmethod
     def update_plan(db: Session, plan_id: str, payload):
-        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == plan_id).first()
+        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.subscription_plan_id == plan_id).first()
         if not plan:
             raise HTTPException(status_code=404, detail="Plan not found")
 
@@ -173,7 +173,7 @@ class AdminPlanService:
 
         if "is_active" in update_data and not update_data["is_active"]:
             in_use = db.query(Subscription).filter(
-                Subscription.plan_id == plan_id,
+                Subscription.plan_reference_id == plan_id,
                 Subscription.status == "active"
             ).count()
             if in_use:

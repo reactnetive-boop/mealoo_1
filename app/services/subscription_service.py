@@ -91,14 +91,14 @@ class SubscriptionService:
                     break
 
             package_list.append({
-                "subscription_id": str(sub.id),
+                "subscription_id": str(sub.subscription_id),
                 "subscription_status": sub.status,
                 "meal_slot": sub.meal_slot,
                 "start_date": str(sub.start_date),
                 "end_date": str(sub.end_date),
                 "package_id": str(pkg.package_id),
-                "category_id": str(pkg.category_id),
-                "provider_id": str(sub.vendor_id),
+                "category_id": str(pkg.category_reference_id),
+                "provider_id": str(sub.vendor_reference_id),
                 "package_name": pkg.package_name,
                 "short_description": pkg.short_description,
                 "meal_type": pkg.meal_type,
@@ -123,22 +123,7 @@ class SubscriptionService:
         user_id: str,
         payload
     ):
-        # 1. Check user has no active subscription already
-        existing = SubscriptionRepository.get_active_by_user(
-            db, user_id
-        )
-
-        if existing:
-
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "You already have an active subscription. "
-                    "Please cancel it before subscribing to a new one."
-                )
-            )
-
-        # 2. Validate plan
+        # 1. Validate plan
         plan = SubscriptionPlanRepository.get_by_id(
             db, payload.plan_id
         )
@@ -155,7 +140,7 @@ class SubscriptionService:
             db, payload.address_id
         )
 
-        if not address or str(address.user_id) != user_id:
+        if not address or str(address.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=400,
@@ -275,10 +260,10 @@ class SubscriptionService:
             )
 
             subscription_data = {
-                "user_id": user_id,
-                "vendor_id": str(payload.vendor_id),
-                "plan_id": str(payload.plan_id),
-                "user_address_id": str(payload.address_id),
+                "user_reference_id": user_id,
+                "vendor_reference_id": str(payload.vendor_id),
+                "plan_reference_id": str(payload.plan_id),
+                "user_address_reference_id": str(payload.address_id),
                 "status": "active",
                 "meal_slot": plan.meal_slot,
                 "subscription_type": plan.subscription_type,
@@ -300,8 +285,8 @@ class SubscriptionService:
                 SubscriptionRepository.create_package(
                     db,
                     {
-                        "subscription_id": subscription.id,
-                        "package_id": str(item["package_id"]),
+                        "subscription_reference_id": subscription.subscription_id,
+                        "package_reference_id": str(item["package_id"]),
                         "quantity": item["quantity"],
                         "unit_price": item["unit_price"]
                     }
@@ -314,7 +299,7 @@ class SubscriptionService:
             return {
                 "success": True,
                 "message": "Subscription created successfully",
-                "subscription_id": subscription.id,
+                "subscription_id": subscription.subscription_id,
                 "total_amount": total_amount,
                 "discount_amount": discount_amount,
                 "final_amount": final_amount,
@@ -370,7 +355,7 @@ class SubscriptionService:
                 detail="Subscription not found"
             )
 
-        if str(subscription.user_id) != user_id:
+        if str(subscription.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,
@@ -398,7 +383,7 @@ class SubscriptionService:
                 detail="Subscription not found"
             )
 
-        if str(subscription.user_id) != user_id:
+        if str(subscription.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,
@@ -438,7 +423,7 @@ class SubscriptionService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        if str(subscription.user_id) != user_id:
+        if str(subscription.user_reference_id) != user_id:
             raise HTTPException(status_code=403, detail="Access denied")
 
         if subscription.status != "active":
@@ -458,7 +443,7 @@ class SubscriptionService:
         try:
             # Cancel all future scheduled orders from the pause date onwards
             db.query(Order).filter(
-                Order.subscription_id == subscription.id,
+                Order.subscription_reference_id == subscription.subscription_id,
                 Order.order_date >= pause_start_date,
                 Order.status == "scheduled"
             ).update({"status": "cancelled"}, synchronize_session=False)
@@ -492,7 +477,7 @@ class SubscriptionService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        if str(subscription.user_id) != user_id:
+        if str(subscription.user_reference_id) != user_id:
             raise HTTPException(status_code=403, detail="Access denied")
 
         if subscription.status != "paused":
@@ -510,7 +495,7 @@ class SubscriptionService:
             # Reactivate cancelled orders that fall within the resumed window
             # (resume_date up to but not including old_end_date)
             db.query(Order).filter(
-                Order.subscription_id == subscription.id,
+                Order.subscription_reference_id == subscription.subscription_id,
                 Order.order_date >= resume_date,
                 Order.order_date < old_end_date,
                 Order.status == "cancelled"
@@ -527,11 +512,11 @@ class SubscriptionService:
             while current_date < new_end_date:
                 for slot in individual_slots:
                     new_orders.append({
-                        "id": uuid.uuid4(),
-                        "subscription_id": subscription.id,
-                        "user_id": subscription.user_id,
-                        "vendor_id": subscription.vendor_id,
-                        "delivery_address_id": subscription.user_address_id,
+                        "order_id": uuid.uuid4(),
+                        "subscription_reference_id": subscription.subscription_id,
+                        "user_reference_id": subscription.user_reference_id,
+                        "vendor_reference_id": subscription.vendor_reference_id,
+                        "delivery_address_reference_id": subscription.user_address_reference_id,
                         "order_date": current_date,
                         "meal_slot": slot,
                         "status": "scheduled",

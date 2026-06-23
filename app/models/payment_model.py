@@ -17,36 +17,36 @@ class Payment(Base):
             name="chk_payment_amount"
         ),
         CheckConstraint(
-            "subscription_id IS NOT NULL OR extra_order_id IS NOT NULL",
+            "subscription_reference_id IS NOT NULL OR extra_order_reference_id IS NOT NULL",
             name="chk_payment_ref"
         ),
         UniqueConstraint("gateway_txn_id", name="payments_gateway_txn_id_key"),
         {"schema": "subscription"},
     )
 
-    id = Column(
+    payment_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    subscription_id = Column(
+    subscription_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("subscription.subscriptions.id", name="payments_subscription_id_fkey"),
+        ForeignKey("subscription.subscriptions.subscription_id", name="payments_subscription_id_fkey"),
         nullable=True
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("auth.users.user_id", name="payments_user_id_fkey"),
         nullable=False,
         index=True
     )
 
-    extra_order_id = Column(
+    extra_order_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("subscription.extra_orders.id", name="payments_extra_order_id_fkey"),
+        ForeignKey("subscription.extra_orders.extra_order_id", name="payments_extra_order_id_fkey"),
         nullable=True
     )
 

@@ -17,18 +17,18 @@ from app.core.database import Base
 class Notification(Base):
     __tablename__ = "notifications"
     __table_args__ = (
-        Index("idx_notifications_user", "user_id"),
-        Index("idx_notifications_unread", "user_id", "is_read"),
+        Index("idx_notifications_user", "user_reference_id"),
+        Index("idx_notifications_unread", "user_reference_id", "is_read"),
         {"schema": "auth"},
     )
 
-    id = Column(
+    notification_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey(
             "auth.users.user_id",

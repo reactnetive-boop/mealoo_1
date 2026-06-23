@@ -66,8 +66,8 @@ class ProviderWalletService:
             balance_after = Decimal(str(wallet.balance))
 
             ProviderWalletRepository.create_transaction(db, {
-                "wallet_id": wallet.id,
-                "provider_id": provider_id,
+                "wallet_reference_id": wallet.provider_wallet_id,
+                "provider_reference_id": provider_id,
                 "type": "debit",
                 "reason": "withdrawal",
                 "amount": amount,
@@ -116,8 +116,8 @@ class ProviderWalletService:
         balance_after = Decimal(str(wallet.balance))
 
         ProviderWalletRepository.create_transaction(db, {
-            "wallet_id": wallet.id,
-            "provider_id": provider_id,
+            "wallet_reference_id": wallet.provider_wallet_id,
+            "provider_reference_id": provider_id,
             "type": "credit",
             "reason": "order_delivered",
             "amount": amount,

@@ -11,7 +11,7 @@ class ProviderComplaintService:
     @staticmethod
     def raise_complaint(db: Session, provider_id: str, payload):
         data = payload.model_dump()
-        data["provider_id"] = provider_id
+        data["provider_reference_id"] = provider_id
         data["status"] = "open"
 
         complaint = ProviderComplaintRepository.create(db, data)
@@ -19,7 +19,7 @@ class ProviderComplaintService:
         return {
             "success": True,
             "message": "Complaint raised successfully",
-            "complaint_id": str(complaint.id)
+            "complaint_id": str(complaint.provider_complaint_id)
         }
 
     @staticmethod
@@ -67,7 +67,7 @@ class ProviderComplaintService:
         return {
             "success": True,
             "message": "Complaint updated successfully",
-            "complaint_id": str(complaint.id)
+            "complaint_id": str(complaint.provider_complaint_id)
         }
 
     @staticmethod

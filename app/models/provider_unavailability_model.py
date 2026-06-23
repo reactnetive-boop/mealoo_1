@@ -12,14 +12,14 @@ class ProviderUnavailability(Base):
     __tablename__ = "provider_unavailability"
 
     __table_args__ = (
-        UniqueConstraint("provider_id", "unavailable_date", name="uq_provider_unavailability_date"),
-        Index("idx_provider_unavail_date", "provider_id", "unavailable_date"),
+        UniqueConstraint("provider_reference_id", "unavailable_date", name="uq_provider_unavailability_date"),
+        Index("idx_provider_unavail_date", "provider_reference_id", "unavailable_date"),
         {"schema": "provider"},
     )
 
-    id = Column(Integer, primary_key=True, index=True)
+    provider_unavailability_id = Column(Integer, primary_key=True, index=True)
 
-    provider_id = Column(
+    provider_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("provider.providers.provider_id", name="provider_unavail_provider_id_fkey"),
         nullable=False,

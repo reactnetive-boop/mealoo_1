@@ -30,7 +30,7 @@ class ReviewRepository:
         return (
             db.query(Review)
             .filter(
-                Review.id == review_id
+                Review.review_id == review_id
             )
             .first()
         )
@@ -44,7 +44,7 @@ class ReviewRepository:
         return (
             db.query(Review)
             .filter(
-                Review.user_id == user_id,
+                Review.user_reference_id == user_id,
                 Review.is_visible == True
             )
             .order_by(
@@ -62,7 +62,7 @@ class ReviewRepository:
         return (
             db.query(Review)
             .filter(
-                Review.vendor_id == vendor_id,
+                Review.vendor_reference_id == vendor_id,
                 Review.is_visible == True
             )
             .order_by(

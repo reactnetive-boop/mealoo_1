@@ -40,7 +40,7 @@ class PackageImageRepository:
     ):
 
         db.query(MenuPackageImage).filter(
-            MenuPackageImage.package_id == package_id
+            MenuPackageImage.package_reference_id == package_id
         ).update({
             "is_primary": False
         })

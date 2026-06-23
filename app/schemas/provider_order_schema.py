@@ -12,11 +12,11 @@ class SubscriptionOrderResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    subscription_id: UUID
-    user_id: UUID
-    vendor_id: UUID
-    delivery_address_id: UUID
+    order_id: UUID
+    subscription_reference_id: UUID
+    user_reference_id: UUID
+    vendor_reference_id: UUID
+    delivery_address_reference_id: UUID
     order_date: date
     meal_slot: str
     status: str
@@ -33,11 +33,11 @@ class ProviderSubscriptionResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    user_id: UUID
-    vendor_id: UUID
-    plan_id: UUID
-    user_address_id: UUID
+    subscription_id: UUID
+    user_reference_id: UUID
+    vendor_reference_id: UUID
+    plan_reference_id: UUID
+    user_address_reference_id: UUID
     status: str
     meal_slot: str
     subscription_type: str
@@ -96,11 +96,11 @@ class ProviderExtraOrderResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    user_id: UUID
-    vendor_id: UUID
-    address_id: UUID
-    package_id: UUID
+    extra_order_id: UUID
+    user_reference_id: UUID
+    vendor_reference_id: UUID
+    address_reference_id: UUID
+    package_reference_id: UUID
     quantity: int
     unit_price: Decimal
     total_price: Decimal

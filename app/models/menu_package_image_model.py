@@ -40,7 +40,7 @@ class MenuPackageImage(
         unique=True
     )
 
-    package_id = Column(
+    package_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("master.menu_packages.package_id")
     )

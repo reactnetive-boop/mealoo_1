@@ -53,10 +53,10 @@ class ProviderComplaintResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    provider_id: UUID
+    provider_complaint_id: UUID
+    provider_reference_id: UUID
     against: str
-    delivery_boy_id: Optional[UUID]
+    delivery_boy_reference_id: Optional[UUID]
     order_id: Optional[UUID]
     order_type: Optional[str]
     status: str

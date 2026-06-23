@@ -15,7 +15,18 @@ from app.services.user_address_service import UserAddressService
 router = APIRouter()
 
 
-@router.post("/address")
+@router.post(
+    "/address",
+    summary="Add Delivery Address",
+    description=(
+        "**Save a new delivery address for the user.**\n\n"
+        "Users can have multiple addresses (Home, Work, Other). "
+        "The returned `address_id` (UUID) is required when creating a subscription or placing an extra order — "
+        "pass it as `address_id` in those requests.\n\n"
+        "**When to call:** During onboarding or when the user adds a new address from settings.\n\n"
+        "**Flow:** Add address → use `address_id` in `POST /user/subscription` or `POST /user/order/extra`"
+    )
+)
 def add_address(
     payload: AddUserAddressRequest,
     db: Session = Depends(get_db),
@@ -37,7 +48,14 @@ def add_address(
 
 @router.get(
     "/address",
-    response_model=UserAddressListResponse
+    response_model=UserAddressListResponse,
+    summary="List My Addresses",
+    description=(
+        "**Fetch all delivery addresses saved by the user.**\n\n"
+        "Use this to populate the address picker on the checkout / subscription screen. "
+        "Each address has an `address_id` needed to create a subscription or extra order.\n\n"
+        "**Requires:** Bearer token from `POST /user/login`"
+    )
 )
 def get_address_list(
     db: Session = Depends(get_db),
@@ -52,7 +70,13 @@ def get_address_list(
 
 @router.get(
     "/address/{address_id}",
-    response_model=UserAddressResponse
+    response_model=UserAddressResponse,
+    summary="Get Address Detail",
+    description=(
+        "**Fetch a single saved address by its ID.**\n\n"
+        "Use this to pre-fill the edit-address form.\n\n"
+        "**Requires:** Bearer token from `POST /user/login`"
+    )
 )
 def get_address(
     address_id: str,
@@ -67,7 +91,16 @@ def get_address(
     )
 
 
-@router.put("/address/{address_id}")
+@router.put(
+    "/address/{address_id}",
+    summary="Update Address",
+    description=(
+        "**Edit an existing delivery address.**\n\n"
+        "Send only the fields that changed. "
+        "Call `GET /user/address/{address_id}` first to get the current values for pre-filling the form.\n\n"
+        "**Requires:** Bearer token from `POST /user/login`"
+    )
+)
 def update_address(
     address_id: str,
     payload: UpdateUserAddressRequest,
@@ -89,7 +122,16 @@ def update_address(
         raise
 
 
-@router.delete("/address/{address_id}")
+@router.delete(
+    "/address/{address_id}",
+    summary="Delete Address",
+    description=(
+        "**Remove a saved delivery address.**\n\n"
+        "Cannot delete an address that is currently linked to an active subscription. "
+        "Refresh the address list after deletion.\n\n"
+        "**Requires:** Bearer token from `POST /user/login`"
+    )
+)
 def delete_address(
     address_id: str,
     db: Session = Depends(get_db),

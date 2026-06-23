@@ -21,19 +21,19 @@ class UserAddress(Base):
             "longitude >= -180 AND longitude <= 180",
             name="user_addresses_longitude_check"
         ),
-        Index("idx_user_addresses_user", "user_id"),
+        Index("idx_user_addresses_user", "user_reference_id"),
         Index("idx_user_addresses_pincode", "pin_code"),
         {"schema": "auth"},
     )
 
-    id = Column(
+    user_address_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("auth.users.user_id", name="user_addresses_user_id_fkey"),
         nullable=False,

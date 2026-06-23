@@ -16,38 +16,38 @@ class ExtraOrder(Base):
             "quantity >= 1 AND quantity <= 5",
             name="chk_extra_qty"
         ),
-        Index("idx_extra_orders_user", "user_id"),
-        Index("idx_extra_orders_vendor", "vendor_id"),
+        Index("idx_extra_orders_user", "user_reference_id"),
+        Index("idx_extra_orders_vendor", "vendor_reference_id"),
         {"schema": "subscription"},
     )
 
-    id = Column(
+    extra_order_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("auth.users.user_id", name="extra_orders_user_id_fkey"),
         nullable=False,
         index=True
     )
 
-    vendor_id = Column(
+    vendor_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("provider.providers.provider_id", name="extra_orders_vendor_id_fkey"),
         nullable=False
     )
 
-    address_id = Column(
+    address_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("auth.user_addresses.id", name="extra_orders_address_id_fkey"),
+        ForeignKey("auth.user_addresses.user_address_id", name="extra_orders_address_id_fkey"),
         nullable=False
     )
 
-    package_id = Column(
+    package_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("master.menu_packages.package_id", name="extra_orders_package_id_fkey"),
         nullable=False
@@ -80,7 +80,7 @@ class ExtraOrder(Base):
         nullable=False
     )
 
-    delivery_boy_id = Column(
+    delivery_boy_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("delivery.delivery_boys.delivery_boy_id", name="extra_orders_delivery_boy_id_fkey"),
         nullable=True,

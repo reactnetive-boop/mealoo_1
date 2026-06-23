@@ -37,7 +37,7 @@ class UserMenuService:
 
             package_list.append({
                 "package_id": pkg.package_id,
-                "category_id": pkg.category_id,
+                "category_reference_id": pkg.category_reference_id,
                 "provider_id": psp.provider_id,
                 "package_name": pkg.package_name,
                 "short_description": pkg.short_description,

@@ -37,7 +37,7 @@ class UserPackageListItemResponse(BaseModel):
 
     package_id: UUID
 
-    category_id: UUID
+    category_reference_id: UUID
 
     provider_id: UUID
 
@@ -77,7 +77,7 @@ class UserPackageDetailResponse(BaseModel):
 
     package_id: UUID
 
-    category_id: UUID
+    category_reference_id: UUID
 
     provider_id: UUID
 

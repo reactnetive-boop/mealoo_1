@@ -25,7 +25,14 @@ router = APIRouter()
 
 @router.get(
     "/plans/options",
-    response_model=SubscriptionPlanOptionsResponse
+    response_model=SubscriptionPlanOptionsResponse,
+    summary="Get Subscription Filter Options",
+    description=(
+        "**Fetch the distinct meal slot and subscription type values available in the system.**\n\n"
+        "Use the returned lists to populate filter dropdowns on the subscription plans screen "
+        "before calling `GET /user/subscription/plans`.\n\n"
+        "**When to call:** When the user opens the 'Choose a Plan' screen for the first time."
+    )
 )
 def get_plan_options(
     db: Session = Depends(get_db),
@@ -37,7 +44,18 @@ def get_plan_options(
 
 @router.get(
     "/plans",
-    response_model=SubscriptionPlanListResponse
+    response_model=SubscriptionPlanListResponse,
+    summary="List Subscription Plans",
+    description=(
+        "**Fetch available subscription plans with optional filters.**\n\n"
+        "Filter by `meal_slot` (e.g. `breakfast`, `lunch`, `all_slots`) and/or "
+        "`subscription_type` (e.g. `weekly`, `monthly`). "
+        "Each plan includes `plan_id`, duration in days, price, discount %, and free skips allowed.\n\n"
+        "**When to call:** After the user selects filters on the plans screen. "
+        "The `plan_id` from this response is required when creating a subscription.\n\n"
+        "**Flow:** `GET /plans/options` → user selects filters → `GET /plans` → select a plan → "
+        "`POST /user/subscription`"
+    )
 )
 def list_subscription_plans(
     meal_slot: str = Query(
@@ -60,7 +78,14 @@ def list_subscription_plans(
 
 
 @router.get(
-    "/packages"
+    "/packages",
+    summary="List My Subscribed Packages",
+    description=(
+        "**Fetch all meal packages across all of the user's active subscriptions.**\n\n"
+        "Returns package details along with their linked subscription status, meal slot, "
+        "and date range. Use this on the 'My Meals' or 'Active Plan' home screen.\n\n"
+        "**Requires:** Bearer token from `POST /user/login`"
+    )
 )
 def list_subscribed_packages(
     db: Session = Depends(get_db),
@@ -75,7 +100,24 @@ def list_subscribed_packages(
 
 @router.post(
     "",
-    response_model=CreateSubscriptionResponse
+    response_model=CreateSubscriptionResponse,
+    summary="Create a New Subscription",
+    description=(
+        "**Subscribe to one or more meal packages from a single vendor.**\n\n"
+        "**Required fields:**\n"
+        "- `plan_id` — from `GET /user/subscription/plans`\n"
+        "- `vendor_id` — `provider_id` from the package listing\n"
+        "- `address_id` — from `GET /user/address`\n"
+        "- `start_date` — when delivery should begin (YYYY-MM-DD)\n"
+        "- `items` — list of `{package_id, quantity}`\n\n"
+        "**What happens internally:** validates packages, checks provider capacity, "
+        "calculates total after plan discount, verifies wallet balance, "
+        "creates subscription + daily orders, and returns the subscription ID.\n\n"
+        "**Prerequisite:** Wallet must have sufficient balance (`GET /user/wallet`). "
+        "All packages must belong to the same vendor. Each package must be subscription-enabled.\n\n"
+        "**Flow:** Browse packages → add to cart → check wallet → pick plan & address → "
+        "`POST /user/subscription` → `GET /user/subscription` to confirm"
+    )
 )
 def create_subscription(
     payload: CreateSubscriptionRequest,
@@ -92,7 +134,14 @@ def create_subscription(
 
 @router.get(
     "",
-    response_model=SubscriptionListResponse
+    response_model=SubscriptionListResponse,
+    summary="List My Subscriptions",
+    description=(
+        "**Fetch all subscriptions (active, paused, expired, cancelled) for the logged-in user.**\n\n"
+        "Each subscription includes its status, meal slot, date range, vendor, and total amount. "
+        "Use `subscription_id` to fetch detailed info or to pause / cancel.\n\n"
+        "**When to call:** On the 'My Subscriptions' screen or dashboard."
+    )
 )
 def get_my_subscriptions(
     db: Session = Depends(get_db),
@@ -107,7 +156,14 @@ def get_my_subscriptions(
 
 @router.get(
     "/{subscription_id}",
-    response_model=SubscriptionResponse
+    response_model=SubscriptionResponse,
+    summary="Get Subscription Detail",
+    description=(
+        "**Fetch full details of a single subscription by its ID.**\n\n"
+        "Returns plan info, packages, dates, status, and financial summary. "
+        "Use `subscription_id` from `GET /user/subscription`.\n\n"
+        "**When to call:** When the user taps on a subscription from the list screen."
+    )
 )
 def get_subscription(
     subscription_id: UUID,
@@ -123,7 +179,15 @@ def get_subscription(
 
 
 @router.put(
-    "/{subscription_id}/cancel"
+    "/{subscription_id}/cancel",
+    summary="Cancel Subscription",
+    description=(
+        "**Permanently cancel an active subscription.**\n\n"
+        "Provide an optional `cancel_reason` in the request body. "
+        "Cancelled subscriptions cannot be reactivated — the user must create a new one.\n\n"
+        "**When to call:** When the user chooses 'Cancel Plan' from subscription settings.\n\n"
+        "**Note:** To temporarily stop deliveries, use `PUT /{subscription_id}/pause` instead."
+    )
 )
 def cancel_subscription(
     subscription_id: UUID,
@@ -142,7 +206,16 @@ def cancel_subscription(
 
 @router.put(
     "/{subscription_id}/pause",
-    response_model=PauseSubscriptionResponse
+    response_model=PauseSubscriptionResponse,
+    summary="Pause Subscription",
+    description=(
+        "**Temporarily pause an active subscription starting from tomorrow.**\n\n"
+        "All scheduled orders from the pause date onwards are cancelled automatically. "
+        "The subscription end date is extended when resumed to compensate for paused days.\n\n"
+        "**When to call:** When the user is going on vacation or wants to stop meals temporarily. "
+        "Use `PUT /{subscription_id}/resume` to restart.\n\n"
+        "**Note:** Cannot pause if the subscription ends before tomorrow."
+    )
 )
 def pause_subscription(
     subscription_id: UUID,
@@ -159,7 +232,15 @@ def pause_subscription(
 
 @router.put(
     "/{subscription_id}/resume",
-    response_model=ResumeSubscriptionResponse
+    response_model=ResumeSubscriptionResponse,
+    summary="Resume Paused Subscription",
+    description=(
+        "**Resume a paused subscription starting from tomorrow.**\n\n"
+        "The subscription end date is automatically extended by the number of days it was paused. "
+        "Cancelled orders in the resumed window are reactivated and new orders are created "
+        "for the extended period.\n\n"
+        "**When to call:** After `PUT /{subscription_id}/pause` when the user is ready to restart deliveries."
+    )
 )
 def resume_subscription(
     subscription_id: UUID,

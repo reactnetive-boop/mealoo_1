@@ -31,13 +31,13 @@ class UserSession(Base):
         {"schema": "auth"}
     )
 
-    id = Column(
+    user_session_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey(
             "auth.users.user_id",

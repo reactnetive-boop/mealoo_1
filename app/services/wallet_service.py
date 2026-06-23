@@ -86,8 +86,8 @@ class WalletService:
             balance_after = Decimal(str(wallet.balance))
 
             txn_data = {
-                "wallet_id": wallet.id,
-                "user_id": user_id,
+                "wallet_reference_id": wallet.wallet_id,
+                "user_reference_id": user_id,
                 "type": "credit",
                 "reason": "topup",
                 "amount": amount,

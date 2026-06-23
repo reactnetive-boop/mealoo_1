@@ -82,7 +82,7 @@ class DeliveryBoyRepository:
         meal_slot: str = None,
         status: str = None
     ):
-        query = db.query(Order).filter(Order.delivery_boy_id == delivery_boy_id)
+        query = db.query(Order).filter(Order.delivery_boy_reference_id == delivery_boy_id)
         if order_date:
             query = query.filter(Order.order_date == order_date)
         if meal_slot:
@@ -95,12 +95,12 @@ class DeliveryBoyRepository:
     def get_subscription_order_detail(db: Session, order_id, delivery_boy_id):
         return (
             db.query(Order, User, UserAddress, Subscription)
-            .join(User, Order.user_id == User.user_id)
-            .join(UserAddress, Order.delivery_address_id == UserAddress.id)
-            .join(Subscription, Order.subscription_id == Subscription.id)
+            .join(User, Order.user_reference_id == User.user_id)
+            .join(UserAddress, Order.delivery_address_reference_id == UserAddress.user_address_id)
+            .join(Subscription, Order.subscription_reference_id == Subscription.subscription_id)
             .filter(
-                Order.id == order_id,
-                Order.delivery_boy_id == delivery_boy_id
+                Order.order_id == order_id,
+                Order.delivery_boy_reference_id == delivery_boy_id
             )
             .first()
         )
@@ -110,8 +110,8 @@ class DeliveryBoyRepository:
         return (
             db.query(Order)
             .filter(
-                Order.id == order_id,
-                Order.delivery_boy_id == delivery_boy_id
+                Order.order_id == order_id,
+                Order.delivery_boy_reference_id == delivery_boy_id
             )
             .first()
         )
@@ -120,8 +120,8 @@ class DeliveryBoyRepository:
     def get_subscription_packages_for_order(db: Session, subscription_id):
         return (
             db.query(SubscriptionPackage, MenuPackage)
-            .join(MenuPackage, SubscriptionPackage.package_id == MenuPackage.package_id)
-            .filter(SubscriptionPackage.subscription_id == subscription_id)
+            .join(MenuPackage, SubscriptionPackage.package_reference_id == MenuPackage.package_id)
+            .filter(SubscriptionPackage.subscription_reference_id == subscription_id)
             .all()
         )
 
@@ -135,7 +135,7 @@ class DeliveryBoyRepository:
         meal_slot: str = None,
         status: str = None
     ):
-        query = db.query(ExtraOrder).filter(ExtraOrder.delivery_boy_id == delivery_boy_id)
+        query = db.query(ExtraOrder).filter(ExtraOrder.delivery_boy_reference_id == delivery_boy_id)
         if delivery_date:
             query = query.filter(ExtraOrder.delivery_date == delivery_date)
         if meal_slot:
@@ -148,12 +148,12 @@ class DeliveryBoyRepository:
     def get_extra_order_detail(db: Session, order_id, delivery_boy_id):
         return (
             db.query(ExtraOrder, User, UserAddress, MenuPackage)
-            .join(User, ExtraOrder.user_id == User.user_id)
-            .join(UserAddress, ExtraOrder.address_id == UserAddress.id)
-            .join(MenuPackage, ExtraOrder.package_id == MenuPackage.package_id)
+            .join(User, ExtraOrder.user_reference_id == User.user_id)
+            .join(UserAddress, ExtraOrder.address_reference_id == UserAddress.user_address_id)
+            .join(MenuPackage, ExtraOrder.package_reference_id == MenuPackage.package_id)
             .filter(
-                ExtraOrder.id == order_id,
-                ExtraOrder.delivery_boy_id == delivery_boy_id
+                ExtraOrder.extra_order_id == order_id,
+                ExtraOrder.delivery_boy_reference_id == delivery_boy_id
             )
             .first()
         )
@@ -163,8 +163,8 @@ class DeliveryBoyRepository:
         return (
             db.query(ExtraOrder)
             .filter(
-                ExtraOrder.id == order_id,
-                ExtraOrder.delivery_boy_id == delivery_boy_id
+                ExtraOrder.extra_order_id == order_id,
+                ExtraOrder.delivery_boy_reference_id == delivery_boy_id
             )
             .first()
         )

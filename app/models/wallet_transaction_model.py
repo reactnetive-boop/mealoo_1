@@ -13,25 +13,25 @@ class WalletTransaction(Base):
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="chk_wtxn_amount"),
-        Index("idx_wallet_txn_user", "user_id"),
-        Index("idx_wallet_txn_wallet", "wallet_id"),
+        Index("idx_wallet_txn_user", "user_reference_id"),
+        Index("idx_wallet_txn_wallet", "wallet_reference_id"),
         {"schema": "subscription"},
     )
 
-    id = Column(
+    wallet_transaction_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    wallet_id = Column(
+    wallet_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("subscription.wallets.id", name="wallet_transactions_wallet_id_fkey"),
+        ForeignKey("subscription.wallets.wallet_id", name="wallet_transactions_wallet_id_fkey"),
         nullable=False
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("auth.users.user_id", name="wallet_transactions_user_id_fkey"),
         nullable=False,

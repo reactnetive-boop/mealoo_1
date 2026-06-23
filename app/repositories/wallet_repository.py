@@ -18,7 +18,7 @@ class WalletRepository:
         return (
             db.query(Wallet)
             .filter(
-                Wallet.user_id == user_id
+                Wallet.user_reference_id == user_id
             )
             .first()
         )
@@ -32,7 +32,7 @@ class WalletRepository:
         wallet = (
             db.query(Wallet)
             .filter(
-                Wallet.user_id == user_id
+                Wallet.user_reference_id == user_id
             )
             .first()
         )
@@ -40,7 +40,7 @@ class WalletRepository:
         if not wallet:
 
             wallet = Wallet(
-                user_id=user_id,
+                user_reference_id=user_id,
                 balance=Decimal("0.00")
             )
 
@@ -100,7 +100,7 @@ class WalletRepository:
         return (
             db.query(WalletTransaction)
             .filter(
-                WalletTransaction.user_id == user_id
+                WalletTransaction.user_reference_id == user_id
             )
             .order_by(
                 WalletTransaction.created_at.desc()

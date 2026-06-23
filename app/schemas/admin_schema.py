@@ -24,7 +24,7 @@ class AdminLoginResponse(BaseModel):
 
 class AdminProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: UUID
+    admin_user_id: UUID
     full_name: Optional[str]
     email: str
     role: Optional[str]
@@ -115,7 +115,7 @@ class AdminDeliveryBoyResponse(BaseModel):
     is_active: bool
     vehicle_type: Optional[str]
     vehicle_number: Optional[str]
-    assigned_provider_id: Optional[UUID]
+    assigned_provider_reference_id: Optional[UUID]
     created_at: Optional[datetime]
 
 
@@ -157,8 +157,8 @@ class AdminCreatePackageRequest(BaseModel):
 class AdminPackageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     package_id: UUID
-    provider_id: Optional[UUID]
-    category_id: Optional[UUID]
+    provider_reference_id: Optional[UUID]
+    category_reference_id: Optional[UUID]
     package_name: str
     description: Optional[str]
     price: Decimal
@@ -196,7 +196,7 @@ class AdminCreatePlanRequest(BaseModel):
 
 class AdminPlanResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: UUID
+    subscription_plan_id: UUID
     subscription_type: str
     meal_slot: str
     duration_days: int
@@ -223,7 +223,7 @@ class AdminUpdatePlanRequest(BaseModel):
 
 class AdminComplaintResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: UUID
+    complaint_id: UUID
     against: str
     status: str
     subject: str
@@ -262,9 +262,9 @@ class AdminResolveComplaintRequest(BaseModel):
 
 class AdminReviewResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: UUID
-    user_id: UUID
-    vendor_id: UUID
+    review_id: UUID
+    user_reference_id: UUID
+    vendor_reference_id: UUID
     vendor_rating: int
     package_rating: Optional[int]
     review_text: Optional[str]
@@ -309,8 +309,8 @@ class AdminMarkUnavailabilityRequest(BaseModel):
 
 class AdminProviderUnavailabilityResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: int
-    provider_id: UUID
+    provider_unavailability_id: int
+    provider_reference_id: UUID
     unavailable_date: date
     reason: Optional[str]
     created_at: Optional[datetime]

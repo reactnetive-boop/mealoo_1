@@ -16,7 +16,14 @@ router = APIRouter()
 
 @router.get(
     "/profile",
-    response_model=UserProfileResponse
+    response_model=UserProfileResponse,
+    summary="Get My Profile",
+    description=(
+        "**Fetch the logged-in user's profile details.**\n\n"
+        "Returns name, phone, email, profile image URL, and account status. "
+        "Call this on app launch after login to pre-fill profile screens.\n\n"
+        "**Requires:** Bearer token from `POST /user/login`"
+    )
 )
 def get_profile(
     db: Session = Depends(get_db),
@@ -29,7 +36,16 @@ def get_profile(
     )
 
 
-@router.put("/profile")
+@router.put(
+    "/profile",
+    summary="Update My Profile",
+    description=(
+        "**Update name, email, or other profile fields.**\n\n"
+        "Only the fields you send will be updated (partial update supported). "
+        "Call `GET /user/profile` after to confirm the changes.\n\n"
+        "**Requires:** Bearer token from `POST /user/login`"
+    )
+)
 def update_profile(
     payload: UpdateUserProfileRequest,
     db: Session = Depends(get_db),
@@ -45,7 +61,14 @@ def update_profile(
 
 @router.put(
     "/profile/image",
-    response_model=UpdateProfileImageResponse
+    response_model=UpdateProfileImageResponse,
+    summary="Upload Profile Picture",
+    description=(
+        "**Upload or replace the user's profile photo.**\n\n"
+        "Send the image as `multipart/form-data` with field name `file`. "
+        "Returns the new image URL. Update your local state with this URL after success.\n\n"
+        "**Requires:** Bearer token from `POST /user/login`"
+    )
 )
 async def update_profile_image(
     file: UploadFile = File(...),

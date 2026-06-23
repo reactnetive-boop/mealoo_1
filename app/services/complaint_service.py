@@ -19,7 +19,7 @@ class ComplaintService:
 
         complaint_data = payload.model_dump()
 
-        complaint_data["user_id"] = user_id
+        complaint_data["user_reference_id"] = user_id
 
         complaint_data["status"] = "open"
 
@@ -30,7 +30,7 @@ class ComplaintService:
         return {
             "success": True,
             "message": "Complaint raised successfully",
-            "complaint_id": str(complaint.id)
+            "complaint_id": str(complaint.complaint_id)
         }
 
     @staticmethod
@@ -67,7 +67,7 @@ class ComplaintService:
                 detail="Complaint not found"
             )
 
-        if str(complaint.user_id) != user_id:
+        if str(complaint.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,
@@ -95,7 +95,7 @@ class ComplaintService:
                 detail="Complaint not found"
             )
 
-        if str(complaint.user_id) != user_id:
+        if str(complaint.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,
@@ -121,7 +121,7 @@ class ComplaintService:
         return {
             "success": True,
             "message": "Complaint updated successfully",
-            "complaint_id": str(updated.id)
+            "complaint_id": str(updated.complaint_id)
         }
 
     @staticmethod
@@ -142,7 +142,7 @@ class ComplaintService:
                 detail="Complaint not found"
             )
 
-        if str(complaint.user_id) != user_id:
+        if str(complaint.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,

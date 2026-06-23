@@ -22,7 +22,7 @@ class MenuService:
 
             "provider_id": provider_id,
 
-            "category_id": request.category_id,
+            "category_reference_id": request.category_id,
 
             "package_name": (
                 request.package_name
@@ -76,7 +76,7 @@ class MenuService:
 
             item_data = {
 
-                "package_id": (
+                "package_reference_id": (
                     package.package_id
                 ),
 

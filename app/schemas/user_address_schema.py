@@ -82,9 +82,9 @@ class UserAddressResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    user_address_id: UUID
 
-    user_id: UUID
+    user_reference_id: UUID
 
     label: Optional[str]
 

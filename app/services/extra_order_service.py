@@ -25,7 +25,7 @@ class ExtraOrderService:
             payload.address_id
         )
 
-        if not address or str(address.user_id) != user_id:
+        if not address or str(address.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=400,
@@ -127,10 +127,10 @@ class ExtraOrderService:
             for item in resolved_items:
 
                 order_data = {
-                    "user_id": user_id,
-                    "vendor_id": str(payload.vendor_id),
-                    "address_id": str(payload.address_id),
-                    "package_id": str(item["package_id"]),
+                    "user_reference_id": user_id,
+                    "vendor_reference_id": str(payload.vendor_id),
+                    "address_reference_id": str(payload.address_id),
+                    "package_reference_id": str(item["package_id"]),
                     "quantity": item["quantity"],
                     "unit_price": item["unit_price"],
                     "total_price": item["total_price"],
@@ -148,7 +148,7 @@ class ExtraOrderService:
 
                 if first_order_id is None:
 
-                    first_order_id = order.id
+                    first_order_id = order.extra_order_id
 
             balance_before = Decimal(str(wallet.balance))
 
@@ -161,8 +161,8 @@ class ExtraOrderService:
             balance_after = Decimal(str(wallet.balance))
 
             txn_data = {
-                "wallet_id": str(wallet.id),
-                "user_id": user_id,
+                "wallet_reference_id": str(wallet.wallet_id),
+                "user_reference_id": user_id,
                 "type": "debit",
                 "reason": "order_placed",
                 "amount": grand_total,
@@ -242,7 +242,7 @@ class ExtraOrderService:
                 detail="Order not found"
             )
 
-        if str(order.user_id) != user_id:
+        if str(order.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,

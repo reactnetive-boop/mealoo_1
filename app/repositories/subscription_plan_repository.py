@@ -66,7 +66,7 @@ class SubscriptionPlanRepository:
         return (
             db.query(SubscriptionPlan)
             .filter(
-                SubscriptionPlan.id == plan_id,
+                SubscriptionPlan.subscription_plan_id == plan_id,
                 SubscriptionPlan.is_active == True
             )
             .first()

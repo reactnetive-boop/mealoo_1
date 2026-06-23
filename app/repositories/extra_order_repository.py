@@ -30,7 +30,7 @@ class ExtraOrderRepository:
         return (
             db.query(ExtraOrder)
             .filter(
-                ExtraOrder.id == order_id
+                ExtraOrder.extra_order_id == order_id
             )
             .first()
         )
@@ -44,7 +44,7 @@ class ExtraOrderRepository:
         return (
             db.query(ExtraOrder)
             .filter(
-                ExtraOrder.user_id == user_id
+                ExtraOrder.user_reference_id == user_id
             )
             .order_by(
                 ExtraOrder.created_at.desc()
@@ -61,7 +61,7 @@ class ExtraOrderRepository:
     ):
         query = (
             db.query(ExtraOrder)
-            .filter(ExtraOrder.vendor_id == vendor_id)
+            .filter(ExtraOrder.vendor_reference_id == vendor_id)
         )
         if delivery_date:
             query = query.filter(ExtraOrder.delivery_date == delivery_date)
@@ -78,8 +78,8 @@ class ExtraOrderRepository:
         return (
             db.query(ExtraOrder)
             .filter(
-                ExtraOrder.id == order_id,
-                ExtraOrder.vendor_id == vendor_id
+                ExtraOrder.extra_order_id == order_id,
+                ExtraOrder.vendor_reference_id == vendor_id
             )
             .first()
         )

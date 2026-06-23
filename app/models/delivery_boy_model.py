@@ -18,7 +18,7 @@ class DeliveryBoy(Base):
         UniqueConstraint("mobile_number", name="delivery_boys_mobile_number_key"),
         UniqueConstraint("delivery_boy_id", name="delivery_boys_delivery_boy_id_key"),
         Index("idx_delivery_boys_mobile", "mobile_number"),
-        Index("idx_delivery_boys_provider", "assigned_provider_id"),
+        Index("idx_delivery_boys_provider", "assigned_provider_reference_id"),
         {"schema": "delivery"},
     )
 
@@ -50,7 +50,7 @@ class DeliveryBoy(Base):
     profile_image = Column(Text, nullable=True)
 
     # nullable — delivery boys may be platform-wide or tied to one provider
-    assigned_provider_id = Column(
+    assigned_provider_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey(
             "provider.providers.provider_id",

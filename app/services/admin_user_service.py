@@ -37,17 +37,17 @@ class AdminUserService:
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        addresses = db.query(UserAddress).filter(UserAddress.user_id == user_id).all()
+        addresses = db.query(UserAddress).filter(UserAddress.user_reference_id == user_id).all()
         subscriptions = (
             db.query(Subscription)
-            .filter(Subscription.user_id == user_id)
+            .filter(Subscription.user_reference_id == user_id)
             .order_by(Subscription.created_at.desc())
             .all()
         )
-        wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
+        wallet = db.query(Wallet).filter(Wallet.user_reference_id == user_id).first()
         txns = (
             db.query(WalletTransaction)
-            .filter(WalletTransaction.user_id == user_id)
+            .filter(WalletTransaction.user_reference_id == user_id)
             .order_by(WalletTransaction.created_at.desc())
             .limit(20)
             .all()
@@ -73,7 +73,7 @@ class AdminUserService:
 
         if payload.status == "inactive":
             active_subs = db.query(Subscription).filter(
-                Subscription.user_id == user_id,
+                Subscription.user_reference_id == user_id,
                 Subscription.status == "active"
             ).count()
             if active_subs:
@@ -109,8 +109,8 @@ class AdminUserService:
             WalletRepository.deduct_balance(db, wallet, amount)
 
         WalletRepository.create_transaction(db, {
-            "wallet_id": wallet.id,
-            "user_id": user_id,
+            "wallet_reference_id": wallet.wallet_id,
+            "user_reference_id": user_id,
             "type": payload.type,
             "reason": "adjustment",
             "amount": amount,
@@ -130,7 +130,7 @@ class AdminUserService:
 
     @staticmethod
     def cancel_subscription(db: Session, subscription_id: str, reason: str, admin_id: str):
-        sub = db.query(Subscription).filter(Subscription.id == subscription_id).first()
+        sub = db.query(Subscription).filter(Subscription.subscription_id == subscription_id).first()
         if not sub:
             raise HTTPException(status_code=404, detail="Subscription not found")
         if sub.status == "cancelled":

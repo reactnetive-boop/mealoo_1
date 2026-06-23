@@ -2,9 +2,11 @@ from datetime import date
 
 from fastapi import HTTPException
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.repositories.review_repository import ReviewRepository
+from app.repositories.provider_repository import ProviderRepository
 
 
 class ReviewService:
@@ -18,18 +20,41 @@ class ReviewService:
 
         review_data = payload.model_dump()
 
-        review_data["user_id"] = user_id
+        # Remap schema field names to renamed model column names
+        review_data["vendor_reference_id"] = review_data.pop("vendor_id")
+        review_data["package_reference_id"] = review_data.pop("package_id")
+        review_data["order_reference_id"] = review_data.pop("order_id")
+        review_data["subscription_reference_id"] = review_data.pop("subscription_id")
+
+        review_data["user_reference_id"] = user_id
+
+        # Validate vendor exists
+        vendor = ProviderRepository.get_by_provider_id(
+            db, review_data["vendor_reference_id"]
+        )
+        if not vendor:
+            raise HTTPException(
+                status_code=400,
+                detail="Vendor not found"
+            )
 
         if not review_data.get("review_date"):
 
             review_data["review_date"] = date.today()
 
-        review = ReviewRepository.create(db, review_data)
+        try:
+            review = ReviewRepository.create(db, review_data)
+        except IntegrityError as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail="Review could not be saved. Check that vendor, package, order, and subscription IDs are valid."
+            )
 
         return {
             "success": True,
             "message": "Review added successfully",
-            "review_id": str(review.id)
+            "review_id": str(review.review_id)
         }
 
     @staticmethod
@@ -62,7 +87,7 @@ class ReviewService:
                 detail="Review not found"
             )
 
-        if str(review.user_id) != user_id:
+        if str(review.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,
@@ -88,7 +113,7 @@ class ReviewService:
                 detail="Review not found"
             )
 
-        if str(review.user_id) != user_id:
+        if str(review.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,
@@ -104,7 +129,7 @@ class ReviewService:
         return {
             "success": True,
             "message": "Review updated successfully",
-            "review_id": str(updated_review.id)
+            "review_id": str(updated_review.review_id)
         }
 
     @staticmethod
@@ -123,7 +148,7 @@ class ReviewService:
                 detail="Review not found"
             )
 
-        if str(review.user_id) != user_id:
+        if str(review.user_reference_id) != user_id:
 
             raise HTTPException(
                 status_code=403,

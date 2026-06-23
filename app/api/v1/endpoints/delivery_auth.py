@@ -13,7 +13,18 @@ from app.schemas.delivery_boy_schema import (
 router = APIRouter()
 
 
-@router.post("/register", response_model=DeliveryBoyAuthResponse)
+@router.post(
+    "/register",
+    response_model=DeliveryBoyAuthResponse,
+    summary="Delivery Boy Register – Step 1: Send OTP",
+    description=(
+        "**First step of delivery boy registration.**\n\n"
+        "Provide a mobile number and password. An OTP is sent to the mobile. "
+        "The delivery boy account is pre-assigned to a provider by the admin. "
+        "Call `/delivery/verify-otp` next with the received OTP.\n\n"
+        "**Flow:** `POST /delivery/register` → `POST /delivery/verify-otp` → `POST /delivery/login`"
+    )
+)
 def register(
     payload: DeliveryBoyRegisterRequest,
     db: Session = Depends(get_db)
@@ -30,7 +41,17 @@ def register(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/verify-otp", response_model=DeliveryBoyAuthResponse)
+@router.post(
+    "/verify-otp",
+    response_model=DeliveryBoyAuthResponse,
+    summary="Delivery Boy Register – Step 2: Verify OTP",
+    description=(
+        "**Second step of delivery boy registration.**\n\n"
+        "Submit the OTP received during registration to activate the account. "
+        "On success the account is active and the delivery boy can log in.\n\n"
+        "**Flow:** `POST /delivery/register` → `POST /delivery/verify-otp` → `POST /delivery/login`"
+    )
+)
 def verify_otp(
     payload: DeliveryBoyVerifyOTPRequest,
     db: Session = Depends(get_db)
@@ -38,7 +59,18 @@ def verify_otp(
     return DeliveryBoyAuthService.verify_otp(db, payload.mobile_number, payload.otp)
 
 
-@router.post("/login", response_model=DeliveryBoyAuthResponse)
+@router.post(
+    "/login",
+    response_model=DeliveryBoyAuthResponse,
+    summary="Delivery Boy Login",
+    description=(
+        "**Login for delivery personnel using mobile number and password.**\n\n"
+        "Returns a JWT `access_token`. Include this in all delivery API calls as "
+        "`Authorization: Bearer <token>`.\n\n"
+        "**After login:** Call `GET /delivery/profile` to load the delivery boy's details "
+        "and `GET /delivery/orders` to see today's assigned deliveries."
+    )
+)
 def login(
     payload: DeliveryBoyLoginRequest,
     db: Session = Depends(get_db)

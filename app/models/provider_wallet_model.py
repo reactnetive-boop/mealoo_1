@@ -13,18 +13,18 @@ class ProviderWallet(Base):
 
     __table_args__ = (
         CheckConstraint("balance >= 0", name="chk_provider_wallet_balance"),
-        UniqueConstraint("provider_id", name="provider_wallets_provider_id_key"),
+        UniqueConstraint("provider_reference_id", name="provider_wallets_provider_id_key"),
         {"schema": "provider"},
     )
 
-    id = Column(
+    provider_wallet_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    provider_id = Column(
+    provider_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("provider.providers.provider_id", name="provider_wallets_provider_id_fkey"),
         nullable=False,

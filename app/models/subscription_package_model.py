@@ -14,24 +14,24 @@ class SubscriptionPackage(Base):
 
     __table_args__ = (
         CheckConstraint("quantity > 0", name="chk_sub_pkg_qty"),
-        Index("idx_sub_packages_subscription", "subscription_id"),
+        Index("idx_sub_packages_subscription", "subscription_reference_id"),
         {"schema": "subscription"},
     )
 
-    id = Column(
+    subscription_package_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    subscription_id = Column(
+    subscription_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("subscription.subscriptions.id"),
+        ForeignKey("subscription.subscriptions.subscription_id"),
         nullable=False
     )
 
-    package_id = Column(
+    package_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("master.menu_packages.package_id", name="subscription_packages_package_id_fkey"),
         nullable=False

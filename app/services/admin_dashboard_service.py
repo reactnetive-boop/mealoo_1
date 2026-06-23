@@ -35,24 +35,24 @@ class AdminDashboardService:
         active_dboys = db.query(func.count(DeliveryBoy.id)).filter(DeliveryBoy.is_active == True).scalar()
 
         # Subscriptions
-        total_subs = db.query(func.count(Subscription.id)).scalar()
-        active_subs = db.query(func.count(Subscription.id)).filter(Subscription.status == "active").scalar()
+        total_subs = db.query(func.count(Subscription.subscription_id)).scalar()
+        active_subs = db.query(func.count(Subscription.subscription_id)).filter(Subscription.status == "active").scalar()
 
         # Orders today
-        todays_orders = db.query(func.count(Order.id)).filter(Order.order_date == today).scalar()
-        delivered_today = db.query(func.count(Order.id)).filter(
+        todays_orders = db.query(func.count(Order.order_id)).filter(Order.order_date == today).scalar()
+        delivered_today = db.query(func.count(Order.order_id)).filter(
             Order.order_date == today, Order.status == "delivered"
         ).scalar()
-        pending_today = db.query(func.count(Order.id)).filter(
+        pending_today = db.query(func.count(Order.order_id)).filter(
             Order.order_date == today,
             Order.status.in_(["scheduled", "preparing", "out_for_delivery"])
         ).scalar()
 
-        extra_today = db.query(func.count(ExtraOrder.id)).filter(ExtraOrder.delivery_date == today).scalar()
+        extra_today = db.query(func.count(ExtraOrder.extra_order_id)).filter(ExtraOrder.delivery_date == today).scalar()
 
         # Complaints
-        open_user_complaints = db.query(func.count(Complaint.id)).filter(Complaint.status == "open").scalar()
-        open_provider_complaints = db.query(func.count(ProviderComplaint.id)).filter(
+        open_user_complaints = db.query(func.count(Complaint.complaint_id)).filter(Complaint.status == "open").scalar()
+        open_provider_complaints = db.query(func.count(ProviderComplaint.provider_complaint_id)).filter(
             ProviderComplaint.status == "open"
         ).scalar()
 

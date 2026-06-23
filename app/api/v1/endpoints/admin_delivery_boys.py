@@ -12,7 +12,16 @@ from app.schemas.admin_schema import AdminUpdateDeliveryBoyRequest
 router = APIRouter()
 
 
-@router.get("")
+@router.get(
+    "",
+    summary="List All Delivery Boys",
+    description=(
+        "**Fetch a paginated list of all registered delivery personnel.**\n\n"
+        "Filter by `search` (name or mobile), `is_active`, and/or `provider_id` to see "
+        "delivery boys assigned to a specific vendor.\n\n"
+        "**When to call:** On the admin delivery management screen or when assigning a new delivery boy to a provider."
+    )
+)
 def list_delivery_boys(
     search: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
@@ -29,7 +38,15 @@ def list_delivery_boys(
     )
 
 
-@router.get("/{delivery_boy_id}")
+@router.get(
+    "/{delivery_boy_id}",
+    summary="Get Delivery Boy Detail",
+    description=(
+        "**Fetch full profile and delivery statistics for a specific delivery boy.**\n\n"
+        "Returns assigned provider, active status, and order completion summary. "
+        "Use `delivery_boy_id` (UUID) from the delivery boys list."
+    )
+)
 def get_delivery_boy_detail(
     delivery_boy_id: UUID,
     db: Session = Depends(get_db),
@@ -38,7 +55,15 @@ def get_delivery_boy_detail(
     return AdminDeliveryBoyService.get_delivery_boy_detail(db, str(delivery_boy_id))
 
 
-@router.put("/{delivery_boy_id}")
+@router.put(
+    "/{delivery_boy_id}",
+    summary="Update Delivery Boy Details",
+    description=(
+        "**Edit a delivery boy's name, active status, or other profile fields.**\n\n"
+        "Use for admin-side corrections or to deactivate a delivery boy. "
+        "To reassign to a different provider, use `PUT /{delivery_boy_id}/assign-provider` instead."
+    )
+)
 def update_delivery_boy(
     delivery_boy_id: UUID,
     payload: AdminUpdateDeliveryBoyRequest,
@@ -48,7 +73,16 @@ def update_delivery_boy(
     return AdminDeliveryBoyService.update_delivery_boy(db, str(delivery_boy_id), payload)
 
 
-@router.put("/{delivery_boy_id}/assign-provider")
+@router.put(
+    "/{delivery_boy_id}/assign-provider",
+    summary="Assign Delivery Boy to a Provider",
+    description=(
+        "**Link a delivery boy to a specific vendor/provider.**\n\n"
+        "Pass `provider_id` as a query parameter. The delivery boy will then appear in that provider's "
+        "delivery team and can be assigned to that provider's orders.\n\n"
+        "**When to call:** During onboarding of a new delivery boy, or when reassigning between providers."
+    )
+)
 def assign_provider(
     delivery_boy_id: UUID,
     provider_id: UUID = Query(...),

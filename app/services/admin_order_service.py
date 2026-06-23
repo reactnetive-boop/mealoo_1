@@ -51,9 +51,9 @@ class AdminOrderService:
                                  page: int = 1, limit: int = 50):
         query = db.query(Order)
         if vendor_id:
-            query = query.filter(Order.vendor_id == vendor_id)
+            query = query.filter(Order.vendor_reference_id == vendor_id)
         if user_id:
-            query = query.filter(Order.user_id == user_id)
+            query = query.filter(Order.user_reference_id == user_id)
         if order_date:
             query = query.filter(Order.order_date == order_date)
         if status:
@@ -69,9 +69,9 @@ class AdminOrderService:
                           page: int = 1, limit: int = 50):
         query = db.query(ExtraOrder)
         if vendor_id:
-            query = query.filter(ExtraOrder.vendor_id == vendor_id)
+            query = query.filter(ExtraOrder.vendor_reference_id == vendor_id)
         if user_id:
-            query = query.filter(ExtraOrder.user_id == user_id)
+            query = query.filter(ExtraOrder.user_reference_id == user_id)
         if delivery_date:
             query = query.filter(ExtraOrder.delivery_date == delivery_date)
         if status:
@@ -86,7 +86,7 @@ class AdminOrderService:
         if payload.status not in SUB_ORDER_STATUSES:
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(SUB_ORDER_STATUSES)}")
 
-        order = db.query(Order).filter(Order.id == order_id).first()
+        order = db.query(Order).filter(Order.order_id == order_id).first()
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
 
@@ -99,7 +99,7 @@ class AdminOrderService:
         if payload.status not in EXTRA_ORDER_STATUSES:
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(EXTRA_ORDER_STATUSES)}")
 
-        order = db.query(ExtraOrder).filter(ExtraOrder.id == order_id).first()
+        order = db.query(ExtraOrder).filter(ExtraOrder.extra_order_id == order_id).first()
         if not order:
             raise HTTPException(status_code=404, detail="Extra order not found")
 
@@ -111,7 +111,7 @@ class AdminOrderService:
     def assign_delivery_boy(db: Session, order_id: str, payload):
         TERMINAL = {"delivered", "cancelled", "skipped"}
 
-        order = db.query(Order).filter(Order.id == order_id).first()
+        order = db.query(Order).filter(Order.order_id == order_id).first()
         if not order:
             raise HTTPException(status_code=404, detail="Subscription order not found")
         if order.status in TERMINAL:
@@ -128,8 +128,8 @@ class AdminOrderService:
         if not boy.is_active:
             raise HTTPException(status_code=400, detail="Delivery boy is not active")
 
-        previous_id = order.delivery_boy_id
-        order.delivery_boy_id = payload.delivery_boy_id
+        previous_id = order.delivery_boy_reference_id
+        order.delivery_boy_reference_id = payload.delivery_boy_id
         db.commit()
 
         action = "reassigned" if previous_id else "assigned"
@@ -145,7 +145,7 @@ class AdminOrderService:
     def assign_extra_delivery_boy(db: Session, order_id: str, payload):
         TERMINAL = {"delivered", "cancelled"}
 
-        order = db.query(ExtraOrder).filter(ExtraOrder.id == order_id).first()
+        order = db.query(ExtraOrder).filter(ExtraOrder.extra_order_id == order_id).first()
         if not order:
             raise HTTPException(status_code=404, detail="Extra order not found")
         if order.status in TERMINAL:
@@ -162,8 +162,8 @@ class AdminOrderService:
         if not boy.is_active:
             raise HTTPException(status_code=400, detail="Delivery boy is not active")
 
-        previous_id = order.delivery_boy_id
-        order.delivery_boy_id = payload.delivery_boy_id
+        previous_id = order.delivery_boy_reference_id
+        order.delivery_boy_reference_id = payload.delivery_boy_id
         db.commit()
 
         action = "reassigned" if previous_id else "assigned"
@@ -179,7 +179,7 @@ class AdminOrderService:
     def reassign_provider(db: Session, order_id: str, payload):
         TERMINAL = {"delivered", "cancelled", "skipped"}
 
-        order = db.query(Order).filter(Order.id == order_id).first()
+        order = db.query(Order).filter(Order.order_id == order_id).first()
         if not order:
             raise HTTPException(status_code=404, detail="Subscription order not found")
         if order.status in TERMINAL:
@@ -189,12 +189,12 @@ class AdminOrderService:
             )
 
         new_provider_id = str(payload.new_provider_id)
-        if str(order.vendor_id) == new_provider_id:
+        if str(order.vendor_reference_id) == new_provider_id:
             raise HTTPException(status_code=400, detail="New provider is the same as the current provider.")
 
         # Current provider must be marked unavailable for this order date
         current_unavailable = db.query(ProviderUnavailability).filter(
-            ProviderUnavailability.provider_id == str(order.vendor_id),
+            ProviderUnavailability.provider_reference_id == str(order.vendor_reference_id),
             ProviderUnavailability.unavailable_date == order.order_date
         ).first()
         if not current_unavailable:
@@ -214,7 +214,7 @@ class AdminOrderService:
 
         # New provider must not be marked unavailable for this date
         new_unavailable = db.query(ProviderUnavailability).filter(
-            ProviderUnavailability.provider_id == new_provider_id,
+            ProviderUnavailability.provider_reference_id == new_provider_id,
             ProviderUnavailability.unavailable_date == order.order_date
         ).first()
         if new_unavailable:
@@ -226,8 +226,8 @@ class AdminOrderService:
         # Enforce cutoff: only for same-day orders
         _check_reassign_cutoff(order.order_date, order.meal_slot)
 
-        previous_provider_id = str(order.vendor_id)
-        order.vendor_id = payload.new_provider_id
+        previous_provider_id = str(order.vendor_reference_id)
+        order.vendor_reference_id = payload.new_provider_id
         db.commit()
 
         return {
@@ -244,7 +244,7 @@ class AdminOrderService:
     def reassign_extra_order_provider(db: Session, order_id: str, payload):
         TERMINAL = {"delivered", "cancelled"}
 
-        order = db.query(ExtraOrder).filter(ExtraOrder.id == order_id).first()
+        order = db.query(ExtraOrder).filter(ExtraOrder.extra_order_id == order_id).first()
         if not order:
             raise HTTPException(status_code=404, detail="Extra order not found")
         if order.status in TERMINAL:
@@ -254,12 +254,12 @@ class AdminOrderService:
             )
 
         new_provider_id = str(payload.new_provider_id)
-        if str(order.vendor_id) == new_provider_id:
+        if str(order.vendor_reference_id) == new_provider_id:
             raise HTTPException(status_code=400, detail="New provider is the same as the current provider.")
 
         # Current provider must be marked unavailable for the delivery date
         current_unavailable = db.query(ProviderUnavailability).filter(
-            ProviderUnavailability.provider_id == str(order.vendor_id),
+            ProviderUnavailability.provider_reference_id == str(order.vendor_reference_id),
             ProviderUnavailability.unavailable_date == order.delivery_date
         ).first()
         if not current_unavailable:
@@ -279,7 +279,7 @@ class AdminOrderService:
 
         # New provider must not be unavailable for the delivery date
         new_unavailable = db.query(ProviderUnavailability).filter(
-            ProviderUnavailability.provider_id == new_provider_id,
+            ProviderUnavailability.provider_reference_id == new_provider_id,
             ProviderUnavailability.unavailable_date == order.delivery_date
         ).first()
         if new_unavailable:
@@ -291,8 +291,8 @@ class AdminOrderService:
         # Enforce cutoff: only for same-day orders
         _check_reassign_cutoff(order.delivery_date, order.meal_slot)
 
-        previous_provider_id = str(order.vendor_id)
-        order.vendor_id = payload.new_provider_id
+        previous_provider_id = str(order.vendor_reference_id)
+        order.vendor_reference_id = payload.new_provider_id
         db.commit()
 
         return {
@@ -310,9 +310,9 @@ class AdminOrderService:
                            status: str = None, page: int = 1, limit: int = 20):
         query = db.query(Subscription)
         if vendor_id:
-            query = query.filter(Subscription.vendor_id == vendor_id)
+            query = query.filter(Subscription.vendor_reference_id == vendor_id)
         if user_id:
-            query = query.filter(Subscription.user_id == user_id)
+            query = query.filter(Subscription.user_reference_id == user_id)
         if status:
             query = query.filter(Subscription.status == status)
 

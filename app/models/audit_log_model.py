@@ -30,7 +30,7 @@ class AuditLog(Base):
         }
     )
 
-    id = Column(
+    audit_log_id = Column(
         BigInteger,
         primary_key=True,
         autoincrement=True

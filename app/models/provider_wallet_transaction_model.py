@@ -13,26 +13,26 @@ class ProviderWalletTransaction(Base):
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="chk_provider_wtxn_amount"),
-        Index("idx_provider_wtxn_provider", "provider_id"),
-        Index("idx_provider_wtxn_wallet", "wallet_id"),
+        Index("idx_provider_wtxn_provider", "provider_reference_id"),
+        Index("idx_provider_wtxn_wallet", "wallet_reference_id"),
         Index("idx_provider_wtxn_type", "type"),
         {"schema": "provider"},
     )
 
-    id = Column(
+    provider_wallet_transaction_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    wallet_id = Column(
+    wallet_reference_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("provider.provider_wallets.id", name="provider_wallet_txn_wallet_id_fkey"),
+        ForeignKey("provider.provider_wallets.provider_wallet_id", name="provider_wallet_txn_wallet_id_fkey"),
         nullable=False
     )
 
-    provider_id = Column(
+    provider_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("provider.providers.provider_id", name="provider_wallet_txn_provider_id_fkey"),
         nullable=False,

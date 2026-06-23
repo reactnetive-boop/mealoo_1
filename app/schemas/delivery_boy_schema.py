@@ -45,7 +45,7 @@ class DeliveryBoyProfileResponse(BaseModel):
     vehicle_type: Optional[str]
     vehicle_number: Optional[str]
     profile_image: Optional[str]
-    assigned_provider_id: Optional[UUID]
+    assigned_provider_reference_id: Optional[UUID]
     created_at: Optional[datetime]
 
 
@@ -68,7 +68,7 @@ class OrderUserInfo(BaseModel):
 class OrderAddressInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    user_address_id: UUID
     address_line1: str
     address_line2: Optional[str]
     landmark: Optional[str]
@@ -90,10 +90,10 @@ class OrderPackageInfo(BaseModel):
 class DeliverySubscriptionOrderResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    subscription_id: UUID
-    user_id: UUID
-    vendor_id: UUID
+    order_id: UUID
+    subscription_reference_id: UUID
+    user_reference_id: UUID
+    vendor_reference_id: UUID
     order_date: date
     meal_slot: str
     status: str
@@ -138,10 +138,10 @@ class OrderActionResponse(BaseModel):
 class DeliveryExtraOrderResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    user_id: UUID
-    vendor_id: UUID
-    package_id: UUID
+    extra_order_id: UUID
+    user_reference_id: UUID
+    vendor_reference_id: UUID
+    package_reference_id: UUID
     quantity: int
     unit_price: Decimal
     total_price: Decimal

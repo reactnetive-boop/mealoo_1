@@ -13,18 +13,18 @@ class Wallet(Base):
 
     __table_args__ = (
         CheckConstraint("balance >= 0", name="chk_wallet_balance"),
-        UniqueConstraint("user_id", name="wallets_user_id_key"),
+        UniqueConstraint("user_reference_id", name="wallets_user_id_key"),
         {"schema": "subscription"},
     )
 
-    id = Column(
+    wallet_id = Column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
         index=True
     )
 
-    user_id = Column(
+    user_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("auth.users.user_id", name="wallets_user_id_fkey"),
         nullable=False,

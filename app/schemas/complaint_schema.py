@@ -60,15 +60,15 @@ class ComplaintResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    complaint_id: UUID
 
-    user_id: UUID
+    user_reference_id: UUID
 
-    vendor_id: Optional[UUID]
+    vendor_reference_id: Optional[UUID]
 
-    order_id: Optional[UUID]
+    order_reference_id: Optional[UUID]
 
-    subscription_id: Optional[UUID]
+    subscription_reference_id: Optional[UUID]
 
     against: str
 

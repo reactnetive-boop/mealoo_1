@@ -24,9 +24,9 @@ class AdminComplaintService:
                 q = q.filter(Complaint.against == against)
             for c in q.all():
                 results.append({
-                    "id": c.id,
+                    "id": c.complaint_id,
                     "complainant_type": "user",
-                    "complainant_id": c.user_id,
+                    "complainant_id": c.user_reference_id,
                     "against": c.against,
                     "status": c.status,
                     "subject": c.subject,
@@ -41,9 +41,9 @@ class AdminComplaintService:
                 q = q.filter(ProviderComplaint.against == against)
             for c in q.all():
                 results.append({
-                    "id": c.id,
+                    "id": c.provider_complaint_id,
                     "complainant_type": "provider",
-                    "complainant_id": c.provider_id,
+                    "complainant_id": c.provider_reference_id,
                     "against": c.against,
                     "status": c.status,
                     "subject": c.subject,
@@ -59,14 +59,14 @@ class AdminComplaintService:
 
     @staticmethod
     def get_user_complaint(db: Session, complaint_id: str):
-        complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+        complaint = db.query(Complaint).filter(Complaint.complaint_id == complaint_id).first()
         if not complaint:
             raise HTTPException(status_code=404, detail="User complaint not found")
         return complaint
 
     @staticmethod
     def get_provider_complaint(db: Session, complaint_id: str):
-        complaint = db.query(ProviderComplaint).filter(ProviderComplaint.id == complaint_id).first()
+        complaint = db.query(ProviderComplaint).filter(ProviderComplaint.provider_complaint_id == complaint_id).first()
         if not complaint:
             raise HTTPException(status_code=404, detail="Provider complaint not found")
         return complaint
@@ -76,7 +76,7 @@ class AdminComplaintService:
         if payload.status not in VALID_RESOLUTIONS:
             raise HTTPException(status_code=400, detail=f"Invalid status: {', '.join(VALID_RESOLUTIONS)}")
 
-        complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+        complaint = db.query(Complaint).filter(Complaint.complaint_id == complaint_id).first()
         if not complaint:
             raise HTTPException(status_code=404, detail="Complaint not found")
         if complaint.status in ("resolved", "closed", "rejected"):
@@ -99,7 +99,7 @@ class AdminComplaintService:
         if payload.status not in VALID_RESOLUTIONS:
             raise HTTPException(status_code=400, detail=f"Invalid status: {', '.join(VALID_RESOLUTIONS)}")
 
-        complaint = db.query(ProviderComplaint).filter(ProviderComplaint.id == complaint_id).first()
+        complaint = db.query(ProviderComplaint).filter(ProviderComplaint.provider_complaint_id == complaint_id).first()
         if not complaint:
             raise HTTPException(status_code=404, detail="Complaint not found")
         if complaint.status in ("resolved", "closed", "rejected"):

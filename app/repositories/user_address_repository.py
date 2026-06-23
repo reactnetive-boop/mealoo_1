@@ -14,7 +14,7 @@ class UserAddressRepository:
         return (
             db.query(UserAddress)
             .filter(
-                UserAddress.id == address_id,
+                UserAddress.user_address_id == address_id,
                 UserAddress.is_active == True
             )
             .first()
@@ -29,7 +29,7 @@ class UserAddressRepository:
         return (
             db.query(UserAddress)
             .filter(
-                UserAddress.user_id == user_id,
+                UserAddress.user_reference_id == user_id,
                 UserAddress.is_active == True
             )
             .order_by(
@@ -48,7 +48,7 @@ class UserAddressRepository:
         return (
             db.query(UserAddress)
             .filter(
-                UserAddress.user_id == user_id,
+                UserAddress.user_reference_id == user_id,
                 UserAddress.is_active == True
             )
             .count()
@@ -63,7 +63,7 @@ class UserAddressRepository:
         (
             db.query(UserAddress)
             .filter(
-                UserAddress.user_id == user_id,
+                UserAddress.user_reference_id == user_id,
                 UserAddress.is_default == True,
                 UserAddress.is_active == True
             )

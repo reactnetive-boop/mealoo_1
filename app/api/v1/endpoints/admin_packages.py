@@ -12,7 +12,16 @@ from app.schemas.admin_schema import AdminCreatePackageRequest, AdminUpdatePacka
 router = APIRouter()
 
 
-@router.post("")
+@router.post(
+    "",
+    summary="Create Platform Package (Predefined)",
+    description=(
+        "**Create a platform-level predefined meal package that providers can adopt.**\n\n"
+        "Predefined packages serve as templates. Providers can select them via "
+        "`POST /provider/packages/select` to offer under their own brand without creating from scratch.\n\n"
+        "**Requires:** `super_admin` role."
+    )
+)
 def create_package(
     payload: AdminCreatePackageRequest,
     db: Session = Depends(get_db),
@@ -21,7 +30,16 @@ def create_package(
     return AdminPackageService.create_package(db, payload, current["admin_id"])
 
 
-@router.get("")
+@router.get(
+    "",
+    summary="List All Packages (Admin View)",
+    description=(
+        "**Fetch all meal packages across all providers.**\n\n"
+        "Filter by `is_predefined`, `is_active`, `provider_id`, or `search` term. "
+        "Use this to audit package content, moderate listings, or find packages needing review.\n\n"
+        "**When to call:** On the admin package management screen."
+    )
+)
 def list_packages(
     is_predefined: Optional[bool] = Query(None),
     is_active: Optional[bool] = Query(None),
@@ -39,7 +57,15 @@ def list_packages(
     )
 
 
-@router.get("/{package_id}")
+@router.get(
+    "/{package_id}",
+    summary="Get Package Detail (Admin View)",
+    description=(
+        "**Fetch complete package details including items, images, and provider info.**\n\n"
+        "Use `package_id` from the packages list. "
+        "Use before editing or deactivating a package."
+    )
+)
 def get_package(
     package_id: UUID,
     db: Session = Depends(get_db),
@@ -48,7 +74,15 @@ def get_package(
     return AdminPackageService.get_package(db, str(package_id))
 
 
-@router.put("/{package_id}")
+@router.put(
+    "/{package_id}",
+    summary="Update Package (Admin)",
+    description=(
+        "**Edit a package's details or toggle `is_active` / `is_available` flags.**\n\n"
+        "Setting `is_active=false` hides the package from user listings immediately. "
+        "Use this when a provider violates listing guidelines."
+    )
+)
 def update_package(
     package_id: UUID,
     payload: AdminUpdatePackageRequest,
@@ -58,7 +92,15 @@ def update_package(
     return AdminPackageService.update_package(db, str(package_id), payload)
 
 
-@router.delete("/{package_id}")
+@router.delete(
+    "/{package_id}",
+    summary="Delete Package (Admin)",
+    description=(
+        "**Permanently delete a meal package.**\n\n"
+        "Cannot delete packages with active subscriptions. "
+        "Use `PUT /{package_id}` with `is_active=false` to hide it from users instead."
+    )
+)
 def delete_package(
     package_id: UUID,
     db: Session = Depends(get_db),

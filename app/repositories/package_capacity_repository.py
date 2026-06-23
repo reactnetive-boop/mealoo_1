@@ -67,10 +67,10 @@ class PackageCapacityRepository:
 
         total = (
             db.query(func.coalesce(func.sum(SubscriptionPackage.quantity), 0))
-            .join(Subscription, SubscriptionPackage.subscription_id == Subscription.id)
+            .join(Subscription, SubscriptionPackage.subscription_reference_id == Subscription.subscription_id)
             .filter(
-                Subscription.vendor_id == vendor_id,
-                SubscriptionPackage.package_id == package_id,
+                Subscription.vendor_reference_id == vendor_id,
+                SubscriptionPackage.package_reference_id == package_id,
                 Subscription.status == "active",
                 Subscription.meal_slot.in_(covering),
             )
@@ -93,8 +93,8 @@ class PackageCapacityRepository:
         total = (
             db.query(func.coalesce(func.sum(ExtraOrder.quantity), 0))
             .filter(
-                ExtraOrder.vendor_id == vendor_id,
-                ExtraOrder.package_id == package_id,
+                ExtraOrder.vendor_reference_id == vendor_id,
+                ExtraOrder.package_reference_id == package_id,
                 ExtraOrder.delivery_date == delivery_date,
                 ExtraOrder.meal_slot == meal_slot,
                 ExtraOrder.status != "cancelled",

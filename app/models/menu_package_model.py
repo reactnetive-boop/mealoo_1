@@ -27,7 +27,7 @@ class MenuPackage(Base):
 
     __table_args__ = (
         Index("idx_menu_packages_provider", "provider_id"),
-        Index("idx_menu_packages_category", "category_id"),
+        Index("idx_menu_packages_category", "category_reference_id"),
         Index("idx_menu_packages_active", "is_active"),
         Index("idx_menu_packages_available", "is_available"),
         {"schema": "master"},
@@ -51,7 +51,7 @@ class MenuPackage(Base):
         nullable=False
     )
 
-    category_id = Column(
+    category_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey(
             "master.menu_categories.category_id"

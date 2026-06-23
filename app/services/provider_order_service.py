@@ -103,12 +103,12 @@ class ProviderOrderService:
         # Credit provider wallet when an order is first marked delivered
         if new_status == "delivered" and prev_status != "delivered":
             sub = db.query(Subscription).filter(
-                Subscription.id == order.subscription_id
+                Subscription.subscription_id == order.subscription_reference_id
             ).first()
             if sub:
                 sub_packages = (
                     db.query(SubscriptionPackage)
-                    .filter(SubscriptionPackage.subscription_id == sub.id)
+                    .filter(SubscriptionPackage.subscription_reference_id == sub.subscription_id)
                     .all()
                 )
                 order_amount = sum(
@@ -120,14 +120,14 @@ class ProviderOrderService:
                     balance_before = Decimal(str(wallet.balance))
                     ProviderWalletRepository.credit(db, wallet, order_amount)
                     ProviderWalletRepository.create_transaction(db, {
-                        "wallet_id": wallet.id,
-                        "provider_id": vendor_id,
+                        "wallet_reference_id": wallet.provider_wallet_id,
+                        "provider_reference_id": vendor_id,
                         "type": "credit",
                         "reason": "order_delivered",
                         "amount": order_amount,
                         "balance_before": balance_before,
                         "balance_after": Decimal(str(wallet.balance)),
-                        "reference_id": order.id,
+                        "reference_id": order.order_id,
                         "reference_type": "order",
                         "description": f"Earnings for order on {order.order_date} ({order.meal_slot})",
                     })
@@ -138,7 +138,7 @@ class ProviderOrderService:
         return {
             "success": True,
             "message": f"Order status updated to '{new_status}'",
-            "order_id": str(order.id),
+            "order_id": str(order.order_id),
             "status": order.status
         }
 
@@ -194,14 +194,14 @@ class ProviderOrderService:
                 balance_before = Decimal(str(wallet.balance))
                 ProviderWalletRepository.credit(db, wallet, order_amount)
                 ProviderWalletRepository.create_transaction(db, {
-                    "wallet_id": wallet.id,
-                    "provider_id": vendor_id,
+                    "wallet_reference_id": wallet.provider_wallet_id,
+                    "provider_reference_id": vendor_id,
                     "type": "credit",
                     "reason": "order_delivered",
                     "amount": order_amount,
                     "balance_before": balance_before,
                     "balance_after": Decimal(str(wallet.balance)),
-                    "reference_id": order.id,
+                    "reference_id": order.extra_order_id,
                     "reference_type": "extra_order",
                     "description": f"Earnings for extra order on {order.delivery_date} ({order.meal_slot})",
                 })
@@ -212,7 +212,7 @@ class ProviderOrderService:
         return {
             "success": True,
             "message": f"Extra order status updated to '{new_status}'",
-            "order_id": str(order.id),
+            "order_id": str(order.extra_order_id),
             "status": order.status
         }
 
@@ -227,7 +227,7 @@ class ProviderOrderService:
     ):
         # ── Subscription orders ──────────────────────────
         sub_order_query = db.query(Order).filter(
-            Order.vendor_id == vendor_id,
+            Order.vendor_reference_id == vendor_id,
             Order.order_date == summary_date,
             Order.status.notin_(["cancelled", "skipped"])
         )
@@ -239,40 +239,40 @@ class ProviderOrderService:
         tally: dict = defaultdict(lambda: defaultdict(int))
 
         if sub_orders:
-            subscription_ids = list({o.subscription_id for o in sub_orders})
+            subscription_ids = list({o.subscription_reference_id for o in sub_orders})
 
             sub_packages = (
                 db.query(SubscriptionPackage)
-                .filter(SubscriptionPackage.subscription_id.in_(subscription_ids))
+                .filter(SubscriptionPackage.subscription_reference_id.in_(subscription_ids))
                 .all()
             )
 
             # subscription_id → [(package_id, qty_per_subscription)]
             sub_pkg_map: dict = defaultdict(list)
             for sp in sub_packages:
-                sub_pkg_map[sp.subscription_id].append((sp.package_id, sp.quantity))
+                sub_pkg_map[sp.subscription_reference_id].append((sp.package_reference_id, sp.quantity))
 
-            package_ids = list({sp.package_id for sp in sub_packages})
+            package_ids = list({sp.package_reference_id for sp in sub_packages})
 
             pkg_items = (
                 db.query(MenuPackageItem)
-                .filter(MenuPackageItem.package_id.in_(package_ids))
+                .filter(MenuPackageItem.package_reference_id.in_(package_ids))
                 .all()
             )
 
             # package_id → [MenuPackageItem]
             pkg_item_map: dict = defaultdict(list)
             for item in pkg_items:
-                pkg_item_map[item.package_id].append(item)
+                pkg_item_map[item.package_reference_id].append(item)
 
             for order in sub_orders:
-                for pkg_id, pkg_qty in sub_pkg_map[order.subscription_id]:
+                for pkg_id, pkg_qty in sub_pkg_map[order.subscription_reference_id]:
                     for item in pkg_item_map[pkg_id]:
                         tally[item.item_name][item.quantity or ""] += pkg_qty
 
         # ── Extra orders ─────────────────────────────────
         extra_query = db.query(ExtraOrder).filter(
-            ExtraOrder.vendor_id == vendor_id,
+            ExtraOrder.vendor_reference_id == vendor_id,
             ExtraOrder.delivery_date == summary_date,
             ExtraOrder.status != "cancelled"
         )
@@ -281,20 +281,20 @@ class ProviderOrderService:
         extra_orders = extra_query.all()
 
         if extra_orders:
-            extra_pkg_ids = list({eo.package_id for eo in extra_orders})
+            extra_pkg_ids = list({eo.package_reference_id for eo in extra_orders})
 
             extra_pkg_items = (
                 db.query(MenuPackageItem)
-                .filter(MenuPackageItem.package_id.in_(extra_pkg_ids))
+                .filter(MenuPackageItem.package_reference_id.in_(extra_pkg_ids))
                 .all()
             )
 
             extra_pkg_item_map: dict = defaultdict(list)
             for item in extra_pkg_items:
-                extra_pkg_item_map[item.package_id].append(item)
+                extra_pkg_item_map[item.package_reference_id].append(item)
 
             for eo in extra_orders:
-                for item in extra_pkg_item_map[eo.package_id]:
+                for item in extra_pkg_item_map[eo.package_reference_id]:
                     tally[item.item_name][item.quantity or ""] += eo.quantity
 
         # ── Build response ────────────────────────────────

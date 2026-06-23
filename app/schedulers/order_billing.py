@@ -38,7 +38,7 @@ def process_order_billing(meal_slot: str) -> None:
         # ── 1. Fetch today's billable orders + their subscriptions ─────────
         rows = (
             db.query(Order, Subscription)
-            .join(Subscription, Order.subscription_id == Subscription.id)
+            .join(Subscription, Order.subscription_reference_id == Subscription.subscription_id)
             .filter(
                 Order.order_date == today,
                 Order.meal_slot == meal_slot,
@@ -53,29 +53,29 @@ def process_order_billing(meal_slot: str) -> None:
             return
 
         # ── 2. Batch-load packages keyed by subscription_id ───────────────
-        sub_ids = list({sub.id for _, sub in rows})
+        sub_ids = list({sub.subscription_id for _, sub in rows})
 
         all_packages = (
             db.query(SubscriptionPackage)
-            .filter(SubscriptionPackage.subscription_id.in_(sub_ids))
+            .filter(SubscriptionPackage.subscription_reference_id.in_(sub_ids))
             .all()
         )
 
         packages_by_sub: dict[str, list[SubscriptionPackage]] = {}
         for pkg in all_packages:
-            packages_by_sub.setdefault(str(pkg.subscription_id), []).append(pkg)
+            packages_by_sub.setdefault(str(pkg.subscription_reference_id), []).append(pkg)
 
         # ── 3. Batch-load wallets keyed by user_id ────────────────────────
-        user_ids = list({sub.user_id for _, sub in rows})
+        user_ids = list({sub.user_reference_id for _, sub in rows})
 
         all_wallets = (
             db.query(Wallet)
-            .filter(Wallet.user_id.in_(user_ids))
+            .filter(Wallet.user_reference_id.in_(user_ids))
             .all()
         )
 
         wallets_by_user: dict[str, Wallet] = {
-            str(w.user_id): w for w in all_wallets
+            str(w.user_reference_id): w for w in all_wallets
         }
 
         # ── 4. Process each order ─────────────────────────────────────────
@@ -86,12 +86,12 @@ def process_order_billing(meal_slot: str) -> None:
 
         for order, subscription in rows:
 
-            sub_packages = packages_by_sub.get(str(subscription.id), [])
+            sub_packages = packages_by_sub.get(str(subscription.subscription_id), [])
 
             if not sub_packages:
                 logger.warning(
                     "[billing:%s] no packages for subscription %s — skipping order %s",
-                    meal_slot, subscription.id, order.id,
+                    meal_slot, subscription.subscription_id, order.order_id,
                 )
                 failures += 1
                 continue
@@ -114,7 +114,7 @@ def process_order_billing(meal_slot: str) -> None:
                     free_skips += 1
                     logger.info(
                         "[billing:%s] order %s: free skip used (%d/%d)",
-                        meal_slot, order.id,
+                        meal_slot, order.order_id,
                         subscription.free_skips_used,
                         subscription.free_skips_total,
                     )
@@ -124,16 +124,16 @@ def process_order_billing(meal_slot: str) -> None:
                 paid_skips += 1
                 logger.info(
                     "[billing:%s] order %s: skipped but no free skips remaining — charging %s",
-                    meal_slot, order.id, slot_amount,
+                    meal_slot, order.order_id, slot_amount,
                 )
 
             # ── Wallet deduction ──────────────────────────────────────────
-            wallet = wallets_by_user.get(str(subscription.user_id))
+            wallet = wallets_by_user.get(str(subscription.user_reference_id))
 
             if not wallet:
                 logger.error(
                     "[billing:%s] wallet not found for user %s (order %s)",
-                    meal_slot, subscription.user_id, order.id,
+                    meal_slot, subscription.user_reference_id, order.order_id,
                 )
                 failures += 1
                 continue
@@ -142,7 +142,7 @@ def process_order_billing(meal_slot: str) -> None:
                 logger.warning(
                     "[billing:%s] insufficient balance for order %s — "
                     "required: %s, available: %s",
-                    meal_slot, order.id, slot_amount, wallet.balance,
+                    meal_slot, order.order_id, slot_amount, wallet.balance,
                 )
                 failures += 1
                 continue
@@ -152,20 +152,20 @@ def process_order_billing(meal_slot: str) -> None:
             balance_after = Decimal(str(wallet.balance))
 
             txn = WalletTransaction(
-                wallet_id=wallet.id,
-                user_id=subscription.user_id,
+                wallet_reference_id=wallet.wallet_id,
+                user_reference_id=subscription.user_reference_id,
                 type="debit",
                 reason="order_placed",
                 amount=slot_amount,
                 balance_before=balance_before,
                 balance_after=balance_after,
-                reference_id=order.id,
+                reference_id=order.order_id,
                 reference_type="order",
                 description=(
                     f"{meal_slot.capitalize()} order — "
                     f"{today.strftime('%d %b %Y')}"
                 ),
-                created_by=subscription.user_id,
+                created_by=subscription.user_reference_id,
             )
             db.add(txn)
             deducted += 1

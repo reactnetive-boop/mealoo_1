@@ -19,7 +19,7 @@ class SubscriptionRepository:
         return (
             db.query(Subscription)
             .filter(
-                Subscription.user_id == user_id,
+                Subscription.user_reference_id == user_id,
                 Subscription.status == "active"
             )
             .first()
@@ -34,7 +34,7 @@ class SubscriptionRepository:
         return (
             db.query(Subscription)
             .filter(
-                Subscription.user_id == user_id
+                Subscription.user_reference_id == user_id
             )
             .order_by(
                 Subscription.created_at.desc()
@@ -51,7 +51,7 @@ class SubscriptionRepository:
         return (
             db.query(Subscription)
             .filter(
-                Subscription.id == subscription_id
+                Subscription.subscription_id == subscription_id
             )
             .first()
         )
@@ -93,14 +93,14 @@ class SubscriptionRepository:
             db.query(SubscriptionPackage, MenuPackage, Subscription)
             .join(
                 Subscription,
-                SubscriptionPackage.subscription_id == Subscription.id
+                SubscriptionPackage.subscription_reference_id == Subscription.subscription_id
             )
             .join(
                 MenuPackage,
-                SubscriptionPackage.package_id == MenuPackage.package_id
+                SubscriptionPackage.package_reference_id == MenuPackage.package_id
             )
             .filter(
-                Subscription.user_id == user_id
+                Subscription.user_reference_id == user_id
             )
             .order_by(Subscription.created_at.desc())
             .all()
@@ -114,7 +114,7 @@ class SubscriptionRepository:
     ):
         query = (
             db.query(Subscription)
-            .filter(Subscription.vendor_id == vendor_id)
+            .filter(Subscription.vendor_reference_id == vendor_id)
         )
         if status:
             query = query.filter(Subscription.status == status)
@@ -129,8 +129,8 @@ class SubscriptionRepository:
         return (
             db.query(Subscription)
             .filter(
-                Subscription.id == subscription_id,
-                Subscription.vendor_id == vendor_id
+                Subscription.subscription_id == subscription_id,
+                Subscription.vendor_reference_id == vendor_id
             )
             .first()
         )
@@ -144,7 +144,7 @@ class SubscriptionRepository:
     ):
         query = (
             db.query(Order)
-            .filter(Order.vendor_id == vendor_id)
+            .filter(Order.vendor_reference_id == vendor_id)
         )
         if order_date:
             query = query.filter(Order.order_date == order_date)
@@ -161,8 +161,8 @@ class SubscriptionRepository:
         return (
             db.query(Order)
             .filter(
-                Order.id == order_id,
-                Order.vendor_id == vendor_id
+                Order.order_id == order_id,
+                Order.vendor_reference_id == vendor_id
             )
             .first()
         )
@@ -174,7 +174,7 @@ class SubscriptionRepository:
     ):
         return (
             db.query(Order)
-            .filter(Order.subscription_id == subscription_id)
+            .filter(Order.subscription_reference_id == subscription_id)
             .order_by(Order.order_date.asc(), Order.meal_slot.asc())
             .all()
         )

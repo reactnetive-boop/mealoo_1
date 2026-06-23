@@ -25,7 +25,16 @@ router = APIRouter()
 
 # ── Profile ───────────────────────────────────────────────
 
-@router.get("/profile", response_model=dict)
+@router.get(
+    "/profile",
+    response_model=dict,
+    summary="Get Delivery Boy Profile",
+    description=(
+        "**Fetch the logged-in delivery boy's profile.**\n\n"
+        "Returns name, mobile, assigned provider, and account status.\n\n"
+        "**When to call:** On app launch after login, or when navigating to the profile screen."
+    )
+)
 def get_profile(
     db: Session = Depends(get_db),
     current=Depends(get_current_delivery_boy)
@@ -33,7 +42,15 @@ def get_profile(
     return DeliveryBoyOrderService.get_profile(db, current["delivery_boy_id"])
 
 
-@router.put("/profile", response_model=dict)
+@router.put(
+    "/profile",
+    response_model=dict,
+    summary="Update Delivery Boy Profile",
+    description=(
+        "**Update the delivery boy's name or other profile details.**\n\n"
+        "Only the fields provided will be updated."
+    )
+)
 def update_profile(
     payload: UpdateDeliveryBoyProfileRequest,
     db: Session = Depends(get_db),
@@ -46,7 +63,17 @@ def update_profile(
 
 @router.get(
     "/orders",
-    response_model=DeliverySubscriptionOrderListResponse
+    response_model=DeliverySubscriptionOrderListResponse,
+    summary="List My Subscription Delivery Orders",
+    description=(
+        "**Fetch subscription orders assigned to this delivery boy.**\n\n"
+        "Defaults to today's orders. Filter by `order_date`, `meal_slot` "
+        "(breakfast / lunch / dinner), and/or `status`.\n\n"
+        "**When to call:** When the delivery boy opens the app to see their daily delivery list. "
+        "Refresh before each meal slot.\n\n"
+        "**Flow:** Login → `GET /delivery/orders` → tap order → `GET /delivery/orders/{id}` → "
+        "`PUT /delivery/orders/{id}/pickup` → `PUT /delivery/orders/{id}/deliver`"
+    )
 )
 def list_orders(
     order_date: Optional[date] = Query(
@@ -75,7 +102,14 @@ def list_orders(
 
 @router.get(
     "/orders/{order_id}",
-    response_model=DeliverySubscriptionOrderDetailResponse
+    response_model=DeliverySubscriptionOrderDetailResponse,
+    summary="Get Subscription Order Detail",
+    description=(
+        "**Fetch full details of a specific subscription order.**\n\n"
+        "Returns delivery address, customer name, package items, meal slot, OTP for delivery confirmation, "
+        "and current status.\n\n"
+        "**When to call:** When the delivery boy taps on an order from the list to navigate or confirm."
+    )
 )
 def get_order_detail(
     order_id: str,
@@ -91,7 +125,15 @@ def get_order_detail(
 
 @router.put(
     "/orders/{order_id}/pickup",
-    response_model=OrderActionResponse
+    response_model=OrderActionResponse,
+    summary="Pickup Subscription Order from Provider",
+    description=(
+        "**Mark a subscription order as picked up from the vendor's kitchen.**\n\n"
+        "The provider must have set the order status to `out_for_delivery` first. "
+        "Call this when the delivery boy picks up the food parcel.\n\n"
+        "**Flow:** Provider sets `out_for_delivery` → delivery boy calls `PUT /orders/{id}/pickup` → "
+        "`PUT /orders/{id}/deliver`"
+    )
 )
 def pickup_order(
     order_id: str,
@@ -109,7 +151,14 @@ def pickup_order(
 
 @router.put(
     "/orders/{order_id}/deliver",
-    response_model=OrderActionResponse
+    response_model=OrderActionResponse,
+    summary="Mark Subscription Order as Delivered",
+    description=(
+        "**Confirm that a subscription order has been delivered to the customer.**\n\n"
+        "The customer's OTP may be required for confirmation (check `GET /orders/{id}` for the OTP field). "
+        "This marks the order `delivered` and triggers the provider earnings credit.\n\n"
+        "**When to call:** After handing the order to the customer at their door."
+    )
 )
 def deliver_order(
     order_id: str,
@@ -129,7 +178,14 @@ def deliver_order(
 
 @router.get(
     "/extra-orders",
-    response_model=DeliveryExtraOrderListResponse
+    response_model=DeliveryExtraOrderListResponse,
+    summary="List My Extra (One-Time) Delivery Orders",
+    description=(
+        "**Fetch one-time orders assigned to this delivery boy.**\n\n"
+        "Filter by `delivery_date`, `meal_slot`, and/or `status`. "
+        "These are separate from subscription orders and need to be delivered alongside them.\n\n"
+        "**When to call:** Same time as `GET /delivery/orders` — check both lists each morning."
+    )
 )
 def list_extra_orders(
     delivery_date: Optional[date] = Query(
@@ -158,7 +214,13 @@ def list_extra_orders(
 
 @router.get(
     "/extra-orders/{order_id}",
-    response_model=DeliveryExtraOrderDetailResponse
+    response_model=DeliveryExtraOrderDetailResponse,
+    summary="Get Extra Order Detail",
+    description=(
+        "**Fetch full details of a specific one-time delivery order.**\n\n"
+        "Returns delivery address, customer info, items, amount, and current status.\n\n"
+        "**When to call:** When the delivery boy taps on an extra order to navigate to the address."
+    )
 )
 def get_extra_order_detail(
     order_id: str,
@@ -174,7 +236,14 @@ def get_extra_order_detail(
 
 @router.put(
     "/extra-orders/{order_id}/pickup",
-    response_model=OrderActionResponse
+    response_model=OrderActionResponse,
+    summary="Pickup Extra Order from Provider",
+    description=(
+        "**Mark a one-time order as picked up from the vendor.**\n\n"
+        "Call this when collecting the food parcel from the kitchen for an extra order.\n\n"
+        "**Flow:** Provider marks `out_for_delivery` → `PUT /extra-orders/{id}/pickup` → "
+        "`PUT /extra-orders/{id}/deliver`"
+    )
 )
 def pickup_extra_order(
     order_id: str,
@@ -192,7 +261,12 @@ def pickup_extra_order(
 
 @router.put(
     "/extra-orders/{order_id}/deliver",
-    response_model=OrderActionResponse
+    response_model=OrderActionResponse,
+    summary="Mark Extra Order as Delivered",
+    description=(
+        "**Confirm that a one-time (extra) order has been delivered to the customer.**\n\n"
+        "Call this after handing the parcel to the customer at their delivery address."
+    )
 )
 def deliver_extra_order(
     order_id: str,

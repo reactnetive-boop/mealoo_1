@@ -29,7 +29,7 @@ class SubscriptionPlanResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    subscription_plan_id: UUID
 
     subscription_type: str
 
@@ -87,9 +87,9 @@ class SubscriptionPackageResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    subscription_package_id: UUID
 
-    package_id: UUID
+    package_reference_id: UUID
 
     quantity: int
 
@@ -100,15 +100,15 @@ class SubscriptionResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    subscription_id: UUID
 
-    user_id: UUID
+    user_reference_id: UUID
 
-    vendor_id: UUID
+    vendor_reference_id: UUID
 
-    plan_id: UUID
+    plan_reference_id: UUID
 
-    user_address_id: UUID
+    user_address_reference_id: UUID
 
     status: str
 

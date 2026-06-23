@@ -25,7 +25,7 @@ class WalletTransactionResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    wallet_transaction_id: UUID
 
     type: str
 
@@ -46,9 +46,9 @@ class WalletResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    wallet_id: UUID
 
-    user_id: UUID
+    user_reference_id: UUID
 
     balance: Decimal
 
