@@ -61,6 +61,21 @@ class CartRepository:
         db.delete(item)
 
     @staticmethod
+    def delete_by_package_ids(
+        db: Session,
+        user_id,
+        package_ids: list,
+    ) -> int:
+        return (
+            db.query(CartItem)
+            .filter(
+                CartItem.user_reference_id == user_id,
+                CartItem.package_reference_id.in_(package_ids),
+            )
+            .delete(synchronize_session=False)
+        )
+
+    @staticmethod
     def delete_all_by_user(
         db: Session,
         user_id,

@@ -9,6 +9,7 @@ from app.repositories.user_address_repository import UserAddressRepository
 from app.repositories.wallet_repository import WalletRepository
 from app.repositories.extra_order_repository import ExtraOrderRepository
 from app.repositories.package_capacity_repository import PackageCapacityRepository
+from app.repositories.cart_repository import CartRepository
 
 
 class ExtraOrderService:
@@ -176,6 +177,10 @@ class ExtraOrderService:
                 db,
                 txn_data
             )
+
+            # Remove ordered packages from cart
+            ordered_package_ids = [str(i["package_id"]) for i in resolved_items]
+            CartRepository.delete_by_package_ids(db, user_id, ordered_package_ids)
 
             db.commit()
 

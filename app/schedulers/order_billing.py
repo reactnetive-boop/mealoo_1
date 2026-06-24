@@ -1,17 +1,45 @@
 import logging
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.models.subscription_model import Subscription
-from app.models.subscription_package_model import SubscriptionPackage
 from app.models.order_model import Order
 from app.models.wallet_model import Wallet
 from app.models.wallet_transaction_model import WalletTransaction
 
 logger = logging.getLogger(__name__)
+
+# How many individual meal slots are in each subscription meal_slot value
+SLOTS_PER_DAY = {
+    "breakfast":        1,
+    "lunch":            1,
+    "dinner":           1,
+    "breakfast_lunch":  2,
+    "lunch_dinner":     2,
+    "breakfast_dinner": 2,
+    "all_slots":        3,
+}
+
+
+def _per_meal_refund(subscription: Subscription) -> Decimal:
+    """
+    Amount to refund when the user free-skips a single meal slot.
+
+    refund = final_amount / (duration_days * slots_per_day)
+
+    e.g. lunch+dinner plan, 30 days, final_amount=1800
+         slots_per_day = 2
+         per_meal = 1800 / (30 * 2) = 30 per meal slot
+    """
+    slots = SLOTS_PER_DAY.get(subscription.meal_slot, 1)
+    duration = (subscription.end_date - subscription.start_date).days or 1
+    divisor = Decimal(str(duration * slots))
+    return (Decimal(str(subscription.final_amount)) / divisor).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
 
 
 def process_order_billing(meal_slot: str) -> None:
@@ -19,53 +47,41 @@ def process_order_billing(meal_slot: str) -> None:
     Runs at the scheduled time for each meal slot (breakfast 6 AM,
     lunch 9 AM, dinner 3 PM).
 
-    For every active-subscription order today matching `meal_slot`:
+    Subscription amount is charged UPFRONT at subscription creation —
+    this scheduler only handles SKIP REFUNDS.
 
-    - status="skipped" + free skips remaining  → mark is_free_skip, bump
-      free_skips_used, no wallet deduction.
-    - status="skipped" + no free skips left    → deduct slot amount (paid skip).
-    - status="scheduled"                        → deduct slot amount.
-
-    Wallet deduction is skipped (and logged as a failure) when the wallet
-    is missing or has insufficient balance; those orders are NOT changed.
+    Rules:
+    - status="scheduled"  → nothing (already paid upfront)
+    - status="skipped" + free skips remaining
+        → mark is_free_skip, bump free_skips_used,
+          CREDIT back per-meal refund to user wallet
+    - status="skipped" + NO free skips left
+        → no refund (paid skip, amount already deducted upfront)
     """
     db: Session = SessionLocal()
     today = date.today()
 
-    logger.info("[billing:%s] starting for %s", meal_slot, today)
+    logger.info("[billing:%s] starting skip-refund run for %s", meal_slot, today)
 
     try:
-        # ── 1. Fetch today's billable orders + their subscriptions ─────────
+        # ── 1. Fetch today's skipped orders + their active subscriptions ───
         rows = (
             db.query(Order, Subscription)
             .join(Subscription, Order.subscription_reference_id == Subscription.subscription_id)
             .filter(
                 Order.order_date == today,
                 Order.meal_slot == meal_slot,
-                Order.status.in_(["scheduled", "skipped"]),
+                Order.status == "skipped",
                 Subscription.status == "active",
             )
             .all()
         )
 
         if not rows:
-            logger.info("[billing:%s] nothing to process for %s", meal_slot, today)
+            logger.info("[billing:%s] no skipped orders for %s", meal_slot, today)
             return
 
-        # ── 2. Batch-load packages keyed by subscription_id ───────────────
-        sub_ids = list({sub.subscription_id for _, sub in rows})
-
-        all_packages = (
-            db.query(SubscriptionPackage)
-            .filter(SubscriptionPackage.subscription_reference_id.in_(sub_ids))
-            .all()
-        )
-
-        packages_by_sub: dict[str, list[SubscriptionPackage]] = {}
-        for pkg in all_packages:
-            packages_by_sub.setdefault(str(pkg.subscription_reference_id), []).append(pkg)
-
-        # ── 3. Batch-load wallets keyed by user_id ────────────────────────
+        # ── 2. Batch-load wallets keyed by user_id ────────────────────────
         user_ids = list({sub.user_reference_id for _, sub in rows})
 
         all_wallets = (
@@ -78,56 +94,27 @@ def process_order_billing(meal_slot: str) -> None:
             str(w.user_reference_id): w for w in all_wallets
         }
 
-        # ── 4. Process each order ─────────────────────────────────────────
-        deducted = 0
-        free_skips = 0
+        # ── 3. Process each skipped order ─────────────────────────────────
+        free_skip_refunds = 0
         paid_skips = 0
         failures = 0
 
         for order, subscription in rows:
 
-            sub_packages = packages_by_sub.get(str(subscription.subscription_id), [])
-
-            if not sub_packages:
-                logger.warning(
-                    "[billing:%s] no packages for subscription %s — skipping order %s",
-                    meal_slot, subscription.subscription_id, order.order_id,
-                )
-                failures += 1
-                continue
-
-            slot_amount = sum(
-                Decimal(str(pkg.unit_price)) * pkg.quantity
-                for pkg in sub_packages
+            free_remaining = (
+                subscription.free_skips_total - subscription.free_skips_used
             )
 
-            # ── Skipped order ─────────────────────────────────────────────
-            if order.status == "skipped":
-                free_remaining = (
-                    subscription.free_skips_total - subscription.free_skips_used
-                )
-
-                if free_remaining > 0:
-                    # Consume one free skip — no charge
-                    subscription.free_skips_used += 1
-                    order.is_free_skip = True
-                    free_skips += 1
-                    logger.info(
-                        "[billing:%s] order %s: free skip used (%d/%d)",
-                        meal_slot, order.order_id,
-                        subscription.free_skips_used,
-                        subscription.free_skips_total,
-                    )
-                    continue
-
-                # No free skips left — fall through to deduct
+            if free_remaining <= 0:
+                # No free skips left — paid skip, no refund
                 paid_skips += 1
                 logger.info(
-                    "[billing:%s] order %s: skipped but no free skips remaining — charging %s",
-                    meal_slot, order.order_id, slot_amount,
+                    "[billing:%s] order %s: paid skip (no free skips remaining)",
+                    meal_slot, order.order_id,
                 )
+                continue
 
-            # ── Wallet deduction ──────────────────────────────────────────
+            # Free skip — refund the per-meal amount
             wallet = wallets_by_user.get(str(subscription.user_reference_id))
 
             if not wallet:
@@ -138,45 +125,49 @@ def process_order_billing(meal_slot: str) -> None:
                 failures += 1
                 continue
 
-            if Decimal(str(wallet.balance)) < slot_amount:
-                logger.warning(
-                    "[billing:%s] insufficient balance for order %s — "
-                    "required: %s, available: %s",
-                    meal_slot, order.order_id, slot_amount, wallet.balance,
-                )
-                failures += 1
-                continue
-
+            refund_amount = _per_meal_refund(subscription)
             balance_before = Decimal(str(wallet.balance))
-            wallet.balance = wallet.balance - slot_amount
+            wallet.balance = wallet.balance + refund_amount
             balance_after = Decimal(str(wallet.balance))
 
             txn = WalletTransaction(
                 wallet_reference_id=wallet.wallet_id,
                 user_reference_id=subscription.user_reference_id,
-                type="debit",
-                reason="order_placed",
-                amount=slot_amount,
+                type="credit",
+                reason="skip_refund",
+                amount=refund_amount,
                 balance_before=balance_before,
                 balance_after=balance_after,
                 reference_id=order.order_id,
                 reference_type="order",
                 description=(
-                    f"{meal_slot.capitalize()} order — "
-                    f"{today.strftime('%d %b %Y')}"
+                    f"Skip refund — {meal_slot.capitalize()} "
+                    f"{today.strftime('%d %b %Y')} "
+                    f"(free skip {subscription.free_skips_used + 1}"
+                    f"/{subscription.free_skips_total})"
                 ),
                 created_by=subscription.user_reference_id,
             )
             db.add(txn)
-            deducted += 1
 
-        # ── 5. Commit everything atomically ───────────────────────────────
+            subscription.free_skips_used += 1
+            order.is_free_skip = True
+            free_skip_refunds += 1
+
+            logger.info(
+                "[billing:%s] order %s: free skip refund ₹%s credited "
+                "(%d/%d skips used)",
+                meal_slot, order.order_id, refund_amount,
+                subscription.free_skips_used, subscription.free_skips_total,
+            )
+
+        # ── 4. Commit everything atomically ───────────────────────────────
         db.commit()
 
         logger.info(
-            "[billing:%s] done for %s — deducted=%d  free_skips=%d  "
+            "[billing:%s] done for %s — free_skip_refunds=%d  "
             "paid_skips=%d  failures=%d",
-            meal_slot, today, deducted, free_skips, paid_skips, failures,
+            meal_slot, today, free_skip_refunds, paid_skips, failures,
         )
 
     except Exception:

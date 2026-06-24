@@ -69,7 +69,7 @@ api_router.include_router(package_image_router,  prefix="/package/image",
 api_router.include_router(
     provider_selected_package_router,
     prefix="/provider-package",
-    tags=["Provider"]
+    tags=["Menu"]
 )
 
 api_router.include_router(

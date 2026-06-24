@@ -9,21 +9,19 @@ from app.repositories.menu_repository import MenuRepository
 
 def _build_item_dict(item) -> dict:
     pkg = item.package
-    effective_price = (
-        pkg.discounted_price
-        if pkg.discounted_price
-        else pkg.price
-    )
+    price = Decimal(str(pkg.price))
+    discounted_price = Decimal(str(pkg.discounted_price)) if pkg.discounted_price else Decimal("0")
+    effective_price = price - discounted_price
     return {
         "cart_item_id": item.cart_item_id,
         "package_reference_id": item.package_reference_id,
         "vendor_reference_id": item.vendor_reference_id,
         "quantity": item.quantity,
         "package_name": pkg.package_name,
-        "price": pkg.price,
-        "discounted_price": pkg.discounted_price,
+        "price": price,
+        "discounted_price": discounted_price,
         "effective_price": effective_price,
-        "item_total": Decimal(str(effective_price)) * item.quantity,
+        "item_total": effective_price * item.quantity,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }

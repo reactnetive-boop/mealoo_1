@@ -72,7 +72,7 @@ class PackageImageService:
         )
 
         package_image = MenuPackageImage(
-            package_id=package_id,
+            package_reference_id=package_id,
             image_url=file_path,
             is_primary=is_primary
         )
@@ -153,7 +153,7 @@ class PackageImageService:
 
         PackageImageRepository.remove_primary_images(
             db,
-            package_image.package_id
+            package_image.image_id
         )
 
         package_image.is_primary = True

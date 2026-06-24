@@ -57,20 +57,24 @@ class UserAddressRepository:
     @staticmethod
     def unset_default(
         db: Session,
-        user_id
+        user_id,
+        exclude_address_id=None
     ):
-
-        (
+        query = (
             db.query(UserAddress)
             .filter(
                 UserAddress.user_reference_id == user_id,
                 UserAddress.is_default == True,
                 UserAddress.is_active == True
             )
-            .update({"is_default": False})
         )
 
-        db.commit()
+        if exclude_address_id:
+            query = query.filter(
+                UserAddress.user_address_id != exclude_address_id
+            )
+
+        query.update({"is_default": False}, synchronize_session=False)
 
     @staticmethod
     def create_address(

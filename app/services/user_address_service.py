@@ -23,7 +23,7 @@ class UserAddressService:
 
         if is_first_address:
             address_data["is_default"] = True
-        elif payload.is_default:
+        elif address_data.get("is_default"):
             UserAddressRepository.unset_default(db, user_id)
 
         address = UserAddressRepository.create_address(
@@ -123,10 +123,11 @@ class UserAddressService:
         )
 
         if update_data.get("is_default"):
-
+            # Unset all other defaults first (same transaction)
             UserAddressRepository.unset_default(
                 db,
-                user_id
+                user_id,
+                exclude_address_id=address.user_address_id
             )
 
         updated_address = UserAddressRepository.update_address(

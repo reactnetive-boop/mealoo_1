@@ -13,6 +13,7 @@ from app.repositories.menu_repository import MenuRepository
 from app.repositories.user_address_repository import UserAddressRepository
 from app.repositories.wallet_repository import WalletRepository
 from app.repositories.package_capacity_repository import PackageCapacityRepository
+from app.repositories.cart_repository import CartRepository
 from app.models.order_model import Order
 
 
@@ -292,6 +293,35 @@ class SubscriptionService:
                     }
                 )
 
+            # Deduct full subscription amount from wallet upfront
+            balance_before = Decimal(str(wallet.balance))
+            WalletRepository.deduct_balance(db, wallet, final_amount)
+            balance_after = Decimal(str(wallet.balance))
+
+            WalletRepository.create_transaction(
+                db,
+                {
+                    "wallet_reference_id": str(wallet.wallet_id),
+                    "user_reference_id": user_id,
+                    "type": "debit",
+                    "reason": "subscription_payment",
+                    "amount": final_amount,
+                    "balance_before": balance_before,
+                    "balance_after": balance_after,
+                    "reference_id": subscription.subscription_id,
+                    "reference_type": "subscription",
+                    "description": (
+                        f"Subscription payment — "
+                        f"{plan.meal_slot} {plan.subscription_type} "
+                        f"({plan.duration_days} days)"
+                    ),
+                }
+            )
+
+            # Remove subscribed packages from cart
+            subscribed_package_ids = [str(i["package_id"]) for i in resolved_items]
+            CartRepository.delete_by_package_ids(db, user_id, subscribed_package_ids)
+
             db.commit()
 
             db.refresh(subscription)
@@ -303,7 +333,7 @@ class SubscriptionService:
                 "total_amount": total_amount,
                 "discount_amount": discount_amount,
                 "final_amount": final_amount,
-                "wallet_balance": wallet.balance
+                "wallet_balance_after": balance_after,
             }
 
         except HTTPException:

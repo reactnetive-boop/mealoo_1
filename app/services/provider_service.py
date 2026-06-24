@@ -107,9 +107,16 @@ class ProviderService:
 
         if not provider:
 
-            raise Exception(
-                "Provider not found"
-            )
+            return {
+                "success": False,
+                "message": (
+                    "Provider not found"
+                ),
+                "profile_image": (
+                    ""
+                )
+            }
+
 
         allowed_extensions = [
             "jpg",
@@ -124,9 +131,15 @@ class ProviderService:
 
         if file_extension not in allowed_extensions:
 
-            raise Exception(
-                "Invalid image format"
-            )
+            return {
+                "success": False,
+                "message": (
+                    "Invalid image format! Image should have jpg, jpeg, png and webp."
+                ),
+                "profile_image": (
+                    ""
+                )
+            }
 
         image_path = (
             save_profile_image(file)
