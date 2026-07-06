@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies.auth_dependency import get_current_admin
+from app.dependencies.auth_dependency import get_current_admin, require_super_admin
 from app.services.admin_user_service import AdminUserService
 from app.schemas.admin_schema import (
     AdminUpdateUserStatusRequest,
@@ -67,7 +67,7 @@ def update_user_status(
     user_id: UUID,
     payload: AdminUpdateUserStatusRequest,
     db: Session = Depends(get_db),
-    current=Depends(get_current_admin)
+    current=Depends(require_super_admin)
 ):
     return AdminUserService.update_user_status(db, str(user_id), payload, current["admin_id"])
 

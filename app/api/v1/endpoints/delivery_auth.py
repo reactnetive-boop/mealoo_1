@@ -9,6 +9,7 @@ from app.schemas.delivery_boy_schema import (
     DeliveryBoyLoginRequest,
     DeliveryBoyAuthResponse,
 )
+from app.schemas.auth_schema import LogoutResponse
 
 router = APIRouter()
 
@@ -76,3 +77,18 @@ def login(
     db: Session = Depends(get_db)
 ):
     return DeliveryBoyAuthService.login(db, payload.mobile_number, payload.password)
+
+
+@router.post(
+    "/logout",
+    response_model=LogoutResponse,
+    summary="Delivery Boy Logout",
+    description=(
+        "**Invalidate the current delivery boy session.**\n\n"
+        "Call this when the delivery boy logs out of the app. "
+        "The client should discard the stored token after this call."
+    )
+)
+async def logout_delivery_boy():
+
+    return await DeliveryBoyAuthService.logout_delivery_boy()

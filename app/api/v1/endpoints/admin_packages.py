@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies.auth_dependency import get_current_admin
+from app.dependencies.auth_dependency import get_current_admin, require_super_admin
 from app.services.admin_content_service import AdminPackageService
 from app.schemas.admin_schema import AdminCreatePackageRequest, AdminUpdatePackageRequest
 
@@ -25,7 +25,7 @@ router = APIRouter()
 def create_package(
     payload: AdminCreatePackageRequest,
     db: Session = Depends(get_db),
-    current=Depends(get_current_admin)
+    current=Depends(require_super_admin)
 ):
     return AdminPackageService.create_package(db, payload, current["admin_id"])
 

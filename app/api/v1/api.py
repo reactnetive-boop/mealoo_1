@@ -23,6 +23,9 @@ from app.api.v1.endpoints.provider_wallet import router as provider_wallet_route
 from app.api.v1.endpoints.delivery_auth import router as delivery_auth_router
 from app.api.v1.endpoints.delivery_orders import router as delivery_orders_router
 from app.api.v1.endpoints.provider_complaint import router as provider_complaint_router
+from app.api.v1.endpoints.delivery_complaint import router as delivery_complaint_router
+from app.api.v1.endpoints.user_notification import router as user_notification_router
+from app.api.v1.endpoints.user_payment import router as user_payment_router
 from app.api.v1.endpoints.admin_auth import router as admin_auth_router
 from app.api.v1.endpoints.admin_users import router as admin_users_router
 from app.api.v1.endpoints.admin_providers import router as admin_providers_router
@@ -34,6 +37,7 @@ from app.api.v1.endpoints.admin_reviews import router as admin_reviews_router
 from app.api.v1.endpoints.admin_orders import router as admin_orders_router
 from app.api.v1.endpoints.admin_pincodes import router as admin_pincodes_router
 from app.api.v1.endpoints.admin_dashboard import router as admin_dashboard_router
+from app.api.v1.endpoints.admin_payments import router as admin_payments_router
 
 api_router = APIRouter()
 
@@ -162,6 +166,24 @@ api_router.include_router(
     tags=["Provider Complaint"]
 )
 
+api_router.include_router(
+    delivery_complaint_router,
+    prefix="/delivery/complaint",
+    tags=["Delivery Boy Complaint"]
+)
+
+api_router.include_router(
+    user_notification_router,
+    prefix="/user/notification",
+    tags=["User Notification"]
+)
+
+api_router.include_router(
+    user_payment_router,
+    prefix="/user/payment",
+    tags=["User Payment"]
+)
+
 # ── Admin ─────────────────────────────────────────────────
 api_router.include_router(admin_auth_router,          prefix="/admin/auth",          tags=["Admin Auth"])
 api_router.include_router(admin_dashboard_router,     prefix="/admin/dashboard",     tags=["Admin Dashboard"])
@@ -174,3 +196,4 @@ api_router.include_router(admin_complaints_router,    prefix="/admin/complaints"
 api_router.include_router(admin_reviews_router,       prefix="/admin/reviews",       tags=["Admin — Reviews"])
 api_router.include_router(admin_orders_router,        prefix="/admin/orders",        tags=["Admin — Orders"])
 api_router.include_router(admin_pincodes_router,      prefix="/admin/pincodes",      tags=["Admin — Pincodes"])
+api_router.include_router(admin_payments_router,      prefix="/admin/payments",      tags=["Admin — Payments"])

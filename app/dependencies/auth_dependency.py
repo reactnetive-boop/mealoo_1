@@ -91,6 +91,19 @@ def get_current_admin(
         )
 
 
+def require_super_admin(
+    current=Depends(get_current_admin)
+):
+
+    if current.get("role") != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="super_admin role required"
+        )
+
+    return current
+
+
 def get_current_delivery_boy(
     credentials = Depends(security)
 ):

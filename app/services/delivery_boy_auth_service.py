@@ -109,3 +109,11 @@ class DeliveryBoyAuthService:
             "access_token": access_token,
             "token_type": "bearer"
         }
+
+    @staticmethod
+    async def logout_delivery_boy():
+
+        return {
+            "success": True,
+            "message": "Logged out successfully"
+        }

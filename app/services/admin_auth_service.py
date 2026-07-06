@@ -57,3 +57,11 @@ class AdminAuthService:
         db.commit()
 
         return {"success": True, "message": "Password changed successfully"}
+
+    @staticmethod
+    async def logout_admin():
+
+        return {
+            "success": True,
+            "message": "Logged out successfully"
+        }

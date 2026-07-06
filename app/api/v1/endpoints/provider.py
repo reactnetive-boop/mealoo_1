@@ -94,15 +94,17 @@ def get_profile(
     )
 )
 async def update_profile_image(
-    provider_id: str,
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_provider=Depends(
+        get_current_provider
+    )
 ):
 
     response = (
         ProviderService.update_profile_image(
             db,
-            provider_id,
+            current_provider["provider_id"],
             file
         )
     )

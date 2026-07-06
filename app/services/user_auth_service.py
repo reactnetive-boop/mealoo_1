@@ -179,3 +179,11 @@ class UserAuthService:
             "access_token": access_token,
             "token_type": "bearer"
         }
+
+    @staticmethod
+    async def logout_user():
+
+        return {
+            "success": True,
+            "message": "Logged out successfully"
+        }

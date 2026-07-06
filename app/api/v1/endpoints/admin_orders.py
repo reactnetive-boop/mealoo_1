@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies.auth_dependency import get_current_admin
+from app.dependencies.auth_dependency import get_current_admin, require_super_admin
 from app.services.admin_order_service import AdminOrderService
 from app.schemas.admin_schema import AdminForceStatusRequest, AdminAssignDeliveryBoyRequest, AdminReassignProviderRequest
 
@@ -119,7 +119,7 @@ def force_update_order_status(
     order_id: UUID,
     payload: AdminForceStatusRequest,
     db: Session = Depends(get_db),
-    current=Depends(get_current_admin)
+    current=Depends(require_super_admin)
 ):
     return AdminOrderService.force_update_order_status(db, str(order_id), payload)
 
@@ -201,6 +201,6 @@ def force_update_extra_order_status(
     order_id: UUID,
     payload: AdminForceStatusRequest,
     db: Session = Depends(get_db),
-    current=Depends(get_current_admin)
+    current=Depends(require_super_admin)
 ):
     return AdminOrderService.force_update_extra_order_status(db, str(order_id), payload)

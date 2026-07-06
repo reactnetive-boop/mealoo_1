@@ -8,6 +8,7 @@ from app.schemas.admin_schema import (
     AdminLoginRequest, AdminLoginResponse,
     AdminProfileResponse, AdminChangePasswordRequest
 )
+from app.schemas.auth_schema import LogoutResponse
 
 router = APIRouter()
 
@@ -56,3 +57,18 @@ def change_password(
     current=Depends(get_current_admin)
 ):
     return AdminAuthService.change_password(db, current["admin_id"], payload)
+
+
+@router.post(
+    "/logout",
+    response_model=LogoutResponse,
+    summary="Admin Logout",
+    description=(
+        "**Invalidate the current admin session.**\n\n"
+        "Call this when the admin logs out of the panel. "
+        "The client should discard the stored token after this call."
+    )
+)
+async def logout_admin():
+
+    return await AdminAuthService.logout_admin()

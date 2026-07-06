@@ -159,7 +159,7 @@ class CreateSubscriptionResponse(BaseModel):
 
     final_amount: Decimal
 
-    wallet_balance: Decimal
+    wallet_balance_after: Decimal
 
 
 class SubscriptionListResponse(BaseModel):

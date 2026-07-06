@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies.auth_dependency import get_current_admin
+from app.dependencies.auth_dependency import get_current_admin, require_super_admin
 from app.services.admin_content_service import AdminPlanService
 from app.schemas.admin_schema import AdminCreatePlanRequest, AdminUpdatePlanRequest
 
@@ -27,7 +27,7 @@ router = APIRouter()
 def create_plan(
     payload: AdminCreatePlanRequest,
     db: Session = Depends(get_db),
-    current=Depends(get_current_admin)
+    current=Depends(require_super_admin)
 ):
     return AdminPlanService.create_plan(db, payload)
 

@@ -17,7 +17,7 @@ class Payment(Base):
             name="chk_payment_amount"
         ),
         CheckConstraint(
-            "subscription_reference_id IS NOT NULL OR extra_order_reference_id IS NOT NULL",
+            "subscription_reference_id IS NOT NULL OR extra_order_reference_id IS NOT NULL OR purpose = 'wallet_topup'",
             name="chk_payment_ref"
         ),
         UniqueConstraint("gateway_txn_id", name="payments_gateway_txn_id_key"),
@@ -48,6 +48,14 @@ class Payment(Base):
         UUID(as_uuid=True),
         ForeignKey("subscription.extra_orders.extra_order_id", name="payments_extra_order_id_fkey"),
         nullable=True
+    )
+
+    # 'subscription' | 'extra_order' | 'wallet_topup'
+    purpose = Column(
+        String(20),
+        nullable=False,
+        default="wallet_topup",
+        server_default="wallet_topup"
     )
 
     amount = Column(

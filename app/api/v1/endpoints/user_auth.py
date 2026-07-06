@@ -10,6 +10,7 @@ from app.schemas.user_auth_schema import (
     UserVerifyOTPRequest,
     UserLoginRequest
 )
+from app.schemas.auth_schema import LogoutResponse
 from app.services.user_auth_service import UserAuthService
 
 router = APIRouter()
@@ -111,3 +112,18 @@ def login(
             status_code=400,
             detail=str(e)
         )
+
+
+@router.post(
+    "/logout",
+    response_model=LogoutResponse,
+    summary="User Logout",
+    description=(
+        "**Invalidate the current user session.**\n\n"
+        "Call this when the user logs out of the app. "
+        "The client should discard the stored token after this call."
+    )
+)
+async def logout_user():
+
+    return await UserAuthService.logout_user()
