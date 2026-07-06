@@ -56,7 +56,9 @@ class MenuService:
 
             "subscription_price": (
                 request.subscription_price
-            )
+            ),
+
+            "is_active": True
         }
 
         package = (

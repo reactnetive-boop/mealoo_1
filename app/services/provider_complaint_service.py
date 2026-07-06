@@ -11,6 +11,7 @@ class ProviderComplaintService:
     @staticmethod
     def raise_complaint(db: Session, provider_id: str, payload):
         data = payload.model_dump()
+        data["delivery_boy_reference_id"] = data.pop("delivery_boy_id", None)
         data["provider_reference_id"] = provider_id
         data["status"] = "open"
 

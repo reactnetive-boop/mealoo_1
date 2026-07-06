@@ -34,7 +34,7 @@ class PackageItemService:
             )
 
         package_item = MenuPackageItem(
-            package_id=request.package_id,
+            package_reference_id=request.package_id,
             item_name=request.item_name,
             quantity=request.quantity,
             item_order=request.item_order

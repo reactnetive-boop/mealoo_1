@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
 from app.models.otp_log_model import OTPLog
@@ -10,6 +12,8 @@ class OTPRepository:
         db: Session,
         otp_data: dict
     ):
+
+        otp_data.setdefault("created_at", datetime.now(timezone.utc))
 
         otp = OTPLog(**otp_data)
 
