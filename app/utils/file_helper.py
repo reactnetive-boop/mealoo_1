@@ -16,6 +16,10 @@ PACKAGE_UPLOAD_DIR = (
     "uploads/package_images"
 )
 
+DELIVERY_DOCUMENT_UPLOAD_DIR = (
+    "uploads/delivery_boys/documents"
+)
+
 os.makedirs(
     PROFILE_UPLOAD_DIR,
     exist_ok=True
@@ -28,6 +32,11 @@ os.makedirs(
 
 os.makedirs(
     PACKAGE_UPLOAD_DIR,
+    exist_ok=True
+)
+
+os.makedirs(
+    DELIVERY_DOCUMENT_UPLOAD_DIR,
     exist_ok=True
 )
 
@@ -59,6 +68,16 @@ def save_package_image(
     return save_file(
         file=file,
         upload_dir=PACKAGE_UPLOAD_DIR
+    )
+
+
+def save_delivery_document(
+    file: UploadFile
+):
+
+    return save_file(
+        file=file,
+        upload_dir=DELIVERY_DOCUMENT_UPLOAD_DIR
     )
 
 

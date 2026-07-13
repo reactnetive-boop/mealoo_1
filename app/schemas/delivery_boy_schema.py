@@ -42,6 +42,7 @@ class DeliveryBoyProfileResponse(BaseModel):
     full_name: Optional[str]
     is_mobile_verified: bool
     is_active: bool
+    is_online: bool
     vehicle_type: Optional[str]
     vehicle_number: Optional[str]
     profile_image: Optional[str]
@@ -53,6 +54,7 @@ class UpdateDeliveryBoyProfileRequest(BaseModel):
     full_name: Optional[str] = Field(None, max_length=128)
     vehicle_type: Optional[str] = Field(None, description="bike | cycle | scooter | car")
     vehicle_number: Optional[str] = Field(None, max_length=20)
+    is_online: Optional[bool] = Field(None, description="Duty status — true when accepting deliveries")
 
 
 # ── User & Address info (embedded in order detail) ────────
@@ -85,6 +87,23 @@ class OrderPackageInfo(BaseModel):
     quantity: int
 
 
+class OrderVendorInfo(BaseModel):
+    """Pickup-side info: the provider's kitchen the order is collected from."""
+    model_config = ConfigDict(from_attributes=True)
+
+    provider_id: UUID
+    business_name: Optional[str]
+    full_name: Optional[str]
+    mobile_number: Optional[str]
+    house_no: Optional[str]
+    address: Optional[str]
+    area: Optional[str]
+    landmark: Optional[str]
+    city: Optional[str]
+    state: Optional[str]
+    pincode: Optional[int]
+
+
 # ── Subscription Orders ───────────────────────────────────
 
 class DeliverySubscriptionOrderResponse(BaseModel):
@@ -115,6 +134,7 @@ class DeliverySubscriptionOrderDetailResponse(BaseModel):
     user: OrderUserInfo
     delivery_address: OrderAddressInfo
     packages: List[OrderPackageInfo]
+    vendor: Optional[OrderVendorInfo] = None
 
 
 class PickupRequest(BaseModel):
@@ -163,9 +183,141 @@ class DeliveryExtraOrderDetailResponse(BaseModel):
     user: OrderUserInfo
     delivery_address: OrderAddressInfo
     package_name: str
+    vendor: Optional[OrderVendorInfo] = None
 
 
 # ── Assign delivery boy (provider side) ──────────────────
 
 class AssignDeliveryBoyRequest(BaseModel):
     delivery_boy_id: UUID
+
+
+# ── Documents ─────────────────────────────────────────────
+
+DOCUMENT_TYPES = ("aadhaar", "pan", "driving_license", "vehicle_rc")
+
+
+class DeliveryBoyDocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    delivery_boy_document_id: UUID
+    document_type: str
+    file_url: str
+    status: str
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+
+class DeliveryBoyDocumentListResponse(BaseModel):
+    success: bool
+    total: int
+    documents: List[DeliveryBoyDocumentResponse]
+
+
+class DeliveryBoyDocumentUploadResponse(BaseModel):
+    success: bool
+    message: str
+    document: DeliveryBoyDocumentResponse
+
+
+# ── Payout details ────────────────────────────────────────
+
+class DeliveryBoyPayoutDetailsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    delivery_boy_payout_id: UUID
+    account_holder_name: Optional[str]
+    account_number: Optional[str]
+    ifsc_code: Optional[str]
+    bank_name: Optional[str]
+    upi_id: Optional[str]
+    updated_at: Optional[datetime]
+
+
+class GetPayoutDetailsResponse(BaseModel):
+    success: bool
+    payout_details: Optional[DeliveryBoyPayoutDetailsResponse] = None
+
+
+class UpdatePayoutDetailsRequest(BaseModel):
+    account_holder_name: Optional[str] = Field(None, max_length=128)
+    account_number: Optional[str] = Field(None, max_length=30)
+    ifsc_code: Optional[str] = Field(None, max_length=20)
+    bank_name: Optional[str] = Field(None, max_length=128)
+    upi_id: Optional[str] = Field(None, max_length=128)
+
+
+class UpdatePayoutDetailsResponse(BaseModel):
+    success: bool
+    message: str
+    payout_details: DeliveryBoyPayoutDetailsResponse
+
+
+# ── Wallet & earnings ─────────────────────────────────────
+
+class DeliveryBoyWalletResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    delivery_boy_wallet_id: UUID
+    balance: Decimal
+    total_earned: Decimal
+    total_withdrawn: Decimal
+
+
+class GetWalletResponse(BaseModel):
+    success: bool
+    wallet: DeliveryBoyWalletResponse
+
+
+class DeliveryBoyWalletTransactionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    delivery_boy_wallet_transaction_id: UUID
+    type: str
+    reason: str
+    amount: Decimal
+    balance_after: Decimal
+    reference_id: Optional[UUID]
+    reference_type: Optional[str]
+    description: Optional[str]
+    created_at: Optional[datetime]
+
+
+class WalletTransactionListResponse(BaseModel):
+    success: bool
+    total: int
+    transactions: List[DeliveryBoyWalletTransactionResponse]
+
+
+class EarningsPeriodSummary(BaseModel):
+    deliveries: int
+    earnings: Decimal
+
+
+class EarningsSummaryResponse(BaseModel):
+    success: bool
+    wallet: DeliveryBoyWalletResponse
+    today: EarningsPeriodSummary
+    week: EarningsPeriodSummary        # last 7 days including today
+    month: EarningsPeriodSummary       # calendar month to date
+
+
+# ── Notifications ─────────────────────────────────────────
+
+class DeliveryBoyNotificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    delivery_boy_notification_id: UUID
+    type: str
+    title: str
+    body: str
+    data: Optional[dict]
+    is_read: bool
+    created_at: Optional[datetime]
+
+
+class NotificationListResponse(BaseModel):
+    success: bool
+    total: int
+    unread: int
+    notifications: List[DeliveryBoyNotificationResponse]

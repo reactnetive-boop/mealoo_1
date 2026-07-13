@@ -4,13 +4,54 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import DELIVERY_BOY_FEE_PER_DELIVERY
 from app.repositories.delivery_boy_repository import DeliveryBoyRepository
 from app.repositories.delivery_boy_repository import DeliveryBoyRepository as Repo
+from app.repositories.delivery_boy_wallet_repository import DeliveryBoyWalletRepository
 from app.repositories.provider_wallet_repository import ProviderWalletRepository
 from app.models.order_model import Order
 from app.models.extra_order_model import ExtraOrder
 from app.models.subscription_model import Subscription
 from app.models.subscription_package_model import SubscriptionPackage
+from app.schemas.delivery_boy_schema import DeliveryBoyProfileResponse
+
+
+def _credit_delivery_boy_for_delivery(
+    db: Session,
+    delivery_boy_id,
+    reference_id,
+    reference_type: str,
+    description: str,
+):
+    """Flat per-delivery payout + notification. Flushes only — caller commits."""
+    fee = Decimal(DELIVERY_BOY_FEE_PER_DELIVERY)
+    if fee <= 0:
+        return
+
+    wallet = DeliveryBoyWalletRepository.get_or_create(db, delivery_boy_id)
+    balance_before = Decimal(str(wallet.balance))
+    DeliveryBoyWalletRepository.credit(db, wallet, fee)
+    DeliveryBoyWalletRepository.create_transaction(db, {
+        "wallet_reference_id": wallet.delivery_boy_wallet_id,
+        "delivery_boy_reference_id": delivery_boy_id,
+        "type": "credit",
+        "reason": "delivery_payout",
+        "amount": fee,
+        "balance_before": balance_before,
+        "balance_after": Decimal(str(wallet.balance)),
+        "reference_id": reference_id,
+        "reference_type": reference_type,
+        "description": description,
+    })
+    Repo.create_notification(
+        db,
+        delivery_boy_id,
+        type="payout",
+        title="Delivery payout credited",
+        body=f"₹{fee} added to your wallet. {description}",
+        data={"reference_id": str(reference_id), "reference_type": reference_type},
+        commit=False,
+    )
 
 
 class DeliveryBoyOrderService:
@@ -22,7 +63,7 @@ class DeliveryBoyOrderService:
         boy = Repo.get_by_id(db, delivery_boy_id)
         if not boy:
             raise HTTPException(status_code=404, detail="Delivery boy not found")
-        return {"success": True, "profile": boy}
+        return {"success": True, "profile": DeliveryBoyProfileResponse.model_validate(boy)}
 
     @staticmethod
     def update_profile(db: Session, delivery_boy_id: str, payload):
@@ -32,7 +73,11 @@ class DeliveryBoyOrderService:
 
         update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
         boy = Repo.update(db, boy, update_data)
-        return {"success": True, "message": "Profile updated", "profile": boy}
+        return {
+            "success": True,
+            "message": "Profile updated",
+            "profile": DeliveryBoyProfileResponse.model_validate(boy),
+        }
 
     # ── Subscription Orders ───────────────────────────────
 
@@ -61,7 +106,7 @@ class DeliveryBoyOrderService:
         if not row:
             raise HTTPException(status_code=404, detail="Order not found")
 
-        order, user, address, subscription = row
+        order, user, address, subscription, vendor = row
 
         sp_rows = Repo.get_subscription_packages_for_order(db, subscription.subscription_id)
         packages = [
@@ -78,7 +123,8 @@ class DeliveryBoyOrderService:
             "order": order,
             "user": user,
             "delivery_address": address,
-            "packages": packages
+            "packages": packages,
+            "vendor": vendor
         }
 
     @staticmethod
@@ -153,6 +199,15 @@ class DeliveryBoyOrderService:
                 "description": f"Delivery confirmed for {order.order_date} ({order.meal_slot})",
             })
 
+        # Pay the delivery boy for the completed drop
+        _credit_delivery_boy_for_delivery(
+            db,
+            delivery_boy_id,
+            reference_id=order.order_id,
+            reference_type="order",
+            description=f"Order delivered on {order.order_date} ({order.meal_slot})",
+        )
+
         db.commit()
         db.refresh(order)
 
@@ -190,14 +245,15 @@ class DeliveryBoyOrderService:
         if not row:
             raise HTTPException(status_code=404, detail="Extra order not found")
 
-        order, user, address, package = row
+        order, user, address, package, vendor = row
 
         return {
             "success": True,
             "order": order,
             "user": user,
             "delivery_address": address,
-            "package_name": package.package_name
+            "package_name": package.package_name,
+            "vendor": vendor
         }
 
     @staticmethod
@@ -255,6 +311,15 @@ class DeliveryBoyOrderService:
                 "reference_type": "extra_order",
                 "description": f"Extra order delivered on {order.delivery_date} ({order.meal_slot})",
             })
+
+        # Pay the delivery boy for the completed drop
+        _credit_delivery_boy_for_delivery(
+            db,
+            delivery_boy_id,
+            reference_id=order.extra_order_id,
+            reference_type="extra_order",
+            description=f"Extra order delivered on {order.delivery_date} ({order.meal_slot})",
+        )
 
         db.commit()
         db.refresh(order)

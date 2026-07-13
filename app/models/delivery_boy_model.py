@@ -42,6 +42,9 @@ class DeliveryBoy(Base):
 
     is_active = Column(Boolean, default=True)
 
+    # Duty status toggled from the app's home screen ("online" = accepting work)
+    is_online = Column(Boolean, default=True, nullable=False, server_default='true')
+
     # bike | cycle | scooter | car
     vehicle_type = Column(String(30), nullable=True)
 

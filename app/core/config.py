@@ -27,3 +27,9 @@ JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(
     os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")
 )
+
+# Flat amount credited to a delivery boy's wallet per completed delivery.
+DELIVERY_BOY_FEE_PER_DELIVERY = os.getenv(
+    "DELIVERY_BOY_FEE_PER_DELIVERY",
+    "30.00"
+)

@@ -226,6 +226,18 @@ def assign_delivery_boy_to_order(
         raise HTTPException(status_code=404, detail="Order not found")
 
     order.delivery_boy_reference_id = body.delivery_boy_id
+
+    # Let the delivery boy know a new drop landed on their list
+    from app.repositories.delivery_boy_repository import DeliveryBoyRepository
+    DeliveryBoyRepository.create_notification(
+        db,
+        body.delivery_boy_id,
+        type="order_assigned",
+        title="New delivery assigned",
+        body=f"Subscription order for {order.order_date} ({order.meal_slot}) has been assigned to you.",
+        data={"order_id": str(order.order_id), "kind": "subscription"},
+        commit=False,
+    )
     db.commit()
 
     return {
@@ -264,6 +276,17 @@ def assign_delivery_boy_to_extra_order(
         raise HTTPException(status_code=404, detail="Extra order not found")
 
     order.delivery_boy_reference_id = body.delivery_boy_id
+
+    from app.repositories.delivery_boy_repository import DeliveryBoyRepository
+    DeliveryBoyRepository.create_notification(
+        db,
+        body.delivery_boy_id,
+        type="order_assigned",
+        title="New delivery assigned",
+        body=f"Extra order for {order.delivery_date} ({order.meal_slot}) has been assigned to you.",
+        data={"order_id": str(order.extra_order_id), "kind": "extra"},
+        commit=False,
+    )
     db.commit()
 
     return {

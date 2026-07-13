@@ -22,6 +22,7 @@ from app.api.v1.endpoints.provider_orders import router as provider_orders_route
 from app.api.v1.endpoints.provider_wallet import router as provider_wallet_router
 from app.api.v1.endpoints.delivery_auth import router as delivery_auth_router
 from app.api.v1.endpoints.delivery_orders import router as delivery_orders_router
+from app.api.v1.endpoints.delivery_account import router as delivery_account_router
 from app.api.v1.endpoints.provider_complaint import router as provider_complaint_router
 from app.api.v1.endpoints.delivery_complaint import router as delivery_complaint_router
 from app.api.v1.endpoints.user_notification import router as user_notification_router
@@ -158,6 +159,12 @@ api_router.include_router(
     delivery_orders_router,
     prefix="/delivery",
     tags=["Delivery Boy"]
+)
+
+api_router.include_router(
+    delivery_account_router,
+    prefix="/delivery",
+    tags=["Delivery Boy Account"]
 )
 
 api_router.include_router(
