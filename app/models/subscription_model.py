@@ -55,7 +55,7 @@ class Subscription(Base):
         nullable=False
     )
 
-    # 'pending' | 'active' | 'paused' | 'cancelled' | 'expired'
+    # 'pending' | 'active' | 'paused' | 'cancelled' | 'expired' | 'switched'
     status = Column(
         String(20),
         nullable=False,

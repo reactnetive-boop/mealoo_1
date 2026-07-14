@@ -42,10 +42,12 @@ from app.api.v1.endpoints.admin_payments import router as admin_payments_router
 
 api_router = APIRouter()
 
+# ── Provider ──────────────────────────────────────────────
+
 api_router.include_router(
     auth.router,
     prefix="/auth",
-    tags=["Authentication"]
+    tags=["Provider Auth"]
 )
 
 api_router.include_router(
@@ -53,29 +55,46 @@ api_router.include_router(
     prefix="/provider",
     tags=["Provider"]
 )
+
 api_router.include_router(
     menu.router,
     prefix="/menu",
-    tags=["Menu"]
-)
-api_router.include_router(
-    location_router,
-    prefix="/location",
-    tags=["Location"]
+    tags=["Provider Menu"]
 )
 
-api_router.include_router(package_item_router,  prefix="/package/item",
-    tags=["Package Item"]
-)
-
-api_router.include_router(package_image_router,  prefix="/package/image",
-    tags=["Package Image"]
-)
 api_router.include_router(
     provider_selected_package_router,
     prefix="/provider-package",
-    tags=["Menu"]
+    tags=["Provider Menu"]
 )
+
+api_router.include_router(package_item_router,  prefix="/package/item",
+    tags=["Provider Package Item"]
+)
+
+api_router.include_router(package_image_router,  prefix="/package/image",
+    tags=["Provider Package Image"]
+)
+
+api_router.include_router(
+    provider_orders_router,
+    prefix="/provider/orders",
+    tags=["Provider Orders"]
+)
+
+api_router.include_router(
+    provider_wallet_router,
+    prefix="/provider/wallet",
+    tags=["Provider Wallet"]
+)
+
+api_router.include_router(
+    provider_complaint_router,
+    prefix="/provider/complaint",
+    tags=["Provider Complaint"]
+)
+
+# ── User ──────────────────────────────────────────────────
 
 api_router.include_router(
     user_auth_router,
@@ -93,6 +112,12 @@ api_router.include_router(
     user_address_router,
     prefix="/user",
     tags=["User Address"]
+)
+
+api_router.include_router(
+    location_router,
+    prefix="/location",
+    tags=["User Location"]
 )
 
 api_router.include_router(
@@ -138,16 +163,18 @@ api_router.include_router(
 )
 
 api_router.include_router(
-    provider_orders_router,
-    prefix="/provider/orders",
-    tags=["Provider Orders"]
+    user_notification_router,
+    prefix="/user/notification",
+    tags=["User Notification"]
 )
 
 api_router.include_router(
-    provider_wallet_router,
-    prefix="/provider/wallet",
-    tags=["Provider Wallet"]
+    user_payment_router,
+    prefix="/user/payment",
+    tags=["User Payment"]
 )
+
+# ── Delivery Boy ──────────────────────────────────────────
 
 api_router.include_router(
     delivery_auth_router,
@@ -168,27 +195,9 @@ api_router.include_router(
 )
 
 api_router.include_router(
-    provider_complaint_router,
-    prefix="/provider/complaint",
-    tags=["Provider Complaint"]
-)
-
-api_router.include_router(
     delivery_complaint_router,
     prefix="/delivery/complaint",
     tags=["Delivery Boy Complaint"]
-)
-
-api_router.include_router(
-    user_notification_router,
-    prefix="/user/notification",
-    tags=["User Notification"]
-)
-
-api_router.include_router(
-    user_payment_router,
-    prefix="/user/payment",
-    tags=["User Payment"]
 )
 
 # ── Admin ─────────────────────────────────────────────────

@@ -28,6 +28,7 @@ from .audit_log_model import *
 from .subscription_plan_model import *
 from .subscription_model import *
 from .subscription_package_model import *
+from .package_switch_log_model import *
 
 from .payment_model import *
 

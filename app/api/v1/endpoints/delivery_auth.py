@@ -5,6 +5,7 @@ from app.core.database import get_db
 from app.services.delivery_boy_auth_service import DeliveryBoyAuthService
 from app.schemas.delivery_boy_schema import (
     DeliveryBoyRegisterRequest,
+    DeliveryBoyRegisterResponse,
     DeliveryBoyVerifyOTPRequest,
     DeliveryBoyLoginRequest,
     DeliveryBoyAuthResponse,
@@ -16,7 +17,7 @@ router = APIRouter()
 
 @router.post(
     "/register",
-    response_model=DeliveryBoyAuthResponse,
+    response_model=DeliveryBoyRegisterResponse,
     summary="Delivery Boy Register – Step 1: Send OTP",
     description=(
         "**First step of delivery boy registration.**\n\n"

@@ -23,6 +23,13 @@ class DeliveryBoyLoginRequest(BaseModel):
     password: str
 
 
+class DeliveryBoyRegisterResponse(BaseModel):
+    success: bool
+    contact: str
+    message: str
+    otp: str  # remove in production — send via SMS
+
+
 class DeliveryBoyAuthResponse(BaseModel):
     success: bool
     message: str

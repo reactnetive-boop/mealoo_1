@@ -201,3 +201,93 @@ class ResumeSubscriptionResponse(BaseModel):
     days_paused: int
 
     new_orders_created: int
+
+
+# ── Package Switch ───────────────────────────────────────
+
+class PackageSwitchRequest(BaseModel):
+
+    new_package_id: UUID
+
+    # Required only when the subscription holds more than one package
+    old_package_id: Optional[UUID] = None
+
+
+class PackageSwitchCalculation(BaseModel):
+    """Unused Service Value Method breakdown (Package Switch Policy §4/§16)."""
+
+    switch_request_date: date
+
+    effective_date: date
+
+    total_days: int
+
+    used_days: int
+
+    remaining_days: int
+
+    old_daily_cost: Decimal
+
+    new_daily_cost: Decimal
+
+    remaining_value: Decimal
+
+    new_remaining_cost: Decimal
+
+    # new_remaining_cost - remaining_value (signed, before floor rule)
+    adjustment_amount: Decimal
+
+    # Floored to whole rupees (policy §17): what the customer pays now
+    payment_amount: Decimal
+
+    # Floored to whole rupees (policy §17): what is credited to the wallet
+    wallet_credit_amount: Decimal
+
+    # 'payment_required' | 'wallet_credit' | 'no_adjustment'
+    action: str
+
+
+class PackageSwitchPreviewResponse(BaseModel):
+
+    success: bool
+
+    old_package_id: UUID
+
+    old_package_name: str
+
+    old_provider_id: UUID
+
+    new_package_id: UUID
+
+    new_package_name: str
+
+    new_provider_id: UUID
+
+    calculation: PackageSwitchCalculation
+
+    wallet_balance: Decimal
+
+
+class PackageSwitchResponse(BaseModel):
+
+    success: bool
+
+    message: str
+
+    switch_id: UUID
+
+    old_subscription_id: UUID
+
+    new_subscription_id: UUID
+
+    new_provider_id: UUID
+
+    effective_date: date
+
+    payment_amount: Decimal
+
+    wallet_credit_amount: Decimal
+
+    wallet_balance_after: Decimal
+
+    new_orders_created: int

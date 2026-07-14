@@ -16,9 +16,13 @@ from app.schemas.subscription_schema import (
     CancelSubscriptionRequest,
     PauseSubscriptionResponse,
     ResumeSubscriptionResponse,
+    PackageSwitchRequest,
+    PackageSwitchPreviewResponse,
+    PackageSwitchResponse,
 )
 from app.schemas.user_menu_schema import UserPackageListResponse
 from app.services.subscription_service import SubscriptionService
+from app.services.package_switch_service import PackageSwitchService
 
 router = APIRouter()
 
@@ -197,6 +201,78 @@ def cancel_subscription(
 ):
 
     return SubscriptionService.cancel_subscription(
+        db,
+        current_user["user_id"],
+        subscription_id,
+        payload
+    )
+
+
+@router.post(
+    "/{subscription_id}/switch/preview",
+    response_model=PackageSwitchPreviewResponse,
+    summary="Preview a Package Switch",
+    description=(
+        "**Calculate the cost of switching to another package without committing.**\n\n"
+        "Uses the Unused Service Value Method: the remaining (unused) value of the "
+        "current package is compared with the remaining cost of the new package over "
+        "the same period. The switch always becomes effective from the **next service day** — "
+        "today's meal is still served by the current provider.\n\n"
+        "- `action = payment_required` → upgrade: `payment_amount` must be paid from the wallet\n"
+        "- `action = wallet_credit` → downgrade: `wallet_credit_amount` will be credited\n"
+        "- `action = no_adjustment` → same price: switch completes with no money movement\n\n"
+        "Amounts follow the Floor (Truncate) Rule — fractional paise are discarded.\n"
+        "Works for same-provider and different-provider switches alike.\n\n"
+        "**When to call:** On the 'Switch Package' confirmation screen, before showing "
+        "the user what they will pay or receive.\n\n"
+        "**Flow:** browse packages → `POST /switch/preview` → confirm → `POST /switch`"
+    )
+)
+def preview_package_switch(
+    subscription_id: UUID,
+    payload: PackageSwitchRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+
+    return PackageSwitchService.preview_switch(
+        db,
+        current_user["user_id"],
+        subscription_id,
+        payload
+    )
+
+
+@router.post(
+    "/{subscription_id}/switch",
+    response_model=PackageSwitchResponse,
+    summary="Switch to Another Package",
+    description=(
+        "**Switch the subscription to a different package (same or different provider).**\n\n"
+        "Applies the calculation shown by `POST /switch/preview`:\n"
+        "- **Upgrade** — the difference is debited from the wallet immediately. "
+        "If the balance is insufficient the switch is cancelled and nothing changes.\n"
+        "- **Downgrade** — the difference (floored to whole rupees) is credited to the wallet.\n"
+        "- **Same price** — no money movement.\n\n"
+        "**What happens internally:** the old subscription is closed after today's service "
+        "(status `switched`), its future orders are cancelled, a new subscription is created "
+        "for the remaining days with the new package/provider, new daily orders are generated, "
+        "an audit record is stored, and the customer plus affected delivery partners are notified. "
+        "Old and new providers are each settled only for the meals they actually serve.\n\n"
+        "**Rules:** not allowed on the last day of the subscription; only active "
+        "subscriptions can switch; switching to the currently subscribed package is rejected; "
+        "the new package must be subscription-enabled and have capacity.\n\n"
+        "**When to call:** After the user confirms the preview on the 'Switch Package' screen."
+    )
+)
+def switch_package(
+    subscription_id: UUID,
+    payload: PackageSwitchRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+
+    return PackageSwitchService.switch_package(
         db,
         current_user["user_id"],
         subscription_id,

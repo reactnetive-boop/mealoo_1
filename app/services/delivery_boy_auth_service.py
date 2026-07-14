@@ -25,7 +25,7 @@ class DeliveryBoyAuthService:
 
         return {
             "success": True,
-            "mobile_number": mobile_number,
+            "contact": mobile_number,
             "message": "OTP generated successfully",
             "otp": otp  # remove in production — send via SMS
         }
