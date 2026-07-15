@@ -96,7 +96,7 @@ def generate_subscription_orders():
                 db.bulk_insert_mappings(Order, new_orders)
                 total_created += len(new_orders)
                 logger.info(
-                    f"Subscription {sub.id}: created {len(new_orders)} orders."
+                    f"Subscription {sub.subscription_id}: created {len(new_orders)} orders."
                 )
 
         db.commit()

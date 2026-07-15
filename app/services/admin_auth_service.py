@@ -43,7 +43,18 @@ class AdminAuthService:
         admin = db.query(AdminUser).filter(AdminUser.admin_user_id == admin_id).first()
         if not admin:
             raise HTTPException(status_code=404, detail="Admin not found")
-        return {"success": True, "admin": admin}
+        return {
+            "success": True,
+            "admin": {
+                "admin_user_id": str(admin.admin_user_id),
+                "full_name": admin.full_name,
+                "email": admin.email,
+                "role": admin.role,
+                "is_active": admin.is_active,
+                "last_login_at": admin.last_login_at,
+                "created_at": admin.created_at,
+            },
+        }
 
     @staticmethod
     def change_password(db: Session, admin_id: str, payload):

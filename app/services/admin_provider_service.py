@@ -54,7 +54,7 @@ class AdminProviderService:
             .limit(10)
             .all()
         )
-        wallet = db.query(ProviderWallet).filter(ProviderWallet.provider_id == provider_id).first()
+        wallet = db.query(ProviderWallet).filter(ProviderWallet.provider_reference_id == provider_id).first()
         txns = (
             db.query(ProviderWalletTransaction)
             .filter(ProviderWalletTransaction.provider_reference_id == provider_id)

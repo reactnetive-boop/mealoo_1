@@ -17,7 +17,7 @@ class AdminPackageService:
     def create_package(db: Session, payload, admin_id: str):
         package_data = {
             "provider_id": admin_id,
-            "category_id": payload.category_id,
+            "category_reference_id": payload.category_id,
             "package_name": payload.package_name,
             "short_description": payload.short_description,
             "description": payload.description,

@@ -19,6 +19,11 @@ class ComplaintService:
 
         complaint_data = payload.model_dump()
 
+        # Schema field names → renamed model columns
+        complaint_data["vendor_reference_id"] = complaint_data.pop("vendor_id", None)
+        complaint_data["order_reference_id"] = complaint_data.pop("order_id", None)
+        complaint_data["subscription_reference_id"] = complaint_data.pop("subscription_id", None)
+
         complaint_data["user_reference_id"] = user_id
 
         complaint_data["status"] = "open"
