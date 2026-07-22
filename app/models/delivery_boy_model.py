@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import (
-    Column, BigInteger, String, Boolean, Text, DateTime, ForeignKey,
+    Column, BigInteger, String, Boolean, Text, Date, DateTime, ForeignKey,
     UniqueConstraint, Index
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -37,6 +37,13 @@ class DeliveryBoy(Base):
     hashed_password = Column(String, nullable=False)
 
     full_name = Column(String(128), nullable=True)
+
+    email = Column(String(255), nullable=True)
+
+    date_of_birth = Column(Date, nullable=True)
+
+    # male | female | other
+    gender = Column(String(10), nullable=True)
 
     is_mobile_verified = Column(Boolean, default=False)
 
