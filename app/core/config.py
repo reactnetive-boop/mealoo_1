@@ -7,9 +7,10 @@ APP_NAME = os.getenv("APP_NAME")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+print("DATABASE_URL EXISTS:", bool(DATABASE_URL))
+
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL is not configured")
-
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
 
