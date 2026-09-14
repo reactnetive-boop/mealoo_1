@@ -203,6 +203,186 @@ class ResumeSubscriptionResponse(BaseModel):
     new_orders_created: int
 
 
+# ── Subscription Orders (customer view) ──────────────────
+
+class UserSubscriptionOrderResponse(BaseModel):
+    """One generated meal delivery belonging to a subscription."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    order_id: UUID
+
+    subscription_reference_id: UUID
+
+    vendor_reference_id: UUID
+
+    delivery_address_reference_id: UUID
+
+    delivery_boy_reference_id: Optional[UUID]
+
+    order_date: date
+
+    meal_slot: str
+
+    # 'scheduled' | 'preparing' | 'out_for_delivery' | 'delivered' | 'skipped' | 'cancelled'
+    status: str
+
+    is_free_skip: bool
+
+    skip_requested_at: Optional[datetime]
+
+    skip_deadline: Optional[datetime]
+
+    delivered_at: Optional[datetime]
+
+    delivery_notes: Optional[str]
+
+    # Shared by the customer with the delivery partner at hand-over
+    otp_for_delivery: Optional[str]
+
+    created_at: Optional[datetime]
+
+    updated_at: Optional[datetime]
+
+
+class UserSubscriptionOrderListResponse(BaseModel):
+
+    success: bool
+
+    subscription_id: UUID
+
+    subscription_status: str
+
+    total: int
+
+    # Count of orders per status, e.g. {"scheduled": 5, "delivered": 2}
+    status_summary: dict
+
+    orders: List[UserSubscriptionOrderResponse]
+
+
+class UserOrderAddressInfo(BaseModel):
+
+    model_config = ConfigDict(from_attributes=True)
+
+    user_address_id: UUID
+
+    label: Optional[str]
+
+    address_line1: str
+
+    address_line2: Optional[str]
+
+    landmark: Optional[str]
+
+    city: str
+
+    state: str
+
+    pin_code: str
+
+    latitude: Optional[Decimal]
+
+    longitude: Optional[Decimal]
+
+
+class UserOrderPackageInfo(BaseModel):
+
+    package_id: UUID
+
+    package_name: str
+
+    meal_type: Optional[str]
+
+    food_type: Optional[str]
+
+    quantity: int
+
+    unit_price: Decimal
+
+    primary_image: Optional[str]
+
+
+class UserOrderVendorInfo(BaseModel):
+
+    model_config = ConfigDict(from_attributes=True)
+
+    provider_id: UUID
+
+    business_name: Optional[str]
+
+    mobile_number: Optional[str]
+
+    area: Optional[str]
+
+    city: Optional[str]
+
+    profile_image: Optional[str]
+
+
+class UserOrderDeliveryBoyInfo(BaseModel):
+
+    model_config = ConfigDict(from_attributes=True)
+
+    delivery_boy_id: UUID
+
+    full_name: Optional[str]
+
+    mobile_number: Optional[str]
+
+    vehicle_type: Optional[str]
+
+    vehicle_number: Optional[str]
+
+    profile_image: Optional[str]
+
+
+class UserSubscriptionOrderDetailResponse(BaseModel):
+
+    success: bool
+
+    order: UserSubscriptionOrderResponse
+
+    delivery_address: UserOrderAddressInfo
+
+    packages: List[UserOrderPackageInfo]
+
+    vendor: Optional[UserOrderVendorInfo] = None
+
+    # None until the provider assigns a delivery partner
+    delivery_boy: Optional[UserOrderDeliveryBoyInfo] = None
+
+
+class SkipOrderResponse(BaseModel):
+
+    success: bool
+
+    message: str
+
+    order_id: UUID
+
+    status: str
+
+    # True when a free skip was consumed and the meal amount refunded
+    is_free_skip: bool
+
+    # Why the skip was not free: 'cutoff_passed' | 'no_free_skips_left' | None
+    not_free_reason: Optional[str]
+
+    # Same-day cutoff for this order's meal slot (breakfast 06:00, lunch 09:00, dinner 15:00)
+    skip_deadline: datetime
+
+    refund_amount: Decimal
+
+    wallet_balance_after: Optional[Decimal]
+
+    free_skips_total: int
+
+    free_skips_used: int
+
+    free_skips_remaining: int
+
+
 # ── Package Switch ───────────────────────────────────────
 
 class PackageSwitchRequest(BaseModel):
