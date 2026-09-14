@@ -47,6 +47,9 @@ class DeliveryBoyProfileResponse(BaseModel):
     delivery_boy_id: UUID
     mobile_number: str
     full_name: Optional[str]
+    email: Optional[str]
+    date_of_birth: Optional[date]
+    gender: Optional[str]
     is_mobile_verified: bool
     is_active: bool
     is_online: bool
@@ -59,6 +62,9 @@ class DeliveryBoyProfileResponse(BaseModel):
 
 class UpdateDeliveryBoyProfileRequest(BaseModel):
     full_name: Optional[str] = Field(None, max_length=128)
+    email: Optional[str] = Field(None, max_length=255)
+    date_of_birth: Optional[date] = Field(None, description="YYYY-MM-DD")
+    gender: Optional[str] = Field(None, description="male | female | other")
     vehicle_type: Optional[str] = Field(None, description="bike | cycle | scooter | car")
     vehicle_number: Optional[str] = Field(None, max_length=20)
     is_online: Optional[bool] = Field(None, description="Duty status — true when accepting deliveries")

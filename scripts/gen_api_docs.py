@@ -131,6 +131,60 @@ one-time purchases, and upgrade payments; it is not withdrawable to a bank accou
 **Source files.** Service: `app/services/package_switch_service.py` · audit model:
 `app/models/package_switch_log_model.py` · schemas: `app/schemas/subscription_schema.py`
 · migration: `alembic/versions/f4a5b6c7d8e9_add_package_switch_logs_table.py`.
+
+## Meal Skip Policy (skipping a single subscription order)
+
+Business rules behind `PUT /user/subscription/{subscription_id}/orders/{order_id}/skip`.
+Screens: subscription detail → meal schedule (`GET .../orders`) → order detail
+(`GET .../orders/{order_id}`) → 'Skip this meal' confirmation.
+
+**What a skip does.** The order row is set to `status = "skipped"` with
+`skip_requested_at`, `skip_deadline` (the cutoff for that order) and `is_free_skip`.
+The provider and the assigned delivery partner (notified with `schedule_update`) do not
+serve it. A skipped order cannot be un-skipped.
+
+**Free skip = refund.** Every plan grants `free_skips_total` per subscription. A skip is
+free only when **both** hold:
+
+1. `free_skips_used < free_skips_total`, and
+2. the request is **before the same-day cutoff** for the order's meal slot:
+
+| Meal slot | Cutoff on the order date |
+|---|---|
+| breakfast | 06:00 |
+| lunch | 09:00 |
+| dinner | 15:00 |
+
+Orders for a future date are always before the cutoff. A same-day skip after the cutoff is
+still accepted but is **not free**, does **not** consume a free skip, and issues no refund
+(`not_free_reason = "cutoff_passed"`). Once free skips are exhausted, further skips are
+accepted without refund (`not_free_reason = "no_free_skips_left"`).
+
+**Refund amount.** A free skip credits the per-meal amount to the Mealoo wallet and
+increments `free_skips_used`:
+
+```
+Service Days     = end_date − start_date − total_days_paused
+Meals Per Day    = 1 (single slot) · 2 (breakfast_lunch / lunch_dinner / breakfast_dinner) · 3 (all_slots)
+Per-Meal Amount  = final_amount ÷ (Service Days × Meals Per Day)      (2 dp)
+```
+
+Wallet transaction: `type = credit`, `reason = free_skip_refund`, `reference_type = order`.
+
+**Rules / edge cases.**
+
+| Scenario | Behaviour |
+|---|---|
+| Order date is in the past | 400 "Past orders cannot be skipped" |
+| Order not `scheduled` (preparing, delivered, skipped, cancelled…) | 400 |
+| Subscription not `active` (paused / cancelled / expired / switched) | 400 |
+| Order belongs to another subscription or user | 404 / 403 |
+| Same-day skip after cutoff | Skipped, no refund, free skip not consumed |
+| No free skips left | Skipped, no refund |
+
+**Source files.** Service: `app/services/subscription_service.py` (`skip_order`,
+`FREE_SKIP_CUTOFF`) · repository: `app/repositories/subscription_repository.py` · schema:
+`SkipOrderResponse` in `app/schemas/subscription_schema.py`.
 """,
     },
     "delivery": {

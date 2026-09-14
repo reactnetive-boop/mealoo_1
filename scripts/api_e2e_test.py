@@ -385,6 +385,34 @@ call("user foreign subscription detail", "GET", "/user/subscription/{sid}",
 print("  -> running order generator scheduler")
 run_order_scheduler()
 
+body = call("user subscription orders list", "GET", "/user/subscription/{sid}/orders",
+            token=U1, path={"sid": SUB1}, check=ok)
+_sub_orders = (body or {}).get("orders") or []
+SUB1_ORDER = _sub_orders[0].get("order_id") if _sub_orders else None
+call("user subscription orders filtered", "GET", "/user/subscription/{sid}/orders",
+     token=U1, path={"sid": SUB1}, params={"status": "scheduled", "order_date": str(TODAY)}, check=ok)
+if SUB1_ORDER:
+    call("user subscription order detail", "GET", "/user/subscription/{sid}/orders/{oid}",
+         token=U1, path={"sid": SUB1, "oid": SUB1_ORDER}, check=ok)
+call("user subscription order foreign 404", "GET", "/user/subscription/{sid}/orders/{oid}",
+     token=U1, path={"sid": SUB1, "oid": "00000000-0000-0000-0000-000000000000"}, expect=404)
+call("user orders of foreign subscription 404", "GET", "/user/subscription/{sid}/orders",
+     token=U1, path={"sid": "00000000-0000-0000-0000-000000000000"}, expect=404)
+
+# skip: a future order (before cutoff) is a free skip while free skips remain; today's
+# lunch is left alone because the provider/delivery flow below needs it.
+_future_orders = [o for o in _sub_orders if o.get("order_date", "") > str(TODAY) and o.get("status") == "scheduled"]
+if len(_future_orders) >= 2:
+    body = call("user skip future order (free)", "PUT", "/user/subscription/{sid}/orders/{oid}/skip",
+                token=U1, path={"sid": SUB1, "oid": _future_orders[0]["order_id"]},
+                check=lambda b: ok(b) or (None if b.get("status") == "skipped" else "status!=skipped"))
+    call("user skip same order twice rejected", "PUT", "/user/subscription/{sid}/orders/{oid}/skip",
+         token=U1, path={"sid": SUB1, "oid": _future_orders[0]["order_id"]}, expect=400)
+    call("user skip second future order", "PUT", "/user/subscription/{sid}/orders/{oid}/skip",
+         token=U1, path={"sid": SUB1, "oid": _future_orders[1]["order_id"]}, check=ok)
+call("user skip unknown order 404", "PUT", "/user/subscription/{sid}/orders/{oid}/skip",
+     token=U1, path={"sid": SUB1, "oid": "00000000-0000-0000-0000-000000000000"}, expect=404)
+
 call("switch preview same package rejected", "POST", "/user/subscription/{sid}/switch/preview",
      token=U1, path={"sid": SUB1}, json={"new_package_id": PKG1}, expect=400)
 body = call("switch preview to provider2", "POST", "/user/subscription/{sid}/switch/preview",

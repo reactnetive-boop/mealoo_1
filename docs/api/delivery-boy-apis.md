@@ -135,7 +135,7 @@ Returns name, mobile, assigned provider, and account status.
 
 Only the fields provided will be updated.
 
-**Request body** (application/json): `full_name` (string (nullable), optional); `vehicle_type` (string (nullable), optional); `vehicle_number` (string (nullable), optional); `is_online` (boolean (nullable), optional)
+**Request body** (application/json): `full_name` (string (nullable), optional); `email` (string (nullable), optional); `date_of_birth` (string (date) (nullable), optional); `gender` (string (nullable), optional); `vehicle_type` (string (nullable), optional); `vehicle_number` (string (nullable), optional); `is_online` (boolean (nullable), optional)
 
 
 ### `GET /api/v1/delivery/orders` — List My Subscription Delivery Orders

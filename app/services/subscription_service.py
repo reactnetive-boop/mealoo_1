@@ -1,6 +1,6 @@
 import uuid
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -15,6 +15,7 @@ from app.repositories.wallet_repository import WalletRepository
 from app.repositories.package_capacity_repository import PackageCapacityRepository
 from app.repositories.cart_repository import CartRepository
 from app.models.order_model import Order
+from app.repositories.delivery_boy_repository import DeliveryBoyRepository
 
 
 MEAL_SLOT_MULTIPLIER = {
@@ -35,6 +36,14 @@ MEAL_SLOT_EXPANSION = {
     "lunch_dinner":     ["lunch", "dinner"],
     "breakfast_dinner": ["breakfast", "dinner"],
     "all_slots":        ["breakfast", "lunch", "dinner"],
+}
+
+# Same-day skip cutoff per meal slot (server local time). A skip requested at or
+# after the cutoff on the order date is still allowed, but is never a free skip.
+FREE_SKIP_CUTOFF = {
+    "breakfast": time(6, 0),
+    "lunch":     time(9, 0),
+    "dinner":    time(15, 0),
 }
 
 
@@ -393,6 +402,342 @@ class SubscriptionService:
             )
 
         return subscription
+
+    @staticmethod
+    def _get_owned_subscription(
+        db: Session,
+        user_id: str,
+        subscription_id
+    ):
+        """Load a subscription and verify it belongs to the caller."""
+
+        subscription = SubscriptionRepository.get_by_id(
+            db, subscription_id
+        )
+
+        if not subscription:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Subscription not found"
+            )
+
+        if str(subscription.user_reference_id) != user_id:
+
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied"
+            )
+
+        return subscription
+
+    @staticmethod
+    def list_subscription_orders(
+        db: Session,
+        user_id: str,
+        subscription_id,
+        status: str = None,
+        order_date: date = None
+    ):
+
+        subscription = SubscriptionService._get_owned_subscription(
+            db, user_id, subscription_id
+        )
+
+        orders = SubscriptionRepository.get_orders_by_subscription(
+            db,
+            subscription.subscription_id,
+            status=status,
+            order_date=order_date
+        )
+
+        status_summary = {}
+
+        for order in orders:
+
+            status_summary[order.status] = status_summary.get(order.status, 0) + 1
+
+        return {
+            "success": True,
+            "subscription_id": subscription.subscription_id,
+            "subscription_status": subscription.status,
+            "total": len(orders),
+            "status_summary": status_summary,
+            "orders": orders
+        }
+
+    @staticmethod
+    def get_subscription_order(
+        db: Session,
+        user_id: str,
+        subscription_id,
+        order_id
+    ):
+
+        subscription = SubscriptionService._get_owned_subscription(
+            db, user_id, subscription_id
+        )
+
+        row = SubscriptionRepository.get_order_detail_by_id_and_subscription(
+            db, order_id, subscription.subscription_id
+        )
+
+        if not row:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Order not found"
+            )
+
+        order, address, vendor, delivery_boy = row
+
+        packages = []
+
+        for sub_pkg, pkg in SubscriptionRepository.get_packages_with_menu_by_subscription(
+            db, subscription.subscription_id
+        ):
+
+            primary_image = None
+
+            for img in pkg.images:
+
+                if img.is_primary:
+
+                    primary_image = img.image_url
+
+                    break
+
+            packages.append({
+                "package_id": pkg.package_id,
+                "package_name": pkg.package_name,
+                "meal_type": pkg.meal_type,
+                "food_type": pkg.food_type,
+                "quantity": sub_pkg.quantity,
+                "unit_price": sub_pkg.unit_price,
+                "primary_image": primary_image
+            })
+
+        return {
+            "success": True,
+            "order": order,
+            "delivery_address": address,
+            "packages": packages,
+            "vendor": vendor,
+            "delivery_boy": delivery_boy
+        }
+
+    @staticmethod
+    def _per_meal_amount(subscription) -> Decimal:
+        """
+        What the customer effectively paid for one meal order:
+        final_amount spread over every serviceable day × meals per day.
+        Paused days extend end_date, so they are excluded from the day count.
+        """
+
+        service_days = (
+            (subscription.end_date - subscription.start_date).days
+            - (subscription.total_days_paused or 0)
+        )
+
+        meals_per_day = len(
+            MEAL_SLOT_EXPANSION.get(subscription.meal_slot, [subscription.meal_slot])
+        )
+
+        total_meals = max(service_days * meals_per_day, 1)
+
+        return (
+            Decimal(str(subscription.final_amount)) / total_meals
+        ).quantize(Decimal("0.01"))
+
+    @staticmethod
+    def skip_order(
+        db: Session,
+        user_id: str,
+        subscription_id,
+        order_id
+    ):
+
+        subscription = SubscriptionService._get_owned_subscription(
+            db, user_id, subscription_id
+        )
+
+        if subscription.status != "active":
+
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot skip orders of a subscription that is {subscription.status}"
+            )
+
+        order = SubscriptionRepository.get_order_by_id_and_subscription(
+            db, order_id, subscription.subscription_id
+        )
+
+        if not order:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Order not found"
+            )
+
+        if order.status != "scheduled":
+
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only scheduled orders can be skipped. This order is {order.status}"
+            )
+
+        now_local = datetime.now()
+
+        if order.order_date < now_local.date():
+
+            raise HTTPException(
+                status_code=400,
+                detail="Past orders cannot be skipped"
+            )
+
+        cutoff_time = FREE_SKIP_CUTOFF.get(order.meal_slot)
+
+        if cutoff_time is None:
+
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported meal slot '{order.meal_slot}'"
+            )
+
+        # Cutoff is on the order date itself; for a future date the request is
+        # always before it, so only same-day skips can miss the window.
+        skip_deadline_local = datetime.combine(order.order_date, cutoff_time)
+        skip_deadline = skip_deadline_local.astimezone()
+
+        before_cutoff = now_local < skip_deadline_local
+
+        free_skips_total = subscription.free_skips_total or 0
+        free_skips_used = subscription.free_skips_used or 0
+        free_skips_remaining = free_skips_total - free_skips_used
+
+        not_free_reason = None
+
+        if not before_cutoff:
+            not_free_reason = "cutoff_passed"
+
+        elif free_skips_remaining <= 0:
+            not_free_reason = "no_free_skips_left"
+
+        is_free_skip = not_free_reason is None
+
+        refund_amount = Decimal("0.00")
+        wallet_balance_after = None
+
+        try:
+
+            SubscriptionRepository.skip_order(
+                db,
+                order,
+                is_free_skip=is_free_skip,
+                skip_requested_at=datetime.now(timezone.utc),
+                skip_deadline=skip_deadline
+            )
+
+            if is_free_skip:
+
+                SubscriptionRepository.consume_free_skip(db, subscription)
+                free_skips_used += 1
+                free_skips_remaining -= 1
+
+                refund_amount = SubscriptionService._per_meal_amount(subscription)
+
+                if refund_amount > 0:
+
+                    wallet = WalletRepository.get_or_create(db, user_id)
+
+                    balance_before = Decimal(str(wallet.balance))
+                    WalletRepository.credit_balance(db, wallet, refund_amount)
+                    wallet_balance_after = Decimal(str(wallet.balance))
+
+                    WalletRepository.create_transaction(
+                        db,
+                        {
+                            "wallet_reference_id": str(wallet.wallet_id),
+                            "user_reference_id": user_id,
+                            "type": "credit",
+                            "reason": "free_skip_refund",
+                            "amount": refund_amount,
+                            "balance_before": balance_before,
+                            "balance_after": wallet_balance_after,
+                            "reference_id": order.order_id,
+                            "reference_type": "order",
+                            "description": (
+                                f"Free skip refund — {order.meal_slot} on {order.order_date}"
+                            ),
+                        }
+                    )
+
+            db.commit()
+
+        except HTTPException:
+
+            db.rollback()
+
+            raise
+
+        except Exception as e:
+
+            db.rollback()
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Skip failed: {str(e)}"
+            )
+
+        # Let the assigned delivery partner know; must never fail the completed skip
+        if order.delivery_boy_reference_id:
+
+            try:
+
+                DeliveryBoyRepository.create_notification(
+                    db,
+                    delivery_boy_id=order.delivery_boy_reference_id,
+                    type="schedule_update",
+                    title="Delivery skipped by customer",
+                    body=(
+                        f"The {order.meal_slot} delivery on {order.order_date} "
+                        f"was skipped by the customer."
+                    ),
+                    data={"order_id": str(order.order_id), "order_date": str(order.order_date)},
+                )
+
+                db.commit()
+
+            except Exception:
+
+                db.rollback()
+
+        cutoff_label = cutoff_time.strftime("%I:%M %p").lstrip("0")
+
+        if is_free_skip:
+            message = f"Order skipped. ₹{refund_amount} refunded to your wallet as a free skip"
+        elif not_free_reason == "cutoff_passed":
+            message = (
+                f"Order skipped. The free-skip cutoff for {order.meal_slot} "
+                f"({cutoff_label}) has passed, so no refund was issued"
+            )
+        else:
+            message = "Order skipped. No free skips left on this subscription, so no refund was issued"
+
+        return {
+            "success": True,
+            "message": message,
+            "order_id": order.order_id,
+            "status": order.status,
+            "is_free_skip": is_free_skip,
+            "not_free_reason": not_free_reason,
+            "skip_deadline": skip_deadline,
+            "refund_amount": refund_amount,
+            "wallet_balance_after": wallet_balance_after,
+            "free_skips_total": free_skips_total,
+            "free_skips_used": free_skips_used,
+            "free_skips_remaining": free_skips_remaining,
+        }
 
     @staticmethod
     def cancel_subscription(

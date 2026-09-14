@@ -6,6 +6,9 @@ from app.models.subscription_model import Subscription
 from app.models.subscription_package_model import SubscriptionPackage
 from app.models.menu_package_model import MenuPackage
 from app.models.order_model import Order
+from app.models.user_address_model import UserAddress
+from app.models.provider_model import Provider
+from app.models.delivery_boy_model import DeliveryBoy
 
 
 class SubscriptionRepository:
@@ -170,12 +173,94 @@ class SubscriptionRepository:
     @staticmethod
     def get_orders_by_subscription(
         db: Session,
+        subscription_id,
+        status: str = None,
+        order_date: date_type = None
+    ):
+        query = (
+            db.query(Order)
+            .filter(Order.subscription_reference_id == subscription_id)
+        )
+        if status:
+            query = query.filter(Order.status == status)
+        if order_date:
+            query = query.filter(Order.order_date == order_date)
+        return query.order_by(Order.order_date.asc(), Order.meal_slot.asc()).all()
+
+    @staticmethod
+    def get_order_detail_by_id_and_subscription(
+        db: Session,
+        order_id,
+        subscription_id
+    ):
+        # Provider and delivery boy are outer-joined: a missing kitchen row or
+        # an unassigned order shouldn't 404 the customer's view.
+        return (
+            db.query(Order, UserAddress, Provider, DeliveryBoy)
+            .join(UserAddress, Order.delivery_address_reference_id == UserAddress.user_address_id)
+            .outerjoin(Provider, Order.vendor_reference_id == Provider.provider_id)
+            .outerjoin(DeliveryBoy, Order.delivery_boy_reference_id == DeliveryBoy.delivery_boy_id)
+            .filter(
+                Order.order_id == order_id,
+                Order.subscription_reference_id == subscription_id
+            )
+            .first()
+        )
+
+    @staticmethod
+    def get_order_by_id_and_subscription(
+        db: Session,
+        order_id,
         subscription_id
     ):
         return (
             db.query(Order)
-            .filter(Order.subscription_reference_id == subscription_id)
-            .order_by(Order.order_date.asc(), Order.meal_slot.asc())
+            .filter(
+                Order.order_id == order_id,
+                Order.subscription_reference_id == subscription_id
+            )
+            .first()
+        )
+
+    @staticmethod
+    def skip_order(
+        db: Session,
+        order: Order,
+        is_free_skip: bool,
+        skip_requested_at,
+        skip_deadline
+    ) -> Order:
+
+        order.status = "skipped"
+        order.is_free_skip = is_free_skip
+        order.skip_requested_at = skip_requested_at
+        order.skip_deadline = skip_deadline
+
+        db.flush()
+
+        return order
+
+    @staticmethod
+    def consume_free_skip(
+        db: Session,
+        subscription: Subscription
+    ) -> Subscription:
+
+        subscription.free_skips_used = (subscription.free_skips_used or 0) + 1
+
+        db.flush()
+
+        return subscription
+
+    @staticmethod
+    def get_packages_with_menu_by_subscription(
+        db: Session,
+        subscription_id
+    ):
+        return (
+            db.query(SubscriptionPackage, MenuPackage)
+            .join(MenuPackage, SubscriptionPackage.package_reference_id == MenuPackage.package_id)
+            .filter(SubscriptionPackage.subscription_reference_id == subscription_id)
             .all()
         )
 
