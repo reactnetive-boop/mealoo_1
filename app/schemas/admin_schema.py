@@ -1,9 +1,11 @@
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Union
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, EmailStr
+from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
+
+from app.utils.meal_type import normalize_meal_type
 
 
 # ── Auth ──────────────────────────────────────────────────
@@ -145,8 +147,20 @@ class AdminCreatePackageRequest(BaseModel):
     package_name: str = Field(..., max_length=255)
     short_description: Optional[str] = Field(None, max_length=500)
     description: Optional[str] = None
-    meal_type: str = Field(..., description="veg | non_veg | egg")
-    food_type: str = Field(..., description="breakfast | lunch | dinner | all_day")
+    meal_type: Union[str, List[str]] = Field(
+        ...,
+        description=(
+            "Meal slots — one, any two, or all three. List ([\"lunch\", \"dinner\"]), "
+            "comma separated string, or \"full_day\" for all three."
+        ),
+        examples=[["lunch", "dinner"]]
+    )
+    food_type: str = Field(..., description="veg | non_veg | egg")
+
+    @field_validator("meal_type", mode="after")
+    @classmethod
+    def _normalize_meal_type(cls, value):
+        return normalize_meal_type(value)
     price: Decimal = Field(..., gt=0)
     discounted_price: Optional[Decimal] = Field(None, ge=0)
     is_subscription_available: bool = False

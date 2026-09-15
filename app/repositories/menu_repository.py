@@ -1,4 +1,4 @@
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.menu_category_model import (
@@ -57,13 +57,12 @@ class MenuRepository:
         provider_id: str
     ):
 
+        # Provider-side listing: includes packages still awaiting admin activation
         return (
             db.query(MenuPackage)
             .filter(
                 MenuPackage.provider_id
-                == provider_id,
-
-                MenuPackage.is_active == True
+                == provider_id
             )
             .all()
         )
@@ -74,13 +73,14 @@ class MenuRepository:
         package_id: str
     ):
 
+        # Provider-side lookup (detail, edit, items, images). Inactive packages
+        # are included so a provider can finish a draft before it is approved;
+        # customer-facing reads use get_active_package_by_id instead.
         return (
             db.query(MenuPackage)
             .filter(
                 MenuPackage.package_id
-                == package_id,
-
-                MenuPackage.is_active == True
+                == package_id
             )
             .first()
         )
@@ -103,10 +103,14 @@ class MenuRepository:
         return (
             db.query(MenuPackage)
             .filter(
-                MenuPackage.is_active == True,
                 or_(
+                    # Own packages, including drafts awaiting activation
                     MenuPackage.provider_id == provider_id,
-                    MenuPackage.package_id.in_(selected_package_ids)
+                    # Packages merely selected from the catalogue must be live
+                    and_(
+                        MenuPackage.package_id.in_(selected_package_ids),
+                        MenuPackage.is_active == True
+                    )
                 )
             )
             .order_by(MenuPackage.created_at.desc())

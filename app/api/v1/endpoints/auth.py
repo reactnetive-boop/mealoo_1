@@ -9,7 +9,9 @@ from app.dependencies.provider_dependency import (
 )
 
 from app.schemas.auth_schema import (
-    GenerateOTPRequest, VerifyOTPRequest
+    GenerateOTPRequest, VerifyOTPRequest,
+    ForgotPasswordOTPRequest, ForgotPasswordOTPResponse,
+    ResetPasswordRequest, ResetPasswordResponse
 )
 
 
@@ -77,6 +79,79 @@ def verify_otp(
             db,
             request.mobile_number,
             request.otp
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+
+
+@router.post(
+    "/forgot-password/send-otp",
+    response_model=ForgotPasswordOTPResponse,
+    summary="Forgot Password - Step 1: Send OTP",
+    description=(
+        "**First step of provider password recovery.**\n\n"
+        "Send only the registered mobile number - no password is required, since the "
+        "provider has forgotten it. An OTP is sent to that mobile number.\n\n"
+        "Fails with 400 if no provider is registered with the number, or if the account "
+        "is deactivated.\n\n"
+        "**Flow:** `POST /forgot-password/send-otp` -> `POST /verify-otp` -> "
+        "`POST /forgot-password/reset` -> `POST /login` with the new password\n\n"
+        "**When to call:** When the provider taps 'Forgot password?' on the login screen."
+    )
+)
+def forgot_password_send_otp(
+    request: ForgotPasswordOTPRequest,
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        return AuthService.forgot_password_send_otp(
+            db,
+            request.mobile_number
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+
+
+@router.post(
+    "/forgot-password/reset",
+    response_model=ResetPasswordResponse,
+    summary="Forgot Password - Step 3: Set New Password",
+    description=(
+        "**Final step of provider password recovery.**\n\n"
+        "Submit `new_password` and `confirm_password` for the mobile number whose OTP was "
+        "just verified through `POST /verify-otp` (step 2). The two must match and be "
+        "8-16 characters.\n\n"
+        "The OTP is single-use: it is burnt once the password is changed, so a second "
+        "reset needs a fresh `POST /forgot-password/send-otp`. The request is rejected "
+        "with 400 if the OTP was never verified or the 15 minute window has lapsed.\n\n"
+        "**When to call:** On the 'Set new password' screen, after OTP verification. "
+        "Send the provider to the login screen afterwards - no token is issued here."
+    )
+)
+def forgot_password_reset(
+    request: ResetPasswordRequest,
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        return AuthService.reset_password(
+            db,
+            request.mobile_number,
+            request.new_password,
+            request.confirm_password
         )
 
     except Exception as e:

@@ -1,8 +1,13 @@
 from typing import List
 from typing import Optional
+from typing import Union
 
 from pydantic import BaseModel
+from pydantic import Field
+from pydantic import field_validator
 from uuid import UUID
+
+from app.utils.meal_type import normalize_meal_type
 
 class MenuCategoryResponse(
     BaseModel
@@ -36,7 +41,10 @@ class CreateMenuPackageRequest(
     BaseModel
 ):
 
-    category_id: str
+    category_id: UUID = Field(
+        ...,
+        description="category_id from GET /menu/categories"
+    )
 
     package_name: str
 
@@ -44,9 +52,27 @@ class CreateMenuPackageRequest(
 
     description: Optional[str] = None
 
-    meal_type: str
+    meal_type: Union[str, List[str]] = Field(
+        ...,
+        description=(
+            "Meal slots this package is served in — one, any two, or all three. "
+            "Send a list ([\"lunch\", \"dinner\"]), a comma separated string "
+            "(\"lunch, dinner\") or \"full_day\" for all three. "
+            "Stored as \"breakfast,lunch,dinner\" order."
+        ),
+        examples=[["lunch", "dinner"]]
+    )
 
-    food_type: str
+    food_type: str = Field(
+        ...,
+        description="veg | non_veg | egg"
+    )
+
+    @field_validator("meal_type", mode="after")
+    @classmethod
+    def _normalize_meal_type(cls, value):
+
+        return normalize_meal_type(value)
 
     price: float
 
@@ -135,9 +161,24 @@ class UpdateMenuPackageRequest(
 
     description: Optional[str] = None
 
-    meal_type: Optional[str] = None
+    meal_type: Optional[Union[str, List[str]]] = Field(
+        None,
+        description=(
+            "Meal slots — one, any two, or all three. List, comma separated "
+            "string, or \"full_day\"."
+        )
+    )
 
     food_type: Optional[str] = None
+
+    @field_validator("meal_type", mode="after")
+    @classmethod
+    def _normalize_meal_type(cls, value):
+
+        if value is None:
+            return None
+
+        return normalize_meal_type(value)
 
     price: Optional[float] = None
 

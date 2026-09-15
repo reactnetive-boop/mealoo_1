@@ -37,6 +37,7 @@ P2_MOBILE = "71" + RUN                     # provider 2 (for package switch)
 U1_PHONE = "80" + RUN                      # customer
 D1_MOBILE = "90" + RUN                     # delivery boy
 PASSWORD = "E2eTest@123"
+NEW_PASSWORD = "E2eReset@456"        # provider forgot-password flow
 ADMIN_EMAIL = "e2e.admin@mealoo.test"
 ADMIN_PASSWORD = "E2eAdmin@123"
 TEST_PIN = "5" + RUN[-5:]                  # unique serviceable pincode
@@ -184,6 +185,43 @@ body = call("provider login", "POST", "/auth/login",
 P1 = body.get("access_token") if body else None
 P1_ID = body.get("provider_id") if body else None
 
+# forgot password: send OTP -> verify -> reset -> login on the new password,
+# then put PASSWORD back so the rest of the run is unaffected.
+call("provider forgot password unknown mobile", "POST", "/auth/forgot-password/send-otp",
+     json={"mobile_number": "9999999999"}, expect=400)
+call("provider reset before otp", "POST", "/auth/forgot-password/reset",
+     json={"mobile_number": P1_MOBILE, "new_password": NEW_PASSWORD,
+           "confirm_password": NEW_PASSWORD}, expect=400)
+body = call("provider forgot password send otp", "POST", "/auth/forgot-password/send-otp",
+            json={"mobile_number": P1_MOBILE}, check=ok)
+P1_RESET_OTP = (body or {}).get("otp")
+call("provider verify reset otp", "POST", "/auth/verify-otp",
+     json={"mobile_number": P1_MOBILE, "otp": P1_RESET_OTP}, check=ok)
+call("provider login unchanged after otp verify", "POST", "/auth/login",
+     json={"mobile_number": P1_MOBILE, "password": PASSWORD}, check=ok)
+call("provider reset password mismatch", "POST", "/auth/forgot-password/reset",
+     json={"mobile_number": P1_MOBILE, "new_password": NEW_PASSWORD,
+           "confirm_password": PASSWORD}, expect=400)
+call("provider reset password", "POST", "/auth/forgot-password/reset",
+     json={"mobile_number": P1_MOBILE, "new_password": NEW_PASSWORD,
+           "confirm_password": NEW_PASSWORD}, check=ok)
+call("provider login old password rejected", "POST", "/auth/login",
+     json={"mobile_number": P1_MOBILE, "password": PASSWORD}, expect=(400, 401))
+call("provider login new password", "POST", "/auth/login",
+     json={"mobile_number": P1_MOBILE, "password": NEW_PASSWORD}, check=ok)
+call("provider reset replay rejected", "POST", "/auth/forgot-password/reset",
+     json={"mobile_number": P1_MOBILE, "new_password": PASSWORD,
+           "confirm_password": PASSWORD}, expect=400)
+
+# restore the original password for the remainder of the suite
+body = call("provider forgot password send otp (restore)", "POST", "/auth/forgot-password/send-otp",
+            json={"mobile_number": P1_MOBILE}, check=ok)
+call("provider verify reset otp (restore)", "POST", "/auth/verify-otp",
+     json={"mobile_number": P1_MOBILE, "otp": (body or {}).get("otp")}, check=ok)
+call("provider reset password (restore)", "POST", "/auth/forgot-password/reset",
+     json={"mobile_number": P1_MOBILE, "new_password": PASSWORD,
+           "confirm_password": PASSWORD}, check=ok)
+
 call("provider profile (incomplete)", "GET", "/provider/profile", token=P1)
 call("verify serviceable pincode", "POST", "/location/verify-pincode",
      json={"pincode": int(TEST_PIN)})
@@ -220,6 +258,45 @@ body = call("provider create package", "POST", "/menu/package", token=P1,
 PKG1 = None
 if body:
     PKG1 = body.get("package_id") or (body.get("package") or {}).get("package_id")
+
+# meal_type accepts one slot, any two, all three, or the "full_day" alias;
+# category_id must be a real UUID that exists.
+call("create package bad category uuid", "POST", "/menu/package", token=P1,
+     json={"category_id": "string", "package_name": f"E2E Bad Cat {RUN}",
+           "meal_type": "lunch", "food_type": "veg", "price": 100,
+           "items": [{"item_name": "Roti", "quantity": "1"}]}, expect=422)
+call("create package unknown category", "POST", "/menu/package", token=P1,
+     json={"category_id": "00000000-0000-0000-0000-000000000000",
+           "package_name": f"E2E No Cat {RUN}", "meal_type": "lunch",
+           "food_type": "veg", "price": 100,
+           "items": [{"item_name": "Roti", "quantity": "1"}]}, expect=400)
+call("create package invalid meal_type", "POST", "/menu/package", token=P1,
+     json={"category_id": CATEGORY_ID, "package_name": f"E2E Bad Slot {RUN}",
+           "meal_type": ["lunch", "brunch"], "food_type": "veg", "price": 100,
+           "items": [{"item_name": "Roti", "quantity": "1"}]}, expect=422)
+body = call("create package multi meal_type", "POST", "/menu/package", token=P1,
+            json={"category_id": CATEGORY_ID, "package_name": f"E2E Full Day {RUN}",
+                  "meal_type": "full_day", "food_type": "veg", "price": 100,
+                  "items": [{"item_name": "Roti", "quantity": "1"}]}, check=ok)
+PKG_MULTI = (body or {}).get("package_id")
+if PKG_MULTI:
+    call("multi meal_type stored canonically", "GET", "/menu/get/{pid}", token=P1,
+         path={"pid": PKG_MULTI},
+         check=lambda b: None if b.get("meal_type") == "breakfast,lunch,dinner"
+         else f"meal_type={b.get('meal_type')!r}")
+    call("update package to two slots", "PUT", "/menu/update/{pid}", token=P1,
+         path={"pid": PKG_MULTI}, json={"meal_type": ["dinner", "breakfast"]})
+    call("update package invalid meal_type", "PUT", "/menu/update/{pid}", token=P1,
+         path={"pid": PKG_MULTI}, json={"meal_type": "supper"}, expect=422)
+
+# a provider-created package starts inactive and is hidden from customers until
+# an admin activates it
+call("new package is inactive", "GET", "/admin/packages/{pid}", token=ADMIN, path={"pid": PKG1},
+     check=lambda b: None if (b.get("package") or b).get("is_active") is False
+     else "is_active is not False on a freshly created package")
+call("admin activate package 1", "PUT", "/admin/packages/{pid}", token=ADMIN,
+     path={"pid": PKG1}, json={"is_active": True})
+
 call("menu get package", "GET", "/menu/get/{pid}", token=P1, path={"pid": PKG1})
 call("menu list by provider", "GET", "/menu/list/{prov}", token=P1, path={"prov": P1_ID})
 call("menu update package", "PUT", "/menu/update/{pid}", token=P1, path={"pid": PKG1},
@@ -276,6 +353,8 @@ body = call("provider2 create package", "POST", "/menu/package", token=P2,
 PKG2 = None
 if body:
     PKG2 = body.get("package_id") or (body.get("package") or {}).get("package_id")
+call("admin activate package 2", "PUT", "/admin/packages/{pid}", token=ADMIN,
+     path={"pid": PKG2}, json={"is_active": True})
 call("provider2 set capacity", "PUT", "/provider-package/capacity", token=P2,
      json={"provider_id": P2_ID, "package_id": PKG2, "daily_capacity": 50})
 

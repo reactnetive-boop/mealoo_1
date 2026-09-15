@@ -59,3 +59,12 @@ class OTPLog(Base):
         String,
         nullable=False
     )
+
+    # 'registration' | 'password_reset' — an OTP issued for one flow
+    # must never be usable to complete the other
+    purpose = Column(
+        String(30),
+        nullable=False,
+        server_default="registration",
+        default="registration"
+    )

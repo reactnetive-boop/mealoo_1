@@ -16,11 +16,9 @@ DB_NAME = os.getenv("DB_NAME")
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 
-# Prefer a single connection string (e.g. Railway's Postgres plugin injects
-# DATABASE_URL directly). Fall back to building one from discrete DB_* vars
-# for local/dev setups that define those instead.
-DATABASE_URL = os.getenv("DATABASE_URL") or (
-    f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DATABASE_URL = (
+    f"postgresql://{DB_USER}:{DB_PASSWORD}"
+    f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 )
 
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
