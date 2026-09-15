@@ -28,14 +28,25 @@ class OTPRepository:
     @staticmethod
     def get_latest_otp(
         db: Session,
-        mobile_number: str
+        mobile_number: str,
+        purpose: str = None
     ):
 
-        return (
+        query = (
             db.query(OTPLog)
             .filter(
                 OTPLog.mobile_number == mobile_number
             )
+        )
+
+        if purpose:
+
+            query = query.filter(
+                OTPLog.purpose == purpose
+            )
+
+        return (
+            query
             .order_by(
                 OTPLog.created_at.desc()
             )

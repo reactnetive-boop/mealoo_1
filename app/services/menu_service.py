@@ -1,5 +1,7 @@
 from sqlalchemy.orm import Session
 
+from app.models.menu_category_model import MenuCategory
+
 from app.repositories.menu_repository import (
     MenuRepository
 )
@@ -18,11 +20,29 @@ class MenuService:
         request
     ):
 
+        category = (
+            db.query(MenuCategory)
+            .filter(
+                MenuCategory.category_id == request.category_id
+            )
+            .first()
+        )
+
+        if not category:
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Category not found. "
+                    "Use a category_id from GET /menu/categories."
+                )
+            )
+
         package_data = {
 
             "provider_id": provider_id,
 
-            "category_reference_id": request.category_id,
+            "category_reference_id": str(request.category_id),
 
             "package_name": (
                 request.package_name
@@ -58,7 +78,9 @@ class MenuService:
                 request.subscription_price
             ),
 
-            "is_active": True
+            # Providers cannot self-publish — an admin activates the package
+            # via PUT /admin/packages/{package_id} with is_active=true
+            "is_active": False
         }
 
         package = (

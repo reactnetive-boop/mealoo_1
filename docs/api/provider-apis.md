@@ -21,12 +21,58 @@ Consumed by the **Provider mobile app** (vendor/kitchen owners managing menus, p
 
 Repositories live in `app/repositories/`, request/response schemas in `app/schemas/`, DB models in `app/models/`. Routers are registered with prefixes and tags in `app/api/v1/api.py`.
 
+## Password recovery flow (provider app)
+
+Screens: login -> 'Forgot password?' -> OTP screen -> 'Set new password' -> back to login.
+
+| Step | Endpoint | Body |
+|---|---|---|
+| 1. Send OTP | `POST /auth/forgot-password/send-otp` | `mobile_number` |
+| 2. Verify OTP | `POST /auth/verify-otp` | `mobile_number`, `otp` |
+| 3. Set new password | `POST /auth/forgot-password/reset` | `mobile_number`, `new_password`, `confirm_password` |
+| 4. Login | `POST /auth/login` | `mobile_number`, `password` (the new one) |
+
+Step 2 is the same endpoint registration uses - the app can reuse that screen.
+
+**Registration vs. recovery.** `provider.otp_logs.purpose` tags every code as
+`registration` or `password_reset`, and the two are not interchangeable: a registration
+OTP cannot complete step 3, and verifying a `password_reset` OTP does **not** change the
+account password (it only proves the provider owns the number). Registration keeps its
+existing behaviour - `POST /auth/generate-otp` carries the chosen password and
+`POST /auth/verify-otp` applies it.
+
+**Rules.**
+
+| Scenario | Behaviour |
+|---|---|
+| Mobile number not registered | 400 "Provider not found" |
+| Provider deactivated (`is_active = false`) | 400 - contact support |
+| Step 3 before step 2 | 400 "OTP not verified" |
+| OTP older than 15 minutes | 400 "OTP session expired" |
+| `new_password` != `confirm_password` | 400 |
+| Password outside 8-16 characters | 422 (schema validation) |
+| Re-using an OTP after a successful reset | 400 - the OTP is burnt on use, request a new one |
+| A newer OTP requested before step 3 | Only the latest `password_reset` OTP counts |
+
+No token is issued by step 3 - the app must send the provider back to the login screen.
+
+**Source files.** Endpoints: `app/api/v1/endpoints/auth.py` - service:
+`app/services/auth_service.py` (`forgot_password_send_otp`, `reset_password`) - schemas:
+`app/schemas/auth_schema.py` - migration:
+`alembic/versions/c7d8e9f0a1b2_add_purpose_to_provider_otp_logs.py`.
+
+**Note.** OTPs are returned in the API response while SMS delivery is not wired up; drop
+the `otp` field from the response once an SMS provider is integrated.
+
+
 ## Provider Auth
 
 | Method | Path | Summary |
 |---|---|---|
 | POST | `/api/v1/auth/generate-otp` | Provider Register – Step 1: Send OTP |
 | POST | `/api/v1/auth/verify-otp` | Provider Register – Step 2: Verify OTP |
+| POST | `/api/v1/auth/forgot-password/send-otp` | Forgot Password - Step 1: Send OTP |
+| POST | `/api/v1/auth/forgot-password/reset` | Forgot Password - Step 3: Set New Password |
 | POST | `/api/v1/auth/login` | Provider Login |
 | POST | `/api/v1/auth/logout` | Provider Logout |
 
@@ -50,6 +96,38 @@ Submit the OTP received on the registered mobile number. On success the provider
 **Flow:** `POST /generate-otp` → `POST /verify-otp` → `POST /login`
 
 **Request body** (application/json): `mobile_number` (string, required); `otp` (string, required)
+
+
+### `POST /api/v1/auth/forgot-password/send-otp` — Forgot Password - Step 1: Send OTP
+
+**First step of provider password recovery.**
+
+Send only the registered mobile number - no password is required, since the provider has forgotten it. An OTP is sent to that mobile number.
+
+Fails with 400 if no provider is registered with the number, or if the account is deactivated.
+
+**Flow:** `POST /forgot-password/send-otp` -> `POST /verify-otp` -> `POST /forgot-password/reset` -> `POST /login` with the new password
+
+**When to call:** When the provider taps 'Forgot password?' on the login screen.
+
+**Request body** (application/json): `mobile_number` (string, required)
+
+**Response model:** `ForgotPasswordOTPResponse` (see `app/schemas/`)
+
+
+### `POST /api/v1/auth/forgot-password/reset` — Forgot Password - Step 3: Set New Password
+
+**Final step of provider password recovery.**
+
+Submit `new_password` and `confirm_password` for the mobile number whose OTP was just verified through `POST /verify-otp` (step 2). The two must match and be 8-16 characters.
+
+The OTP is single-use: it is burnt once the password is changed, so a second reset needs a fresh `POST /forgot-password/send-otp`. The request is rejected with 400 if the OTP was never verified or the 15 minute window has lapsed.
+
+**When to call:** On the 'Set new password' screen, after OTP verification. Send the provider to the login screen afterwards - no token is issued here.
+
+**Request body** (application/json): `mobile_number` (string, required); `new_password` (string, required); `confirm_password` (string, required)
+
+**Response model:** `ResetPasswordResponse` (see `app/schemas/`)
 
 
 ### `POST /api/v1/auth/login` — Provider Login
@@ -163,13 +241,17 @@ Returns category name and description. Use `category_id` from `GET /menu/categor
 
 **Create a new meal package under the logged-in provider's account.**
 
-Required: `category_id` (from `GET /menu/categories`), `package_name`, `price`, `meal_type` (veg/non-veg/egg), and `food_type`. Optional: `short_description`, `description`, `discounted_price`, `subscription_price`, `is_subscription_available`.
+Required: `category_id` (a real UUID from `GET /menu/categories`), `package_name`, `price`, `food_type` (veg/non_veg/egg), `meal_type`, and at least one entry in `items`.
+
+`meal_type` is the set of slots the package is served in — one, any two, or all three. Send a list (`["lunch", "dinner"]`), a comma separated string (`"lunch, dinner"`) or `"full_day"` for all three; it is stored canonically as `"breakfast,lunch,dinner"` order. An unknown slot is rejected with 422, an unknown `category_id` with 400.
+
+**The package is created inactive** (`is_active = false`) and is not visible to users until an admin approves it with `PUT /admin/packages/{package_id}` (`is_active = true`).
 
 After creation, add items via `POST /menu/items` and images via `POST /menu/images`. Then make the package available to users with `POST /provider/packages/select`.
 
-**Flow:** `GET /menu/categories` → `POST /menu/package` → add items → add images → select package
+**Flow:** `GET /menu/categories` → `POST /menu/package` → add items → add images → select package → admin activation
 
-**Request body** (application/json): `category_id` (string, required); `package_name` (string, required); `short_description` (string (nullable), optional); `description` (string (nullable), optional); `meal_type` (string, required); `food_type` (string, required); `price` (number, required); `discounted_price` (number (nullable), optional); `is_subscription_available` (boolean, optional); `subscription_price` (number (nullable), optional); `items` (array of PackageItemRequest, required)
+**Request body** (application/json): `category_id` (string (uuid), required); `package_name` (string, required); `short_description` (string (nullable), optional); `description` (string (nullable), optional); `meal_type` (string | array of string, required); `food_type` (string, required); `price` (number, required); `discounted_price` (number (nullable), optional); `is_subscription_available` (boolean, optional); `subscription_price` (number (nullable), optional); `items` (array of PackageItemRequest, required)
 
 **Response model:** `MenuPackageResponse` (see `app/schemas/`)
 
@@ -206,7 +288,7 @@ Only the fields provided will be updated. Changes to price or availability take 
 
 **Parameters:** `package_id` (path, string (uuid), required)
 
-**Request body** (application/json): `package_name` (string (nullable), optional); `short_description` (string (nullable), optional); `description` (string (nullable), optional); `meal_type` (string (nullable), optional); `food_type` (string (nullable), optional); `price` (number (nullable), optional); `discounted_price` (number (nullable), optional); `is_subscription_available` (boolean (nullable), optional); `subscription_price` (number (nullable), optional)
+**Request body** (application/json): `package_name` (string (nullable), optional); `short_description` (string (nullable), optional); `description` (string (nullable), optional); `meal_type` (string | array of string (nullable), optional); `food_type` (string (nullable), optional); `price` (number (nullable), optional); `discounted_price` (number (nullable), optional); `is_subscription_available` (boolean (nullable), optional); `subscription_price` (number (nullable), optional)
 
 **Response model:** `CommonResponse` (see `app/schemas/`)
 

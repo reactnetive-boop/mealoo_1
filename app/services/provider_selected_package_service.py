@@ -18,6 +18,14 @@ class ProviderSelectedPackageService:
         if not package:
             raise HTTPException(status_code=404, detail="Package not found")
 
+        # A provider may select a catalogue package only while it is live; their
+        # own draft is attached automatically at creation time.
+        if not package.is_active and str(package.provider_id) != str(request.provider_id):
+            raise HTTPException(
+                status_code=400,
+                detail="Package is not active and cannot be selected"
+            )
+
         existing = ProviderSelectedPackageRepository.get_provider_package(
             db=db,
             provider_id=request.provider_id,

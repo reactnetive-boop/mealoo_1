@@ -342,7 +342,7 @@ Predefined packages serve as templates. Providers can select them via `POST /pro
 
 **Requires:** `super_admin` role.
 
-**Request body** (application/json): `category_id` (string (uuid), required); `package_name` (string, required); `short_description` (string (nullable), optional); `description` (string (nullable), optional); `meal_type` (string, required); `food_type` (string, required); `price` (number | string, required); `discounted_price` (number | string (nullable), optional); `is_subscription_available` (boolean, optional); `subscription_price` (number | string (nullable), optional); `items` (array of AdminPackageItemRequest, required)
+**Request body** (application/json): `category_id` (string (uuid), required); `package_name` (string, required); `short_description` (string (nullable), optional); `description` (string (nullable), optional); `meal_type` (string | array of string, required); `food_type` (string, required); `price` (number | string, required); `discounted_price` (number | string (nullable), optional); `is_subscription_available` (boolean, optional); `subscription_price` (number | string (nullable), optional); `items` (array of AdminPackageItemRequest, required)
 
 
 ### `GET /api/v1/admin/packages` — List All Packages (Admin View)

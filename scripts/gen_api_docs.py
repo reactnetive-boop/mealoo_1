@@ -55,6 +55,49 @@ ROLE_FILES = {
         "app_note": "Consumed by the **Provider mobile app** (vendor/kitchen owners managing menus, packages, orders, wallet).",
         "tags": ["Provider Auth", "Provider", "Provider Menu", "Provider Package Item",
                  "Provider Package Image", "Provider Orders", "Provider Wallet", "Provider Complaint"],
+        "extra": """## Password recovery flow (provider app)
+
+Screens: login -> 'Forgot password?' -> OTP screen -> 'Set new password' -> back to login.
+
+| Step | Endpoint | Body |
+|---|---|---|
+| 1. Send OTP | `POST /auth/forgot-password/send-otp` | `mobile_number` |
+| 2. Verify OTP | `POST /auth/verify-otp` | `mobile_number`, `otp` |
+| 3. Set new password | `POST /auth/forgot-password/reset` | `mobile_number`, `new_password`, `confirm_password` |
+| 4. Login | `POST /auth/login` | `mobile_number`, `password` (the new one) |
+
+Step 2 is the same endpoint registration uses - the app can reuse that screen.
+
+**Registration vs. recovery.** `provider.otp_logs.purpose` tags every code as
+`registration` or `password_reset`, and the two are not interchangeable: a registration
+OTP cannot complete step 3, and verifying a `password_reset` OTP does **not** change the
+account password (it only proves the provider owns the number). Registration keeps its
+existing behaviour - `POST /auth/generate-otp` carries the chosen password and
+`POST /auth/verify-otp` applies it.
+
+**Rules.**
+
+| Scenario | Behaviour |
+|---|---|
+| Mobile number not registered | 400 "Provider not found" |
+| Provider deactivated (`is_active = false`) | 400 - contact support |
+| Step 3 before step 2 | 400 "OTP not verified" |
+| OTP older than 15 minutes | 400 "OTP session expired" |
+| `new_password` != `confirm_password` | 400 |
+| Password outside 8-16 characters | 422 (schema validation) |
+| Re-using an OTP after a successful reset | 400 - the OTP is burnt on use, request a new one |
+| A newer OTP requested before step 3 | Only the latest `password_reset` OTP counts |
+
+No token is issued by step 3 - the app must send the provider back to the login screen.
+
+**Source files.** Endpoints: `app/api/v1/endpoints/auth.py` - service:
+`app/services/auth_service.py` (`forgot_password_send_otp`, `reset_password`) - schemas:
+`app/schemas/auth_schema.py` - migration:
+`alembic/versions/c7d8e9f0a1b2_add_purpose_to_provider_otp_logs.py`.
+
+**Note.** OTPs are returned in the API response while SMS delivery is not wired up; drop
+the `otp` field from the response once an SMS provider is integrated.
+""",
     },
     "user": {
         "title": "Customer / User API Reference",

@@ -92,13 +92,19 @@ async def get_menu_category(
     summary="Create a Meal Package",
     description=(
         "**Create a new meal package under the logged-in provider's account.**\n\n"
-        "Required: `category_id` (from `GET /menu/categories`), `package_name`, `price`, "
-        "`meal_type` (veg/non-veg/egg), and `food_type`. "
-        "Optional: `short_description`, `description`, `discounted_price`, `subscription_price`, "
-        "`is_subscription_available`.\n\n"
+        "Required: `category_id` (a real UUID from `GET /menu/categories`), `package_name`, "
+        "`price`, `food_type` (veg/non_veg/egg), `meal_type`, and at least one entry in `items`.\n\n"
+        "`meal_type` is the set of slots the package is served in — one, any two, or all three. "
+        "Send a list (`[\"lunch\", \"dinner\"]`), a comma separated string (`\"lunch, dinner\"`) "
+        "or `\"full_day\"` for all three; it is stored canonically as `\"breakfast,lunch,dinner\"` "
+        "order. An unknown slot is rejected with 422, an unknown `category_id` with 400.\n\n"
+        "**The package is created inactive** (`is_active = false`) and is not visible to users "
+        "until an admin approves it with `PUT /admin/packages/{package_id}` "
+        "(`is_active = true`).\n\n"
         "After creation, add items via `POST /menu/items` and images via `POST /menu/images`. "
         "Then make the package available to users with `POST /provider/packages/select`.\n\n"
-        "**Flow:** `GET /menu/categories` → `POST /menu/package` → add items → add images → select package"
+        "**Flow:** `GET /menu/categories` → `POST /menu/package` → add items → add images → "
+        "select package → admin activation"
     )
 )
 async def create_package(
