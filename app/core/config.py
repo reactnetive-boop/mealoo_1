@@ -33,3 +33,11 @@ DELIVERY_BOY_FEE_PER_DELIVERY = os.getenv(
     "DELIVERY_BOY_FEE_PER_DELIVERY",
     "30.00"
 )
+
+# Comma separated list of browser origins allowed to call the API (admin panel etc).
+# Example: CORS_ORIGINS=http://localhost:5173,https://admin.mealoo.in
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+    if o.strip()
+]
