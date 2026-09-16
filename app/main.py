@@ -6,11 +6,12 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.core.config import APP_NAME
+from app.core.config import APP_NAME, CORS_ORIGINS
 from app.api.v1.api import api_router
 from app.schedulers.order_generator import generate_subscription_orders
 from app.schedulers.order_billing import process_order_billing
@@ -53,6 +54,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=APP_NAME,
     lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
