@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.menu_package_model import MenuPackage
+from app.models.provider_model import Provider
 from app.models.subscription_plan_model import SubscriptionPlan
 from app.models.subscription_model import Subscription
 from app.models.subscription_package_model import SubscriptionPackage
@@ -10,6 +11,24 @@ from app.repositories.menu_repository import MenuRepository
 
 
 # ── Package Management ────────────────────────────────────
+
+def _row_to_dict(obj):
+    """Serialize an ORM row's columns to a plain dict (no relationships)."""
+    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+
+def _provider_names(db: Session, provider_ids):
+    """Map provider_id -> display name (business_name, else full_name)."""
+    ids = [pid for pid in set(provider_ids) if pid]
+    if not ids:
+        return {}
+    rows = (
+        db.query(Provider.provider_id, Provider.business_name, Provider.full_name)
+        .filter(Provider.provider_id.in_(ids))
+        .all()
+    )
+    return {str(pid): (business or full) for pid, business, full in rows}
+
 
 class AdminPackageService:
 
@@ -59,14 +78,26 @@ class AdminPackageService:
 
         total = query.count()
         packages = query.order_by(MenuPackage.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
-        return {"success": True, "total": total, "page": page, "packages": packages}
+
+        names = _provider_names(db, (p.provider_id for p in packages))
+        items = []
+        for p in packages:
+            row = _row_to_dict(p)
+            row["provider_name"] = names.get(str(p.provider_id))
+            items.append(row)
+        return {"success": True, "total": total, "page": page, "packages": items}
 
     @staticmethod
     def get_package(db: Session, package_id: str):
         pkg = db.query(MenuPackage).filter(MenuPackage.package_id == package_id).first()
         if not pkg:
             raise HTTPException(status_code=404, detail="Package not found")
-        return pkg
+
+        row = _row_to_dict(pkg)
+        row["provider_name"] = _provider_names(db, [pkg.provider_id]).get(str(pkg.provider_id))
+        row["items"] = [_row_to_dict(i) for i in sorted(pkg.items, key=lambda i: i.item_order or 0)]
+        row["images"] = [_row_to_dict(i) for i in sorted(pkg.images, key=lambda i: i.display_order or 0)]
+        return row
 
     @staticmethod
     def update_package(db: Session, package_id: str, payload):
