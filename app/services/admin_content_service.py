@@ -46,12 +46,15 @@ class AdminPackageService:
 
     @staticmethod
     def list_packages(db: Session, is_predefined: bool = None, is_active: bool = None,
+                      is_subscription_available: bool = None,
                       provider_id: str = None, search: str = None, page: int = 1, limit: int = 20):
         query = db.query(MenuPackage)
         if is_predefined is not None:
             query = query.filter(MenuPackage.is_predefined == is_predefined)
         if is_active is not None:
             query = query.filter(MenuPackage.is_active == is_active)
+        if is_subscription_available is not None:
+            query = query.filter(MenuPackage.is_subscription_available == is_subscription_available)
         if provider_id:
             query = query.filter(MenuPackage.provider_id == provider_id)
         if search:
@@ -95,6 +98,50 @@ class AdminPackageService:
         db.refresh(pkg)
 
         return {"success": True, "message": "Package updated", "package": pkg}
+
+    @staticmethod
+    def set_subscription_availability(db: Session, package_id: str, payload):
+        pkg = db.query(MenuPackage).filter(MenuPackage.package_id == package_id).first()
+        if not pkg:
+            raise HTTPException(status_code=404, detail="Package not found")
+
+        enable = payload.is_subscription_available
+
+        if payload.subscription_price is not None:
+            pkg.subscription_price = payload.subscription_price
+
+        # a package cannot be opened for subscription without a price to charge
+        if enable and (pkg.subscription_price is None or pkg.subscription_price <= 0):
+            raise HTTPException(
+                status_code=400,
+                detail="subscription_price is required (and must be > 0) to enable subscription for this package"
+            )
+
+        pkg.is_subscription_available = enable
+
+        # disabling only blocks NEW subscriptions / switches; running ones keep going
+        active_count = 0
+        if not enable:
+            active_count = db.query(SubscriptionPackage).join(
+                Subscription, SubscriptionPackage.subscription_reference_id == Subscription.subscription_id
+            ).filter(
+                SubscriptionPackage.package_reference_id == package_id,
+                Subscription.status == "active"
+            ).count()
+
+        db.commit()
+        db.refresh(pkg)
+
+        message = (
+            "Package is now available for subscription" if enable
+            else "Package subscription disabled; new subscriptions and switches to it are blocked"
+        )
+        return {
+            "success": True,
+            "message": message,
+            "active_subscriptions_unaffected": active_count,
+            "package": pkg,
+        }
 
     @staticmethod
     def delete_package(db: Session, package_id: str):

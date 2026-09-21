@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.dependencies.auth_dependency import get_current_admin, require_super_admin
 from app.services.admin_content_service import AdminPackageService
-from app.schemas.admin_schema import AdminCreatePackageRequest, AdminUpdatePackageRequest
+from app.schemas.admin_schema import (
+    AdminCreatePackageRequest,
+    AdminUpdatePackageRequest,
+    AdminPackageSubscriptionToggleRequest,
+)
 
 router = APIRouter()
 
@@ -35,7 +39,7 @@ def create_package(
     summary="List All Packages (Admin View)",
     description=(
         "**Fetch all meal packages across all providers.**\n\n"
-        "Filter by `is_predefined`, `is_active`, `provider_id`, or `search` term. "
+        "Filter by `is_predefined`, `is_active`, `is_subscription_available`, `provider_id`, or `search` term. "
         "Use this to audit package content, moderate listings, or find packages needing review.\n\n"
         "**When to call:** On the admin package management screen."
     )
@@ -43,6 +47,7 @@ def create_package(
 def list_packages(
     is_predefined: Optional[bool] = Query(None),
     is_active: Optional[bool] = Query(None),
+    is_subscription_available: Optional[bool] = Query(None),
     provider_id: Optional[UUID] = Query(None),
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
@@ -52,6 +57,7 @@ def list_packages(
 ):
     return AdminPackageService.list_packages(
         db, is_predefined=is_predefined, is_active=is_active,
+        is_subscription_available=is_subscription_available,
         provider_id=str(provider_id) if provider_id else None,
         search=search, page=page, limit=limit
     )
@@ -90,6 +96,31 @@ def update_package(
     current=Depends(get_current_admin)
 ):
     return AdminPackageService.update_package(db, str(package_id), payload)
+
+
+@router.patch(
+    "/{package_id}/subscription",
+    summary="Enable / Disable Package Subscription (Admin)",
+    description=(
+        "**Toggle whether users can subscribe to this package (`is_subscription_available`).**\n\n"
+        "Users hitting `\"Package 'X' is not available for subscription\"` on "
+        "`POST /user/subscription` or `POST /user/subscription/{subscription_id}/switch` means this flag is `false` — "
+        "enable it here.\n\n"
+        "- `is_subscription_available=true` needs a `subscription_price` (> 0): pass it in the body, "
+        "or the package must already have one, otherwise `400`.\n"
+        "- `is_subscription_available=false` blocks **new** subscriptions and package switches to it. "
+        "Existing active subscriptions keep running (count returned as `active_subscriptions_unaffected`).\n"
+        "- Sending `subscription_price` with either value also updates the package's subscription price.\n\n"
+        "**When to call:** On the admin package detail screen, subscription toggle."
+    )
+)
+def set_package_subscription(
+    package_id: UUID,
+    payload: AdminPackageSubscriptionToggleRequest,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin)
+):
+    return AdminPackageService.set_subscription_availability(db, str(package_id), payload)
 
 
 @router.delete(

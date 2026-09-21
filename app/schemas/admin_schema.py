@@ -198,6 +198,17 @@ class AdminUpdatePackageRequest(BaseModel):
     is_available: Optional[bool] = None
 
 
+class AdminPackageSubscriptionToggleRequest(BaseModel):
+    is_subscription_available: bool = Field(
+        ...,
+        description="true = users can subscribe to this package; false = blocks new subscriptions / switches to it"
+    )
+    subscription_price: Optional[Decimal] = Field(
+        None, ge=0,
+        description="Per-meal subscription price. Required when enabling if the package has no subscription_price yet."
+    )
+
+
 # ── Subscription Plan Management ──────────────────────────
 
 class AdminCreatePlanRequest(BaseModel):
