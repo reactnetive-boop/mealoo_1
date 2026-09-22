@@ -2,7 +2,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.menu_package_model import MenuPackage
-from app.models.provider_model import Provider
 from app.models.subscription_plan_model import SubscriptionPlan
 from app.models.subscription_model import Subscription
 from app.models.subscription_package_model import SubscriptionPackage
@@ -11,24 +10,6 @@ from app.repositories.menu_repository import MenuRepository
 
 
 # ── Package Management ────────────────────────────────────
-
-def _row_to_dict(obj):
-    """Serialize an ORM row's columns to a plain dict (no relationships)."""
-    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
-
-
-def _provider_names(db: Session, provider_ids):
-    """Map provider_id -> display name (business_name, else full_name)."""
-    ids = [pid for pid in set(provider_ids) if pid]
-    if not ids:
-        return {}
-    rows = (
-        db.query(Provider.provider_id, Provider.business_name, Provider.full_name)
-        .filter(Provider.provider_id.in_(ids))
-        .all()
-    )
-    return {str(pid): (business or full) for pid, business, full in rows}
-
 
 class AdminPackageService:
 
@@ -65,12 +46,15 @@ class AdminPackageService:
 
     @staticmethod
     def list_packages(db: Session, is_predefined: bool = None, is_active: bool = None,
+                      is_subscription_available: bool = None,
                       provider_id: str = None, search: str = None, page: int = 1, limit: int = 20):
         query = db.query(MenuPackage)
         if is_predefined is not None:
             query = query.filter(MenuPackage.is_predefined == is_predefined)
         if is_active is not None:
             query = query.filter(MenuPackage.is_active == is_active)
+        if is_subscription_available is not None:
+            query = query.filter(MenuPackage.is_subscription_available == is_subscription_available)
         if provider_id:
             query = query.filter(MenuPackage.provider_id == provider_id)
         if search:
@@ -78,26 +62,14 @@ class AdminPackageService:
 
         total = query.count()
         packages = query.order_by(MenuPackage.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
-
-        names = _provider_names(db, (p.provider_id for p in packages))
-        items = []
-        for p in packages:
-            row = _row_to_dict(p)
-            row["provider_name"] = names.get(str(p.provider_id))
-            items.append(row)
-        return {"success": True, "total": total, "page": page, "packages": items}
+        return {"success": True, "total": total, "page": page, "packages": packages}
 
     @staticmethod
     def get_package(db: Session, package_id: str):
         pkg = db.query(MenuPackage).filter(MenuPackage.package_id == package_id).first()
         if not pkg:
             raise HTTPException(status_code=404, detail="Package not found")
-
-        row = _row_to_dict(pkg)
-        row["provider_name"] = _provider_names(db, [pkg.provider_id]).get(str(pkg.provider_id))
-        row["items"] = [_row_to_dict(i) for i in sorted(pkg.items, key=lambda i: i.item_order or 0)]
-        row["images"] = [_row_to_dict(i) for i in sorted(pkg.images, key=lambda i: i.display_order or 0)]
-        return row
+        return pkg
 
     @staticmethod
     def update_package(db: Session, package_id: str, payload):
@@ -126,6 +98,50 @@ class AdminPackageService:
         db.refresh(pkg)
 
         return {"success": True, "message": "Package updated", "package": pkg}
+
+    @staticmethod
+    def set_subscription_availability(db: Session, package_id: str, payload):
+        pkg = db.query(MenuPackage).filter(MenuPackage.package_id == package_id).first()
+        if not pkg:
+            raise HTTPException(status_code=404, detail="Package not found")
+
+        enable = payload.is_subscription_available
+
+        if payload.subscription_price is not None:
+            pkg.subscription_price = payload.subscription_price
+
+        # a package cannot be opened for subscription without a price to charge
+        if enable and (pkg.subscription_price is None or pkg.subscription_price <= 0):
+            raise HTTPException(
+                status_code=400,
+                detail="subscription_price is required (and must be > 0) to enable subscription for this package"
+            )
+
+        pkg.is_subscription_available = enable
+
+        # disabling only blocks NEW subscriptions / switches; running ones keep going
+        active_count = 0
+        if not enable:
+            active_count = db.query(SubscriptionPackage).join(
+                Subscription, SubscriptionPackage.subscription_reference_id == Subscription.subscription_id
+            ).filter(
+                SubscriptionPackage.package_reference_id == package_id,
+                Subscription.status == "active"
+            ).count()
+
+        db.commit()
+        db.refresh(pkg)
+
+        message = (
+            "Package is now available for subscription" if enable
+            else "Package subscription disabled; new subscriptions and switches to it are blocked"
+        )
+        return {
+            "success": True,
+            "message": message,
+            "active_subscriptions_unaffected": active_count,
+            "package": pkg,
+        }
 
     @staticmethod
     def delete_package(db: Session, package_id: str):

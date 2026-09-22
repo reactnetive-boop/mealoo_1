@@ -784,6 +784,21 @@ if ADMIN_PKG:
     call("admin package detail", "GET", "/admin/packages/{pid}", token=ADMIN, path={"pid": ADMIN_PKG})
     call("admin package update", "PUT", "/admin/packages/{pid}", token=ADMIN,
          path={"pid": ADMIN_PKG}, json={"price": 125})
+    # subscription toggle: enabling without a price is rejected, then enable with price, then disable
+    call("admin enable subscription w/o price -> 400", "PATCH", "/admin/packages/{pid}/subscription",
+         token=ADMIN, path={"pid": ADMIN_PKG}, json={"is_subscription_available": True}, expect=400)
+    call("admin enable subscription", "PATCH", "/admin/packages/{pid}/subscription", token=ADMIN,
+         path={"pid": ADMIN_PKG}, json={"is_subscription_available": True, "subscription_price": 3000},
+         check=lambda b: None if (b.get("package") or {}).get("is_subscription_available") is True
+         else "is_subscription_available not True after enable")
+    call("admin packages list (subscribable only)", "GET", "/admin/packages", token=ADMIN,
+         params={"is_subscription_available": True, "search": "E2E Admin"},
+         check=lambda b: None if any(p.get("package_id") == ADMIN_PKG for p in b.get("packages", []))
+         else "enabled package missing from is_subscription_available=true list")
+    call("admin disable subscription", "PATCH", "/admin/packages/{pid}/subscription", token=ADMIN,
+         path={"pid": ADMIN_PKG}, json={"is_subscription_available": False},
+         check=lambda b: None if (b.get("package") or {}).get("is_subscription_available") is False
+         else "is_subscription_available not False after disable")
     # true happy path for provider package selection: a predefined package
     call("provider2 select predefined package", "POST", "/provider-package/select", token=P2,
          json={"provider_id": P2_ID, "package_id": ADMIN_PKG, "daily_capacity": 20})
