@@ -333,6 +333,7 @@ Pass `provider_id` as a query parameter. The delivery boy will then appear in th
 | GET | `/api/v1/admin/packages/{package_id}` | Get Package Detail (Admin View) |
 | PUT | `/api/v1/admin/packages/{package_id}` | Update Package (Admin) |
 | DELETE | `/api/v1/admin/packages/{package_id}` | Delete Package (Admin) |
+| PATCH | `/api/v1/admin/packages/{package_id}/subscription` | Enable / Disable Package Subscription (Admin) |
 
 ### `POST /api/v1/admin/packages` — Create Platform Package (Predefined)
 
@@ -349,11 +350,11 @@ Predefined packages serve as templates. Providers can select them via `POST /pro
 
 **Fetch all meal packages across all providers.**
 
-Filter by `is_predefined`, `is_active`, `provider_id`, or `search` term. Use this to audit package content, moderate listings, or find packages needing review.
+Filter by `is_predefined`, `is_active`, `is_subscription_available`, `provider_id`, or `search` term. Use this to audit package content, moderate listings, or find packages needing review.
 
 **When to call:** On the admin package management screen.
 
-**Parameters:** `is_predefined` (query, boolean (nullable), optional); `is_active` (query, boolean (nullable), optional); `provider_id` (query, string (uuid) (nullable), optional); `search` (query, string (nullable), optional); `page` (query, integer, optional); `limit` (query, integer, optional)
+**Parameters:** `is_predefined` (query, boolean (nullable), optional); `is_active` (query, boolean (nullable), optional); `is_subscription_available` (query, boolean (nullable), optional); `provider_id` (query, string (uuid) (nullable), optional); `search` (query, string (nullable), optional); `page` (query, integer, optional); `limit` (query, integer, optional)
 
 
 ### `GET /api/v1/admin/packages/{package_id}` — Get Package Detail (Admin View)
@@ -383,6 +384,23 @@ Setting `is_active=false` hides the package from user listings immediately. Use 
 Cannot delete packages with active subscriptions. Use `PUT /{package_id}` with `is_active=false` to hide it from users instead.
 
 **Parameters:** `package_id` (path, string (uuid), required)
+
+
+### `PATCH /api/v1/admin/packages/{package_id}/subscription` — Enable / Disable Package Subscription (Admin)
+
+**Toggle whether users can subscribe to this package (`is_subscription_available`).**
+
+Users hitting `"Package 'X' is not available for subscription"` on `POST /user/subscription` or `POST /user/subscription/{subscription_id}/switch` means this flag is `false` — enable it here.
+
+- `is_subscription_available=true` needs a `subscription_price` (> 0): pass it in the body, or the package must already have one, otherwise `400`.
+- `is_subscription_available=false` blocks **new** subscriptions and package switches to it. Existing active subscriptions keep running (count returned as `active_subscriptions_unaffected`).
+- Sending `subscription_price` with either value also updates the package's subscription price.
+
+**When to call:** On the admin package detail screen, subscription toggle.
+
+**Parameters:** `package_id` (path, string (uuid), required)
+
+**Request body** (application/json): `is_subscription_available` (boolean, required); `subscription_price` (number | string (nullable), optional)
 
 
 ## Admin — Plans
