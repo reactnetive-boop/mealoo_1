@@ -11,6 +11,7 @@ from app.models.provider_wallet_model import ProviderWallet
 from app.models.provider_wallet_transaction_model import ProviderWalletTransaction
 from app.models.provider_unavailability_model import ProviderUnavailability
 from app.repositories.provider_wallet_repository import ProviderWalletRepository
+from app.repositories.package_capacity_repository import PackageCapacityRepository
 
 
 class AdminProviderService:
@@ -79,12 +80,36 @@ class AdminProviderService:
             raise HTTPException(status_code=404, detail="Provider not found")
 
         update_data = payload.model_dump(exclude_unset=True)
+
+        # a lowered daily limit must still cover meals already committed
+        new_quota = update_data.get("daily_meal_quota")
+        if new_quota is not None:
+            PackageCapacityRepository.validate_provider_quota_reduction(
+                db, provider_id, new_quota
+            )
+
         for key, value in update_data.items():
             setattr(provider, key, value)
         db.commit()
         db.refresh(provider)
 
         return {"success": True, "message": "Provider updated", "provider": provider}
+
+    @staticmethod
+    def get_daily_quota_status(db: Session, provider_id: str, for_date: Date = None):
+        provider = db.query(Provider).filter(Provider.provider_id == provider_id).first()
+        if not provider:
+            raise HTTPException(status_code=404, detail="Provider not found")
+
+        status = PackageCapacityRepository.get_provider_quota_status(
+            db, provider_id, for_date or Date.today()
+        )
+        return {
+            "success": True,
+            "provider_id": provider.provider_id,
+            "business_name": provider.business_name,
+            **status
+        }
 
     @staticmethod
     def set_provider_active(db: Session, provider_id: str, is_active: bool):

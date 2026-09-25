@@ -1,9 +1,14 @@
+from datetime import date
+
 from fastapi import (
     APIRouter,
     Depends,
+    Query,
     UploadFile,
     File
 )
+
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -19,7 +24,10 @@ from app.schemas.provider_schema import (
     CompleteProfileRequest,
     ProviderProfileResponse,
     UpdateProfileImageResponse,
-    ProviderAddressUpdateRequest
+    ProviderAddressUpdateRequest,
+    UpdateDailyQuotaRequest,
+    UpdateDailyQuotaResponse,
+    DailyQuotaStatusResponse
 )
 
 from app.services.provider_service import (
@@ -34,7 +42,8 @@ router = APIRouter()
     summary="Complete Provider Profile",
     description=(
         "**Fill in business details after the provider's first login.**\n\n"
-        "Required fields: business name, FSSAI number, address, pincode, meal types offered. "
+        "Required fields: business name, address, pincode, meal types offered. "
+        "Optional: `fssai_licence` (14 digits) and `daily_meal_quota` (meals servable per slot per day). "
         "This must be completed before the provider can create packages or appear in user listings.\n\n"
         "**When to call:** Immediately after the first `POST /provider/login`. "
         "Check `GET /provider/profile` to see if the profile is already complete."
@@ -110,6 +119,70 @@ async def update_profile_image(
     )
 
     return response
+
+
+@router.put(
+    "/daily-quota",
+    response_model=UpdateDailyQuotaResponse,
+    summary="Set Provider Daily Meal Limit",
+    description=(
+        "**Cap how many meals this kitchen can serve per meal-slot per day, across all packages.**\n\n"
+        "`daily_meal_quota = 15` means 15 breakfasts **and** 15 lunches **and** 15 dinners per day, "
+        "whatever mix of packages those meals come from. Once a slot is full, new subscriptions, "
+        "package switches and one-time orders for that slot are rejected with `400`.\n\n"
+        "This sits on top of the per-package limit set by `PUT /provider-package/capacity` — "
+        "an order must fit inside both.\n\n"
+        "Send `daily_meal_quota=null` to remove the limit.\n\n"
+        "**Validation:** the new limit cannot be lower than the meals already committed to active "
+        "subscriptions (the response returns that figure as `current_peak_demand`).\n\n"
+        "**When to call:** From kitchen settings, whenever capacity changes (staff shortage, festival rush)."
+    )
+)
+def update_daily_quota(
+    payload: UpdateDailyQuotaRequest,
+    db: Session = Depends(get_db),
+    current_provider=Depends(
+        get_current_provider
+    )
+):
+
+    return ProviderService.update_daily_quota(
+        db,
+        current_provider["provider_id"],
+        payload
+    )
+
+
+@router.get(
+    "/daily-quota",
+    response_model=DailyQuotaStatusResponse,
+    summary="Get Daily Meal Limit Usage",
+    description=(
+        "**How much of the daily limit is used up for each meal-slot.**\n\n"
+        "Per slot it returns meals committed by active subscriptions, meals from one-time orders "
+        "on that date, the total, how many are still `available`, and `is_full`.\n\n"
+        "`available` is `null` and `is_full` is `false` when the provider has no limit set.\n\n"
+        "Defaults to today; pass `?date=YYYY-MM-DD` to look ahead.\n\n"
+        "**When to call:** On the provider dashboard home screen, to show remaining slots for the day."
+    )
+)
+def get_daily_quota_status(
+    quota_date: Optional[date] = Query(
+        None,
+        alias="date",
+        description="Defaults to today"
+    ),
+    db: Session = Depends(get_db),
+    current_provider=Depends(
+        get_current_provider
+    )
+):
+
+    return ProviderService.get_daily_quota_status(
+        db,
+        current_provider["provider_id"],
+        quota_date
+    )
 
 
 @router.put(

@@ -88,13 +88,23 @@ class ExtraOrderService:
                 "total_price": unit_price * item.quantity
             })
 
-        # 3. Calculate grand total
+        # 3. Check the provider's overall daily quota — all packages in this
+        # order count against the same per-slot limit
+        PackageCapacityRepository.check_and_raise_provider_extra_order(
+            db=db,
+            vendor_id=payload.vendor_id,
+            requested_qty=sum(i["quantity"] for i in resolved_items),
+            delivery_date=payload.delivery_date,
+            meal_slot=payload.meal_slot.value,
+        )
+
+        # 4. Calculate grand total
         grand_total = sum(
             Decimal(str(i["total_price"]))
             for i in resolved_items
         )
 
-        # 4. Check wallet balance
+        # 5. Check wallet balance
         wallet = WalletRepository.get_by_user_id(
             db,
             user_id
@@ -118,7 +128,7 @@ class ExtraOrderService:
                 )
             )
 
-        # 5. Place all orders, deduct wallet, record transaction — all in one transaction
+        # 6. Place all orders, deduct wallet, record transaction — all in one transaction
         try:
 
             created_orders = []

@@ -143,6 +143,10 @@ class GetMenuPackageResponse(
 
     discounted_price: Optional[float]
 
+    is_subscription_available: bool = False
+
+    subscription_price: Optional[float] = None
+
     items: List[PackageItemResponse] = []
 
     images: List[PackageImageResponse] = []

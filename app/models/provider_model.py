@@ -7,6 +7,7 @@ from sqlalchemy import Boolean
 from sqlalchemy import DateTime
 from sqlalchemy import Text
 from sqlalchemy import Integer
+from sqlalchemy import SmallInteger
 from sqlalchemy import Enum
 
 from sqlalchemy.dialects.postgresql import UUID
@@ -164,5 +165,19 @@ class Provider(Base):
             name="meal_service_type",
             schema="provider"
         ),
+        nullable=True
+    )
+
+    # 14-digit FSSAI food business licence number
+    fssai_licence = Column(
+        String(14),
+        nullable=True
+    )
+
+    # Max meals this provider can serve per individual meal-slot per day,
+    # counted across ALL of the provider's packages.
+    # NULL = no provider-level limit.
+    daily_meal_quota = Column(
+        SmallInteger,
         nullable=True
     )
