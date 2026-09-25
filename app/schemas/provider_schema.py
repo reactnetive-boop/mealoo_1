@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
+from datetime import date
 from uuid import UUID
 from enum import Enum as PyEnum
 
@@ -39,6 +40,21 @@ class CompleteProfileRequest(
 
     meal_service_type: Optional[MealServiceType] = None
 
+    fssai_licence: Optional[str] = Field(
+        None,
+        pattern=r"^\d{14}$",
+        description="14-digit FSSAI food business licence number"
+    )
+
+    daily_meal_quota: Optional[int] = Field(
+        None,
+        gt=0,
+        description=(
+            "Meals this kitchen can serve per meal-slot per day across all packages "
+            "(e.g. 15 = 15 breakfasts, 15 lunches and 15 dinners). Omit for no limit."
+        )
+    )
+
 class ProviderProfileResponse(
     BaseModel
 ):
@@ -70,6 +86,57 @@ class ProviderProfileResponse(
     is_profile_completed: bool
 
     meal_service_type: Optional[MealServiceType]
+
+    fssai_licence: Optional[str] = None
+
+    daily_meal_quota: Optional[int] = None
+
+
+class UpdateDailyQuotaRequest(BaseModel):
+
+    daily_meal_quota: Optional[int] = Field(
+        ...,
+        gt=0,
+        description=(
+            "Meals servable per meal-slot per day across all packages. "
+            "Send null to remove the limit."
+        )
+    )
+
+
+class DailyQuotaSlotStatus(BaseModel):
+
+    subscription_committed: int
+
+    extra_orders: int
+
+    total_committed: int
+
+    available: Optional[int]
+
+    is_full: bool
+
+
+class DailyQuotaStatusResponse(BaseModel):
+
+    success: bool
+
+    daily_meal_quota: Optional[int]
+
+    date: date
+
+    slots: dict[str, DailyQuotaSlotStatus]
+
+
+class UpdateDailyQuotaResponse(BaseModel):
+
+    success: bool
+
+    message: str
+
+    daily_meal_quota: Optional[int]
+
+    current_peak_demand: int
 
 
 class UpdateProfileImageResponse(

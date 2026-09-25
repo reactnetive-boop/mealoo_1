@@ -283,6 +283,14 @@ class PackageSwitchService:
             individual_slots=individual_slots,
         )
 
+        # The new provider's overall daily quota must also have room
+        PackageCapacityRepository.check_and_raise_provider_subscription(
+            db=db,
+            vendor_id=new_package.provider_id,
+            requested_qty=calc["quantity"],
+            individual_slots=individual_slots,
+        )
+
         # Payment rule (policy §10): upgrade must be paid before the switch
         wallet = WalletRepository.get_or_create(db, user_id)
 

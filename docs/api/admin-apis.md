@@ -167,6 +167,7 @@ Use when the user is unable to cancel themselves, or for policy reasons. Provide
 | GET | `/api/v1/admin/providers` | List All Providers |
 | GET | `/api/v1/admin/providers/{provider_id}` | Get Provider Detail |
 | PUT | `/api/v1/admin/providers/{provider_id}` | Update Provider Details |
+| GET | `/api/v1/admin/providers/{provider_id}/daily-quota` | Get Provider Daily Meal Limit Usage |
 | PUT | `/api/v1/admin/providers/{provider_id}/activate` | Activate Provider Account |
 | PUT | `/api/v1/admin/providers/{provider_id}/deactivate` | Deactivate Provider Account |
 | POST | `/api/v1/admin/providers/{provider_id}/wallet/adjust` | Manually Adjust Provider Earnings Wallet |
@@ -201,9 +202,26 @@ Use `provider_id` (UUID) from the providers list.
 
 Use this for admin-side corrections when the provider cannot update themselves.
 
+`daily_meal_quota` caps the meals the kitchen serves per meal-slot per day across all its packages (`null` removes the limit); it is rejected with `400` if set below the meals already committed to active subscriptions. `fssai_licence` must be 14 digits.
+
 **Parameters:** `provider_id` (path, string (uuid), required)
 
-**Request body** (application/json): `full_name` (string (nullable), optional); `business_name` (string (nullable), optional); `city` (string (nullable), optional); `area` (string (nullable), optional); `pincode` (integer (nullable), optional); `is_profile_completed` (boolean (nullable), optional)
+**Request body** (application/json): `full_name` (string (nullable), optional); `business_name` (string (nullable), optional); `city` (string (nullable), optional); `area` (string (nullable), optional); `pincode` (integer (nullable), optional); `is_profile_completed` (boolean (nullable), optional); `fssai_licence` (string (nullable), optional); `daily_meal_quota` (integer (nullable), optional)
+
+
+### `GET /api/v1/admin/providers/{provider_id}/daily-quota` — Get Provider Daily Meal Limit Usage
+
+**How much of a provider's daily meal limit is used up, per meal-slot.**
+
+`daily_meal_quota` caps the meals a kitchen serves per slot per day across all its packages. Per slot this returns meals committed by active subscriptions, meals from one-time orders on that date, the total, how many are still `available`, and `is_full`.
+
+`available` is `null` and `is_full` is `false` when the provider has no limit set.
+
+Defaults to today; pass `?date=YYYY-MM-DD` to look ahead.
+
+**When to call:** When a user reports being unable to order from a provider, to confirm whether the kitchen is full rather than misconfigured.
+
+**Parameters:** `provider_id` (path, string (uuid), required); `date` (query, string (date) (nullable), optional)
 
 
 ### `PUT /api/v1/admin/providers/{provider_id}/activate` — Activate Provider Account

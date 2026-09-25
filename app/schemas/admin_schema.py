@@ -88,6 +88,8 @@ class AdminProviderResponse(BaseModel):
     is_mobile_verified: bool
     is_profile_completed: bool
     meal_service_type: Optional[str]
+    fssai_licence: Optional[str]
+    daily_meal_quota: Optional[int]
     created_at: Optional[datetime]
 
 
@@ -104,6 +106,19 @@ class AdminUpdateProviderRequest(BaseModel):
     area: Optional[str] = Field(None, max_length=256)
     pincode: Optional[int] = None
     is_profile_completed: Optional[bool] = None
+    fssai_licence: Optional[str] = Field(
+        None,
+        pattern=r"^\d{14}$",
+        description="14-digit FSSAI food business licence number"
+    )
+    daily_meal_quota: Optional[int] = Field(
+        None,
+        gt=0,
+        description=(
+            "Meals the provider can serve per meal-slot per day across all packages. "
+            "Send null to remove the limit."
+        )
+    )
 
 
 # ── Delivery Boy Management ───────────────────────────────

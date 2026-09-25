@@ -38,6 +38,15 @@ class MenuService:
                 )
             )
 
+        # At creation the two prices start out the same: whatever the provider
+        # enters as subscription_price is also what the package sells for
+        # one-time. They decouple from here on — see update_package.
+        effective_price = (
+            request.subscription_price
+            if request.subscription_price is not None
+            else request.price
+        )
+
         package_data = {
 
             "provider_id": provider_id,
@@ -64,7 +73,7 @@ class MenuService:
                 request.food_type
             ),
 
-            "price": request.price,
+            "price": effective_price,
 
             "discounted_price": (
                 request.discounted_price
@@ -194,6 +203,9 @@ class MenuService:
                 detail="Package not found"
             )
 
+        # Only the fields actually sent are written. price and
+        # subscription_price are independent here: editing one must never
+        # move the other (they are only linked at creation).
         update_data = request.dict(
             exclude_unset=True
         )
