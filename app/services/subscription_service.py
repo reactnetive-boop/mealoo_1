@@ -224,6 +224,15 @@ class SubscriptionService:
                 individual_slots=individual_slots,
             )
 
+        # 6. Check the provider's overall daily quota — every package in this
+        # subscription counts against the same per-slot limit
+        PackageCapacityRepository.check_and_raise_provider_subscription(
+            db=db,
+            vendor_id=payload.vendor_id,
+            requested_qty=sum(i["quantity"] for i in resolved_items),
+            individual_slots=individual_slots,
+        )
+
         # 7. Calculate amounts
         # meal_slot_multiplier accounts for how many meals per day the plan covers
         meal_slot_multiplier = MEAL_SLOT_MULTIPLIER.get(plan.meal_slot, 1)

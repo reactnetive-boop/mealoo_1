@@ -58,12 +58,42 @@ def get_provider_detail(
     return AdminProviderService.get_provider_detail(db, str(provider_id))
 
 
+@router.get(
+    "/{provider_id}/daily-quota",
+    summary="Get Provider Daily Meal Limit Usage",
+    description=(
+        "**How much of a provider's daily meal limit is used up, per meal-slot.**\n\n"
+        "`daily_meal_quota` caps the meals a kitchen serves per slot per day across all its packages. "
+        "Per slot this returns meals committed by active subscriptions, meals from one-time orders on "
+        "that date, the total, how many are still `available`, and `is_full`.\n\n"
+        "`available` is `null` and `is_full` is `false` when the provider has no limit set.\n\n"
+        "Defaults to today; pass `?date=YYYY-MM-DD` to look ahead.\n\n"
+        "**When to call:** When a user reports being unable to order from a provider, to confirm "
+        "whether the kitchen is full rather than misconfigured."
+    )
+)
+def get_provider_daily_quota(
+    provider_id: UUID,
+    quota_date: Optional[date] = Query(
+        None,
+        alias="date",
+        description="Defaults to today"
+    ),
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin)
+):
+    return AdminProviderService.get_daily_quota_status(db, str(provider_id), quota_date)
+
+
 @router.put(
     "/{provider_id}",
     summary="Update Provider Details",
     description=(
         "**Edit a provider's business name, address, pincode, or other profile fields.**\n\n"
-        "Use this for admin-side corrections when the provider cannot update themselves."
+        "Use this for admin-side corrections when the provider cannot update themselves.\n\n"
+        "`daily_meal_quota` caps the meals the kitchen serves per meal-slot per day across all its "
+        "packages (`null` removes the limit); it is rejected with `400` if set below the meals "
+        "already committed to active subscriptions. `fssai_licence` must be 14 digits."
     )
 )
 def update_provider(
