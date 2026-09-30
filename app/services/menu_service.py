@@ -179,10 +179,21 @@ class MenuService:
                 current_provider_id=current_provider_id
             )
 
-        return MenuRepository.list_provider_packages(
+        packages = MenuRepository.list_provider_packages(
             db,
             provider_id
         )
+
+        # Attach each package's per-day capacity (None = unlimited) so the
+        # provider's package list can show it without a call per package.
+        capacities = ProviderSelectedPackageRepository.get_capacities_for_provider(
+            db,
+            provider_id
+        )
+        for package in packages:
+            package.daily_capacity = capacities.get(str(package.package_id))
+
+        return packages
     
     @staticmethod
     def update_package(

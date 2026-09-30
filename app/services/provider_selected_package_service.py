@@ -58,6 +58,33 @@ class ProviderSelectedPackageService:
         }
 
     @staticmethod
+    def get_capacity(db, provider_id, package_id):
+        """
+        Current daily capacity for a provider-package pair, plus the peak
+        per-slot demand from active subscriptions (the lowest allowed limit).
+        """
+        existing = ProviderSelectedPackageRepository.get_provider_package(
+            db=db,
+            provider_id=provider_id,
+            package_id=package_id
+        )
+
+        if not existing:
+            raise HTTPException(
+                status_code=404,
+                detail="Provider-package assignment not found"
+            )
+
+        return {
+            "success": True,
+            "message": "Capacity fetched successfully",
+            "daily_capacity": existing.daily_capacity,
+            "current_peak_demand": PackageCapacityRepository.get_peak_subscription_demand(
+                db, provider_id, package_id
+            ),
+        }
+
+    @staticmethod
     def update_capacity(db, request):
         """
         Set or clear the daily capacity for an existing provider-package pair.

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends
 
 from sqlalchemy.orm import Session
@@ -35,6 +37,28 @@ def select_package(
     db: Session = Depends(get_db)
 ):
     return ProviderSelectedPackageService.select_package(db=db, request=request)
+
+
+@router.get(
+    "/capacity",
+    response_model=UpdateCapacityResponse,
+    summary="Get Daily Package Capacity",
+    description=(
+        "**Fetch the current daily capacity for a provider-package pair.**\n\n"
+        "`daily_capacity` is null when no limit is set. `current_peak_demand` is the highest "
+        "per-meal-slot demand from active subscriptions — the lowest value the capacity can be "
+        "set to.\n\n"
+        "**When to call:** On the provider's package detail screen, to show the current limit."
+    )
+)
+def get_package_capacity(
+    provider_id: UUID,
+    package_id: UUID,
+    db: Session = Depends(get_db)
+):
+    return ProviderSelectedPackageService.get_capacity(
+        db=db, provider_id=provider_id, package_id=package_id
+    )
 
 
 @router.put(

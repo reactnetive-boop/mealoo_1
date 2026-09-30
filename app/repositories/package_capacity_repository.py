@@ -420,6 +420,23 @@ class PackageCapacityRepository:
         return peak
 
     @staticmethod
+    def get_peak_subscription_demand(
+        db: Session,
+        vendor_id,
+        package_id,
+    ) -> int:
+        """
+        Highest active-subscription demand for this package on any single
+        meal-slot (breakfast / lunch / dinner).
+        """
+        return max(
+            PackageCapacityRepository.get_subscription_demand_per_slot(
+                db, vendor_id, package_id, slot
+            )
+            for slot in ("breakfast", "lunch", "dinner")
+        )
+
+    @staticmethod
     def validate_capacity_reduction(
         db: Session,
         vendor_id,
@@ -432,13 +449,9 @@ class PackageCapacityRepository:
         """
         from fastapi import HTTPException
 
-        peak = 0
-        for slot in ("breakfast", "lunch", "dinner"):
-            demand = PackageCapacityRepository.get_subscription_demand_per_slot(
-                db, vendor_id, package_id, slot
-            )
-            if demand > peak:
-                peak = demand
+        peak = PackageCapacityRepository.get_peak_subscription_demand(
+            db, vendor_id, package_id
+        )
 
         if new_capacity < peak:
             raise HTTPException(
