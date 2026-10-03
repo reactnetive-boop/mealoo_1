@@ -1,12 +1,14 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.rate_limit import client_ip
+from app.schemas.admin_schema import AdminReverseTopupRequest
 from app.dependencies.auth_dependency import get_current_admin, require_super_admin
-from app.schemas.payment_schema import PaymentListResponse, PaymentResponse, RefundPaymentRequest
+from app.schemas.payment_schema import PaymentListResponse, PaymentResponse
 from app.services.admin_payment_service import AdminPaymentService
 
 router = APIRouter()
@@ -53,18 +55,18 @@ def get_payment(
 
 @router.put(
     "/{payment_id}/refund",
-    summary="Refund a Payment",
+    summary="Reverse a Wallet Top-up",
     description=(
-        "**Refund a completed payment and debit the amount back out of the user's wallet.**\n\n"
-        "Optionally specify a partial `refund_amount`; defaults to the full payment amount. "
-        "The wallet debit is clamped to the user's current balance if it's lower than the refund amount.\n\n"
-        "**Requires:** `super_admin` role."
+        "There is no payment gateway in this phase, so no money can be sent back to a bank or card. This "
+        "reverses an internal wallet top-up: the amount (default: everything not yet reversed) is debited from "
+        "the customer's wallet, which must still hold it. `reason` is required; audited. **super_admin**."
     )
 )
 def refund_payment(
     payment_id: UUID,
-    payload: RefundPaymentRequest,
+    payload: AdminReverseTopupRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current=Depends(require_super_admin)
 ):
-    return AdminPaymentService.refund_payment(db, payment_id, payload)
+    return AdminPaymentService.reverse_topup(db, payment_id, payload, current["admin_id"], client_ip(request))

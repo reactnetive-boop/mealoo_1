@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.models.review_model import Review
 
 
@@ -24,23 +25,28 @@ class AdminReviewService:
         return {"success": True, "total": total, "page": page, "reviews": reviews}
 
     @staticmethod
-    def set_visibility(db: Session, review_id: str, is_visible: bool):
+    def set_visibility(db: Session, review_id: str, is_visible: bool, admin_id: str = None):
         review = db.query(Review).filter(Review.review_id == review_id).first()
         if not review:
             raise HTTPException(status_code=404, detail="Review not found")
 
         review.is_visible = is_visible
+        record_audit(db, table="provider.reviews", record_id=review.review_id,
+                     new={"is_visible": is_visible}, actor_id=admin_id, actor_type="admin")
         db.commit()
 
         action = "shown" if is_visible else "hidden"
         return {"success": True, "message": f"Review {action}"}
 
     @staticmethod
-    def delete_review(db: Session, review_id: str):
+    def delete_review(db: Session, review_id: str, admin_id: str = None):
         review = db.query(Review).filter(Review.review_id == review_id).first()
         if not review:
             raise HTTPException(status_code=404, detail="Review not found")
 
+        record_audit(db, table="provider.reviews", record_id=review.review_id, operation="D",
+                     old={"vendor_rating": review.vendor_rating, "review_text": review.review_text},
+                     actor_id=admin_id, actor_type="admin")
         db.delete(review)
         db.commit()
         return {"success": True, "message": "Review deleted"}

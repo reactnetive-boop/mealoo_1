@@ -29,9 +29,8 @@ class PincodeService:
                 ServiceUnavailableLogService.create_log(
                     db=db,
                     data={
-                        "provider_id": (
-                            request.provider_id
-                        ),
+                        # never trust a caller-supplied kitchen id here
+                        "provider_id": None,
                         "pincode": (
                             request.pincode
                         ),

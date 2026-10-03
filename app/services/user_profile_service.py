@@ -2,8 +2,11 @@ from fastapi import HTTPException, UploadFile
 
 from sqlalchemy.orm import Session
 
+from app.core.clock import today_local
+from app.core.errors import DomainError
+from app.models.user_model import User
 from app.repositories.user_repository import UserRepository
-from app.utils.file_helper import save_user_profile_image
+from app.utils.file_helper import save_user_profile_image, delete_upload
 
 
 class UserProfileService:
@@ -51,6 +54,22 @@ class UserProfileService:
             exclude_unset=True
         )
 
+        dob = update_data.get("date_of_birth")
+        if dob is not None and (dob >= today_local() or dob.year < 1900):
+            raise DomainError("Enter a valid date of birth")
+
+        email = update_data.get("email")
+        if email:
+            update_data["email"] = email.strip().lower()
+            taken = db.query(User).filter(User.email == update_data["email"], User.user_id != user.user_id).first()
+            if taken:
+                raise DomainError("This email is already used by another account", 409)
+            if update_data["email"] != (user.email or ""):
+                update_data["email_verified"] = False
+
+        if update_data.get("full_name") and user.phone:
+            update_data["is_profile_completed"] = True
+
         updated_user = UserRepository.update_user(
             db,
             user,
@@ -85,19 +104,7 @@ class UserProfileService:
                 detail="User not found"
             )
 
-        allowed_extensions = ["jpg", "jpeg", "png", "webp"]
-
-        file_extension = (
-            file.filename.split(".")[-1].lower()
-        )
-
-        if file_extension not in allowed_extensions:
-
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid image format. Allowed: jpg, jpeg, png, webp"
-            )
-
+        old_path = user.avatar_url
         image_path = save_user_profile_image(file)
 
         updated_user = UserRepository.update_profile_image(
@@ -105,6 +112,8 @@ class UserProfileService:
             user,
             image_path
         )
+
+        delete_upload(old_path)
 
         return {
             "success": True,

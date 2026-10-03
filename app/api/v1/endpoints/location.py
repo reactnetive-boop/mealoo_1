@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.rate_limit import limit_by_ip
 
 from app.schemas.location_schema import (
-    VerifyPincodeRequest
+    VerifyPincodeRequest,
+    VerifyPincodeResponse,
 )
 
 from app.services.pincode_service import PincodeService
@@ -24,10 +26,13 @@ router = APIRouter()
         "**When to call:** Before `GET /user/menu/packages` — if not serviceable, "
         "show a 'Not available in your area' message instead of the package listing.\n\n"
         "**Flow:** Enter pincode → `POST /location/verify-pincode` → if serviceable → "
-        "`GET /user/menu/packages?pin_code=...`"
-    )
+        "`GET /user/menu/packages?pin_code=...`\n\n"
+        "Requests for unserviceable pincodes are logged as expansion demand. Rate limited per IP."
+    ),
+    response_model=VerifyPincodeResponse,
+    dependencies=[Depends(limit_by_ip("verify_pincode", 30, 600))],
 )
-async def verify_pincode(
+def verify_pincode(
     request: VerifyPincodeRequest,
     db: Session = Depends(get_db)
 ):

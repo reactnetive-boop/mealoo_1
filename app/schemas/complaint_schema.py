@@ -2,8 +2,10 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from enum import Enum
+
+from app.utils.validators import validate_evidence_urls
 
 
 class ComplaintAgainst(str, Enum):
@@ -19,6 +21,7 @@ class RaiseComplaintRequest(BaseModel):
 
     subject: str = Field(
         ...,
+        min_length=3,
         max_length=255
     )
 
@@ -36,8 +39,14 @@ class RaiseComplaintRequest(BaseModel):
 
     evidence_urls: Optional[List[str]] = Field(
         default=[],
-        description="List of image/document URLs as evidence"
+        max_length=5,
+        description="Up to 5 https:// links to images or documents"
     )
+
+    @field_validator("evidence_urls")
+    @classmethod
+    def _safe_urls(cls, value):
+        return validate_evidence_urls(value)
 
 
 class UpdateComplaintRequest(BaseModel):
@@ -53,7 +62,12 @@ class UpdateComplaintRequest(BaseModel):
         max_length=2000
     )
 
-    evidence_urls: Optional[List[str]] = None
+    evidence_urls: Optional[List[str]] = Field(None, max_length=5)
+
+    @field_validator("evidence_urls")
+    @classmethod
+    def _safe_urls(cls, value):
+        return validate_evidence_urls(value)
 
 
 class ComplaintResponse(BaseModel):

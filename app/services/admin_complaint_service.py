@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from app.models.complaint_model import Complaint
 from app.models.provider_complaint_model import ProviderComplaint
 from app.models.delivery_boy_complaint_model import DeliveryBoyComplaint
+from app.core.audit import record_audit
+from app.domain import notify
 from app.services.notification_service import NotificationService
 
 VALID_RESOLUTIONS = {"in_progress", "resolved", "rejected", "closed"}
@@ -124,6 +126,15 @@ class AdminComplaintService:
         if payload.status in ("resolved", "closed", "rejected"):
             complaint.resolved_by = admin_id
             complaint.resolved_at = datetime.now(timezone.utc)
+        record_audit(
+            db, table="delivery.delivery_boy_complaints", record_id=complaint.delivery_boy_complaint_id,
+            new={"status": payload.status, "resolution": payload.resolution}, actor_id=admin_id, actor_type="admin",
+        )
+        notify.delivery_partner(
+            db, complaint.delivery_boy_reference_id, "complaint_update", "Complaint update",
+            f"Your complaint '{complaint.subject}' is now '{payload.status}'.",
+            {"complaint_id": str(complaint.delivery_boy_complaint_id), "status": payload.status},
+        )
         db.commit()
 
         return {"success": True, "message": f"Complaint status updated to '{payload.status}'"}
@@ -147,6 +158,10 @@ class AdminComplaintService:
         if payload.status in ("resolved", "closed", "rejected"):
             complaint.resolved_by = admin_id
             complaint.resolved_at = datetime.now(timezone.utc)
+        record_audit(
+            db, table="provider.complaints", record_id=complaint.complaint_id,
+            new={"status": payload.status, "resolution": payload.resolution}, actor_id=admin_id, actor_type="admin",
+        )
         db.commit()
 
         NotificationService.create_notification(
@@ -179,6 +194,10 @@ class AdminComplaintService:
         if payload.status in ("resolved", "closed", "rejected"):
             complaint.resolved_by = admin_id
             complaint.resolved_at = datetime.now(timezone.utc)
+        record_audit(
+            db, table="provider.provider_complaints", record_id=complaint.provider_complaint_id,
+            new={"status": payload.status, "resolution": payload.resolution}, actor_id=admin_id, actor_type="admin",
+        )
         db.commit()
 
         return {"success": True, "message": f"Complaint status updated to '{payload.status}'"}

@@ -39,8 +39,15 @@ from app.api.v1.endpoints.admin_orders import router as admin_orders_router
 from app.api.v1.endpoints.admin_pincodes import router as admin_pincodes_router
 from app.api.v1.endpoints.admin_dashboard import router as admin_dashboard_router
 from app.api.v1.endpoints.admin_payments import router as admin_payments_router
+from app.api.v1.endpoints.admin_pricing import router as admin_pricing_router
+from app.api.v1.endpoints.admin_payouts import router as admin_payouts_router
+from app.api.v1.endpoints.public_config import router as public_config_router
 
 api_router = APIRouter()
+
+# ── Public (no auth) ──────────────────────────────────────
+
+api_router.include_router(public_config_router, prefix="/public", tags=["Public"])
 
 # ── Provider ──────────────────────────────────────────────
 
@@ -213,3 +220,5 @@ api_router.include_router(admin_reviews_router,       prefix="/admin/reviews",  
 api_router.include_router(admin_orders_router,        prefix="/admin/orders",        tags=["Admin — Orders"])
 api_router.include_router(admin_pincodes_router,      prefix="/admin/pincodes",      tags=["Admin — Pincodes"])
 api_router.include_router(admin_payments_router,      prefix="/admin/payments",      tags=["Admin — Payments"])
+api_router.include_router(admin_pricing_router,       prefix="/admin/pricing",       tags=["Admin — Pricing"])
+api_router.include_router(admin_payouts_router,       prefix="/admin/payouts",       tags=["Admin — Withdrawals"])

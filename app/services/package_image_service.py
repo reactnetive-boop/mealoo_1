@@ -1,168 +1,76 @@
-import os
+from fastapi import UploadFile
+from sqlalchemy.orm import Session
 
-from fastapi import (
-    HTTPException,
-    UploadFile
-)
+from app.core.errors import DomainError
+from app.models.menu_package_image_model import MenuPackageImage
+from app.repositories.package_image_repository import PackageImageRepository
+from app.services.menu_service import owned_package
+from app.utils.file_helper import save_package_image, delete_upload
 
-from app.models.menu_package_image_model import (
-    MenuPackageImage
-)
+MAX_IMAGES = 10
 
-from app.repositories.menu_repository import (
-    MenuRepository
-)
 
-from app.repositories.package_image_repository import (
-    PackageImageRepository
-)
-
-from app.utils.file_helper import (
-    save_package_image
-)
+def _owned_image(db: Session, provider_id: str, image_id) -> MenuPackageImage:
+    image = PackageImageRepository.get_image_by_image_id(db, image_id)
+    if image is None:
+        raise DomainError("Image not found", 404)
+    owned_package(db, provider_id, image.package_reference_id)
+    return image
 
 
 class PackageImageService:
 
     @staticmethod
-    async def upload_package_image(
-        db,
-        package_id,
-        file: UploadFile
-    ):
+    def upload_package_image(db: Session, provider_id: str, package_id, file: UploadFile):
+        package = owned_package(db, provider_id, package_id)
+        if len(package.images) >= MAX_IMAGES:
+            raise DomainError(f"A package can have at most {MAX_IMAGES} photos")
 
-        package = (
-            MenuRepository.get_package_by_id(
-                db,
-                package_id
-            )
+        path = save_package_image(file)
+        image = MenuPackageImage(
+            package_reference_id=package.package_id,
+            image_url=path,
+            is_primary=len(package.images) == 0,
+            display_order=len(package.images) + 1,
         )
-
-        if not package:
-
-            raise HTTPException(
-                status_code=404,
-                detail="Package not found"
-            )
-
-        allowed_extensions = [
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".webp"
-        ]
-
-        file_extension = os.path.splitext(
-            file.filename
-        )[1].lower()
-
-        if file_extension not in allowed_extensions:
-
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid image format"
-            )
-
-        file_path = save_package_image(
-            file
-        )
-
-        is_primary = (
-            len(package.images) == 0
-        )
-
-        package_image = MenuPackageImage(
-            package_reference_id=package_id,
-            image_url=file_path,
-            is_primary=is_primary
-        )
-
-        package_image = (
-            PackageImageRepository.create_package_image(
-                db,
-                package_image
-            )
-        )
-
+        db.add(image)
+        db.commit()
+        db.refresh(image)
         return {
             "success": True,
             "message": "Package image uploaded successfully",
-            "image_id": package_image.image_id,
-            "image_url": package_image.image_url
+            "image_id": image.image_id,
+            "image_url": image.image_url,
         }
 
-
     @staticmethod
-    def delete_package_image(
-        db,
-        image_id
-    ):
-
-        package_image = (
-            PackageImageRepository.get_image_by_image_id(
-                db,
-                image_id
+    def delete_package_image(db: Session, provider_id: str, image_id):
+        image = _owned_image(db, provider_id, image_id)
+        was_primary = image.is_primary
+        package_id = image.package_reference_id
+        path = image.image_url
+        db.delete(image)
+        db.flush()
+        if was_primary:
+            # Promote the next photo so the package keeps a cover image
+            nxt = (
+                db.query(MenuPackageImage)
+                .filter(MenuPackageImage.package_reference_id == package_id)
+                .order_by(MenuPackageImage.display_order.asc())
+                .first()
             )
-        )
-
-        if not package_image:
-
-            raise HTTPException(
-                status_code=404,
-                detail="Image not found"
-            )
-
-        if os.path.exists(
-            package_image.image_url
-        ):
-
-            os.remove(
-                package_image.image_url
-            )
-
-        PackageImageRepository.delete_package_image(
-            db,
-            package_image
-        )
-
-        return {
-            "success": True,
-            "message": "Package image deleted successfully"
-        }
-
-
-    @staticmethod
-    def set_primary_image(
-        db,
-        image_id
-    ):
-
-        package_image = (
-            PackageImageRepository.get_image_by_image_id(
-                db,
-                image_id
-            )
-        )
-
-        if not package_image:
-
-            raise HTTPException(
-                status_code=404,
-                detail="Image not found"
-            )
-
-        PackageImageRepository.remove_primary_images(
-            db,
-            package_image.image_id
-        )
-
-        package_image.is_primary = True
-
+            if nxt:
+                nxt.is_primary = True
         db.commit()
+        delete_upload(path)
+        return {"success": True, "message": "Package image deleted successfully"}
 
-        db.refresh(package_image)
-
-        return {
-            "success": True,
-            "message": "Primary image updated successfully"
-        }
+    @staticmethod
+    def set_primary_image(db: Session, provider_id: str, image_id):
+        image = _owned_image(db, provider_id, image_id)
+        db.query(MenuPackageImage).filter(
+            MenuPackageImage.package_reference_id == image.package_reference_id
+        ).update({"is_primary": False}, synchronize_session=False)
+        image.is_primary = True
+        db.commit()
+        return {"success": True, "message": "Primary image updated successfully"}

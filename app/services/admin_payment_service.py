@@ -1,12 +1,19 @@
-from datetime import datetime, timezone
-from decimal import Decimal
+"""
+Payments are internal in this phase: the only payment rows are wallet
+top-ups (method 'internal_wallet', no gateway). A "refund" therefore cannot
+send money anywhere; what an admin can do is reverse a top-up that should not
+have happened, which takes the amount back out of the wallet.
+"""
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit, business_event
+from app.core.clock import now_utc
+from app.core.errors import DomainError
+from app.domain import ledger, notify
+from app.domain.pricing import money, ZERO
 from app.repositories.payment_repository import PaymentRepository
-from app.repositories.wallet_repository import WalletRepository
-from app.services.notification_service import NotificationService
 
 
 class AdminPaymentService:
@@ -24,61 +31,51 @@ class AdminPaymentService:
         return payment
 
     @staticmethod
-    def refund_payment(db: Session, payment_id, payload):
+    def reverse_topup(db: Session, payment_id, payload, admin_id: str, ip: str | None = None):
         payment = PaymentRepository.get_by_id(db, payment_id)
         if not payment:
             raise HTTPException(status_code=404, detail="Payment not found")
-        if payment.status != "completed":
-            raise HTTPException(status_code=400, detail=f"Only 'completed' payments can be refunded (current status: '{payment.status}')")
+        if payment.purpose != "wallet_topup" or payment.gateway is not None:
+            raise DomainError("Only internal wallet top-ups can be reversed in this phase")
+        if payment.status not in ("completed", "partially_refunded"):
+            raise DomainError(f"This payment is '{payment.status}' and cannot be reversed")
 
-        refund_amount = payload.refund_amount or payment.amount
-        if refund_amount > payment.amount:
-            raise HTTPException(status_code=400, detail="Refund amount cannot exceed the original payment amount")
+        already = money(payment.refund_amount)
+        remaining = money(payment.amount) - already
+        amount = money(payload.amount) if payload.amount is not None else remaining
+        if amount <= ZERO or amount > remaining:
+            raise DomainError(f"At most Rs {remaining} of this top-up can still be reversed")
 
-        try:
-            wallet = WalletRepository.get_by_user_id(db, payment.user_reference_id)
-            if not wallet:
-                raise HTTPException(status_code=404, detail="User wallet not found")
+        before = {"status": payment.status, "refund_amount": payment.refund_amount}
+        # The wallet must still hold the money; the debit never goes below 0
+        txn = ledger.post_customer(
+            db, payment.user_reference_id,
+            type="debit", amount=amount, reason="refund",
+            idempotency_key=f"topup_reversal:{payment.payment_id}:{already}",
+            reference_type="payment", reference_id=payment.payment_id,
+            description=payload.reason,
+            created_by=admin_id,
+        )
 
-            debit_amount = min(refund_amount, wallet.balance)
-            balance_before = Decimal(str(wallet.balance))
-
-            WalletRepository.deduct_balance(db, wallet, debit_amount)
-            balance_after = Decimal(str(wallet.balance))
-
-            WalletRepository.create_transaction(db, {
-                "wallet_reference_id": wallet.wallet_id,
-                "user_reference_id": payment.user_reference_id,
-                "type": "debit",
-                "reason": "refund",
-                "amount": debit_amount,
-                "balance_before": balance_before,
-                "balance_after": balance_after,
-                "description": payload.reason or f"Refund for payment {payment.payment_id}",
-                "reference_id": payment.payment_id,
-                "reference_type": "payment"
-            })
-
-            payment.status = "refunded"
-            payment.refund_amount = refund_amount
-            payment.refunded_at = datetime.now(timezone.utc)
-
-            db.commit()
-            db.refresh(payment)
-
-            NotificationService.create_notification(
-                db,
-                payment.user_reference_id,
-                type="payment_refund",
-                title="Payment refunded",
-                body=f"₹{refund_amount} was refunded and deducted from your wallet balance.",
-                data={"payment_id": str(payment.payment_id)}
-            )
-
-            return {"success": True, "message": "Payment refunded successfully", "refund_amount": refund_amount}
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            db.rollback()
-            raise HTTPException(status_code=500, detail=f"Refund failed: {str(e)}")
+        payment.refund_amount = already + amount
+        payment.status = "refunded" if payment.refund_amount >= money(payment.amount) else "partially_refunded"
+        payment.refunded_at = now_utc()
+        record_audit(
+            db, table="subscription.payments", record_id=payment.payment_id,
+            old=before, new={"status": payment.status, "refund_amount": payment.refund_amount, "reason": payload.reason},
+            actor_id=admin_id, actor_type="admin", ip=ip,
+        )
+        notify.customer(
+            db, payment.user_reference_id, "payment_refund", "Wallet top-up reversed",
+            f"Rs {amount} from a wallet top-up was reversed by Orleeno support. {payload.reason}",
+            {"payment_id": str(payment.payment_id)},
+        )
+        db.commit()
+        business_event("payment.topup_reversed", payment_id=payment.payment_id, amount=amount, admin_id=admin_id)
+        return {
+            "success": True,
+            "message": f"Rs {amount} reversed from the customer's wallet",
+            "refund_amount": amount,
+            "balance_after": txn.balance_after,
+            "payment_status": payment.status,
+        }

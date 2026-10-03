@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import Column, String, SmallInteger, Integer, Numeric, Text, Date, DateTime, ForeignKey, CheckConstraint, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -120,6 +120,29 @@ class Subscription(Base):
         Integer,
         nullable=False,
         default=0
+    )
+
+    # Platform charges (delivery, packaging, commission, ...) included in
+    # final_amount. Breakdown and per-meal settlement figures are frozen in
+    # pricing_snapshot so later price changes never touch this subscription.
+    charges_amount = Column(
+        Numeric(10, 2),
+        nullable=False,
+        default=0,
+        server_default="0"
+    )
+
+    pricing_snapshot = Column(
+        JSONB,
+        nullable=True
+    )
+
+    # Total returned to the wallet (skips, cancellation, switch)
+    refunded_amount = Column(
+        Numeric(10, 2),
+        nullable=False,
+        default=0,
+        server_default="0"
     )
 
     notes = Column(

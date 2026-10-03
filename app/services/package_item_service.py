@@ -1,125 +1,63 @@
-from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
-from app.models.menu_package_item_model import (
-    MenuPackageItem
-)
+from app.core.errors import DomainError
+from app.models.menu_package_item_model import MenuPackageItem
+from app.repositories.package_item_repository import PackageItemRepository
+from app.services.menu_service import owned_package, mark_changed
 
-from app.repositories.package_item_repository import (
-    PackageItemRepository
-)
 
-from app.repositories.menu_repository import (
-    MenuRepository
-)
+def _owned_item(db: Session, provider_id: str, item_id) -> MenuPackageItem:
+    item = PackageItemRepository.get_item_by_id(db, item_id)
+    if item is None:
+        raise DomainError("Package item not found", 404)
+    owned_package(db, provider_id, item.package_reference_id)
+    return item
 
 
 class PackageItemService:
 
     @staticmethod
-    def add_package_item(
-        db,
-        request
-    ):
-
-        package = MenuRepository.get_package_by_id(
-            db,
-            request.package_id
-        )
-
-        if not package:
-
-            raise HTTPException(
-                status_code=404,
-                detail="Package not found"
-            )
-
-        package_item = MenuPackageItem(
-            package_reference_id=request.package_id,
+    def add_package_item(db: Session, provider_id: str, request):
+        package = owned_package(db, provider_id, request.package_id)
+        if len(package.items) >= 50:
+            raise DomainError("A package can have at most 50 items")
+        item = MenuPackageItem(
+            package_reference_id=package.package_id,
             item_name=request.item_name,
             quantity=request.quantity,
-            item_order=request.item_order
+            item_order=request.item_order or len(package.items) + 1,
         )
-
-        package_item = (
-            PackageItemRepository.create_package_item(
-                db,
-                package_item
-            )
-        )
-
-        return {
-            "success": True,
-            "message": "Package item added successfully",
-            "item_id": package_item.item_id
-        }
-
-
-    @staticmethod
-    def update_package_item(
-        db,
-        item_id,
-        request
-    ):
-
-        package_item = (
-            PackageItemRepository.get_item_by_id(
-                db,
-                item_id
-            )
-        )
-
-        if not package_item:
-
-            raise HTTPException(
-                status_code=404,
-                detail="Package item not found"
-            )
-
-        if request.item_name is not None:
-            package_item.item_name = request.item_name
-
-        if request.quantity is not None:
-            package_item.quantity = request.quantity
-
-        if request.item_order is not None:
-            package_item.item_order = request.item_order
-
+        db.add(item)
+        reapproval = mark_changed(package)
         db.commit()
-
-        db.refresh(package_item)
-
+        db.refresh(item)
         return {
             "success": True,
-            "message": "Package item updated successfully"
+            "message": "Package item added" + (" and sent for re-approval" if reapproval else ""),
+            "item_id": item.item_id,
         }
-
 
     @staticmethod
-    def delete_package_item(
-        db,
-        item_id
-    ):
+    def update_package_item(db: Session, provider_id: str, item_id, request):
+        item = _owned_item(db, provider_id, item_id)
+        changed = False
+        for field in ("item_name", "quantity", "item_order"):
+            value = getattr(request, field)
+            if value is not None and getattr(item, field) != value:
+                setattr(item, field, value)
+                changed = changed or field != "item_order"
+        if changed:
+            mark_changed(item.menu_package)
+        db.commit()
+        return {"success": True, "message": "Package item updated successfully"}
 
-        package_item = (
-            PackageItemRepository.get_item_by_id(
-                db,
-                item_id
-            )
-        )
-
-        if not package_item:
-
-            raise HTTPException(
-                status_code=404,
-                detail="Package item not found"
-            )
-
-        PackageItemRepository.delete_package_item(
-            db,
-            package_item
-        )
-
-        return {
-            "success": True,
-            "message": "Package item deleted successfully"
-        }
+    @staticmethod
+    def delete_package_item(db: Session, provider_id: str, item_id):
+        item = _owned_item(db, provider_id, item_id)
+        package = item.menu_package
+        if len(package.items) <= 1:
+            raise DomainError("A package must keep at least one item")
+        db.delete(item)
+        mark_changed(package)
+        db.commit()
+        return {"success": True, "message": "Package item deleted successfully"}

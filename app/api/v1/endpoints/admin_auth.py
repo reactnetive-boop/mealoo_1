@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.rate_limit import limit_by_ip
 from app.dependencies.auth_dependency import get_current_admin
 from app.services.admin_auth_service import AdminAuthService
 from app.schemas.admin_schema import (
@@ -23,7 +24,8 @@ router = APIRouter()
         "`Authorization: Bearer <token>`.\n\n"
         "**Admin roles:** `super_admin` has full access; `moderator` has limited access.\n\n"
         "**After login:** Use `GET /admin/profile` to verify role and permissions."
-    )
+    ),
+    dependencies=[Depends(limit_by_ip("admin_login", 10, 300))],
 )
 def login(payload: AdminLoginRequest, db: Session = Depends(get_db)):
     return AdminAuthService.login(db, payload.email, payload.password)
@@ -48,7 +50,8 @@ def get_profile(db: Session = Depends(get_db), current=Depends(get_current_admin
     summary="Change Admin Password",
     description=(
         "**Change the password for the currently logged-in admin account.**\n\n"
-        "Send `current_password` and `new_password`. The session token remains valid after the change."
+        "Send `current_password` and `new_password`. Every other session is signed out and a "
+        "fresh `access_token` is returned for this one."
     )
 )
 def change_password(
@@ -69,6 +72,6 @@ def change_password(
         "The client should discard the stored token after this call."
     )
 )
-async def logout_admin():
+def logout_admin(db: Session = Depends(get_db), current=Depends(get_current_admin)):
 
-    return await AdminAuthService.logout_admin()
+    return AdminAuthService.logout_admin(db, current["admin_id"])

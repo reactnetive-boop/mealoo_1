@@ -10,7 +10,8 @@ from app.schemas.review_schema import (
     AddReviewRequest,
     UpdateReviewRequest,
     ReviewResponse,
-    ReviewListResponse
+    ReviewListResponse,
+    PublicReviewListResponse,
 )
 from app.services.review_service import ReviewService
 
@@ -140,7 +141,7 @@ def delete_review(
 
 @router.get(
     "/vendor/{vendor_id}",
-    response_model=ReviewListResponse,
+    response_model=PublicReviewListResponse,
     summary="Get All Reviews for a Vendor",
     description=(
         "**Fetch all public reviews left for a specific vendor.**\n\n"

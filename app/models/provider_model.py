@@ -16,6 +16,7 @@ from datetime import datetime
 from datetime import timezone
 
 from app.core.database import Base
+from app.models.mixins import AccountSecurityMixin
 from enum import Enum as PyEnum
 from sqlalchemy import UniqueConstraint
 
@@ -30,7 +31,7 @@ class MealServiceType(str, PyEnum):
     FULL_DAY = "Full Day"
 
 
-class Provider(Base):
+class Provider(AccountSecurityMixin, Base):
 
     __tablename__ = "providers"
 
@@ -179,5 +180,30 @@ class Provider(Base):
     # NULL = no provider-level limit.
     daily_meal_quota = Column(
         SmallInteger,
+        nullable=True
+    )
+
+    # Admin review of the kitchen: pending | approved | rejected.
+    # A kitchen sells nothing until approved.
+    approval_status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending"
+    )
+
+    # Reason shown to the kitchen when rejected
+    approval_note = Column(
+        Text,
+        nullable=True
+    )
+
+    approved_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    approved_by = Column(
+        UUID(as_uuid=True),
         nullable=True
     )

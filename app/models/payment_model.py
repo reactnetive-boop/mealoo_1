@@ -133,3 +133,11 @@ class Payment(Base):
         server_default=func.now(),
         onupdate=func.now()
     )
+
+    # Deterministic key per business operation (e.g. "skip_refund:<order>").
+    # Unique, so a retried or concurrent request can never post twice.
+    idempotency_key = Column(
+        String(120),
+        nullable=True,
+        unique=True
+    )

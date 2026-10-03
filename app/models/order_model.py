@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import (
-    Column, String, Boolean, Date, DateTime, Text,
+    Column, String, Boolean, Date, DateTime, Text, Numeric, SmallInteger,
     ForeignKey, UniqueConstraint, Index
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -123,4 +123,48 @@ class Order(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False
+    )
+
+    # Failed customer-code attempts; delivery locks once the limit is hit
+    delivery_code_attempts = Column(
+        SmallInteger,
+        nullable=False,
+        default=0,
+        server_default="0"
+    )
+
+    # Shown to the kitchen only; the partner enters it at pickup to prove
+    # the hand-over happened at the kitchen.
+    pickup_code = Column(
+        String(6),
+        nullable=True
+    )
+
+    picked_up_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    # Why the order was cancelled: paused | subscription_cancelled |
+    # switched | kitchen_holiday | rejected_by_kitchen | customer | admin
+    cancel_reason = Column(
+        String(50),
+        nullable=True
+    )
+
+    # Set once the meal's value is returned to the customer's wallet
+    refund_amount = Column(
+        Numeric(10, 2),
+        nullable=True
+    )
+
+    refunded_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    # Set once kitchen / partner / platform earnings are booked
+    settled_at = Column(
+        DateTime(timezone=True),
+        nullable=True
     )

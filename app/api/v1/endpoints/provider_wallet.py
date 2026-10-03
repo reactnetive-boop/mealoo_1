@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies.auth_dependency import get_current_provider
+from app.dependencies.auth_dependency import get_active_provider as get_current_provider
 from app.services.provider_wallet_service import ProviderWalletService
 from app.schemas.provider_wallet_schema import (
     ProviderWalletDetailsResponse,
@@ -66,14 +66,12 @@ def get_transaction_history(
 @router.post(
     "/withdraw",
     response_model=WithdrawalResponse,
-    summary="Request Earnings Withdrawal",
+    summary="Request a Withdrawal",
     description=(
-        "**Request a withdrawal of available earnings to a bank account.**\n\n"
-        "Send the `amount` to withdraw. The system validates sufficient available balance. "
-        "Withdrawals are processed by the admin team.\n\n"
-        "**When to call:** When the provider wants to transfer earnings to their bank account. "
-        "Check balance first with `GET /provider/wallet`."
-    )
+        "Moves the amount from the available balance into a pending withdrawal request. An "
+        "Orleeno admin pays it out (bank transfer is manual in this phase) or rejects it, which "
+        "returns the amount to the balance."
+    ),
 )
 def request_withdrawal(
     payload: WithdrawalRequest,
@@ -85,3 +83,15 @@ def request_withdrawal(
         provider_id=current_provider["provider_id"],
         payload=payload
     )
+
+
+@router.get(
+    "/withdrawals",
+    summary="My Withdrawal Requests",
+    description="Pending, paid and rejected withdrawal requests.",
+)
+def list_withdrawals(
+    db: Session = Depends(get_db),
+    current_provider=Depends(get_current_provider)
+):
+    return ProviderWalletService.list_withdrawals(db, current_provider["provider_id"])

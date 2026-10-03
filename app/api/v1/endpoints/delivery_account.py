@@ -1,10 +1,12 @@
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies.auth_dependency import get_current_delivery_boy
+from app.core.rate_limit import limit_by_ip
+from app.dependencies.auth_dependency import get_delivery_session, get_active_delivery_boy
 from app.services.delivery_boy_account_service import DeliveryBoyAccountService
 from app.schemas.delivery_boy_schema import (
     DeliveryBoyDocumentListResponse,
@@ -16,9 +18,25 @@ from app.schemas.delivery_boy_schema import (
     WalletTransactionListResponse,
     EarningsSummaryResponse,
     NotificationListResponse,
+    DeliveryWithdrawalRequest,
 )
 
 router = APIRouter()
+
+
+# ── State ─────────────────────────────────────────────────
+
+@router.get(
+    "/me/state",
+    summary="Delivery Partner Account State",
+    description=(
+        "Single source of truth for app navigation. `next_step` is one of `account_inactive`, "
+        "`personal_info`, `documents`, `vehicle`, `payout`, `application_rejected`, "
+        "`awaiting_approval`, `dashboard`."
+    ),
+)
+def get_state(db: Session = Depends(get_db), current=Depends(get_delivery_session)):
+    return DeliveryBoyAccountService.get_state(db, current["delivery_boy_id"])
 
 
 # ── Documents ─────────────────────────────────────────────
@@ -27,16 +45,9 @@ router = APIRouter()
     "/documents",
     response_model=DeliveryBoyDocumentListResponse,
     summary="List My Documents",
-    description=(
-        "**Fetch all KYC documents uploaded by this delivery boy.**\n\n"
-        "Each document has a `status`: `pending` (awaiting review), `verified`, or `rejected`.\n\n"
-        "**When to call:** On the Upload Documents screen to show what's already uploaded."
-    )
+    description="KYC documents with review `status` (`pending`, `verified`, `rejected`) and reviewer `remarks`.",
 )
-def list_documents(
-    db: Session = Depends(get_db),
-    current=Depends(get_current_delivery_boy)
-):
+def list_documents(db: Session = Depends(get_db), current=Depends(get_active_delivery_boy)):
     return DeliveryBoyAccountService.list_documents(db, current["delivery_boy_id"])
 
 
@@ -45,40 +56,30 @@ def list_documents(
     response_model=DeliveryBoyDocumentUploadResponse,
     summary="Upload a Document",
     description=(
-        "**Upload or replace a KYC document.**\n\n"
-        "Send `multipart/form-data` with a `document_type` field "
-        "(`aadhaar` | `pan` | `driving_license` | `vehicle_rc`) and the image as `file`. "
-        "Re-uploading the same type replaces the previous file and resets status to `pending`.\n\n"
-        "**When to call:** From the Upload Documents onboarding step."
-    )
+        "`multipart/form-data` with `document_type` (`aadhaar` | `pan` | `driving_license` | `vehicle_rc`) "
+        "and `file` (JPEG / PNG / WEBP / PDF, max 5 MB). Re-uploading replaces the file and resets the "
+        "review to `pending`. Files are private: only the owner and Orleeno admins can view them."
+    ),
+    dependencies=[Depends(limit_by_ip("delivery_doc_upload", 30, 3600))],
 )
-async def upload_document(
+def upload_document(
     document_type: str = Form(..., description="aadhaar | pan | driving_license | vehicle_rc"),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current=Depends(get_current_delivery_boy)
+    current=Depends(get_active_delivery_boy)
 ):
-    return DeliveryBoyAccountService.upload_document(
-        db, current["delivery_boy_id"], document_type, file
-    )
+    return DeliveryBoyAccountService.upload_document(db, current["delivery_boy_id"], document_type, file)
+
+
+@router.get("/documents/{document_id}/file", summary="View My Document File")
+def get_document_file(document_id: UUID, db: Session = Depends(get_db), current=Depends(get_active_delivery_boy)):
+    return DeliveryBoyAccountService.document_file(db, current["delivery_boy_id"], document_id)
 
 
 # ── Payout details ────────────────────────────────────────
 
-@router.get(
-    "/payout-details",
-    response_model=GetPayoutDetailsResponse,
-    summary="Get My Payout Details",
-    description=(
-        "**Fetch saved bank account / UPI payout details.**\n\n"
-        "`payout_details` is `null` until the delivery boy saves them once.\n\n"
-        "**When to call:** To pre-fill the Bank & UPI screen."
-    )
-)
-def get_payout_details(
-    db: Session = Depends(get_db),
-    current=Depends(get_current_delivery_boy)
-):
+@router.get("/payout-details", response_model=GetPayoutDetailsResponse, summary="Get My Payout Details")
+def get_payout_details(db: Session = Depends(get_db), current=Depends(get_active_delivery_boy)):
     return DeliveryBoyAccountService.get_payout_details(db, current["delivery_boy_id"])
 
 
@@ -86,21 +87,14 @@ def get_payout_details(
     "/payout-details",
     response_model=UpdatePayoutDetailsResponse,
     summary="Save My Payout Details",
-    description=(
-        "**Create or update bank account / UPI details for payouts.**\n\n"
-        "Partial update: only the fields you send are changed. "
-        "A delivery boy can save just a UPI ID, just bank details, or both.\n\n"
-        "**When to call:** From the Bank & UPI onboarding step or profile settings."
-    )
+    description="Partial update: a UPI ID, bank account details, or both.",
 )
 def update_payout_details(
     payload: UpdatePayoutDetailsRequest,
     db: Session = Depends(get_db),
-    current=Depends(get_current_delivery_boy)
+    current=Depends(get_active_delivery_boy)
 ):
-    return DeliveryBoyAccountService.update_payout_details(
-        db, current["delivery_boy_id"], payload
-    )
+    return DeliveryBoyAccountService.update_payout_details(db, current["delivery_boy_id"], payload)
 
 
 # ── Wallet & earnings ─────────────────────────────────────
@@ -109,105 +103,70 @@ def update_payout_details(
     "/wallet",
     response_model=GetWalletResponse,
     summary="Get My Wallet",
-    description=(
-        "**Fetch the delivery boy's wallet balance and lifetime totals.**\n\n"
-        "The wallet is credited automatically on every completed delivery.\n\n"
-        "**When to call:** On the Wallet screen."
-    )
+    description="Credited with the configured delivery payout for every completed delivery.",
 )
-def get_wallet(
-    db: Session = Depends(get_db),
-    current=Depends(get_current_delivery_boy)
-):
+def get_wallet(db: Session = Depends(get_db), current=Depends(get_active_delivery_boy)):
     return DeliveryBoyAccountService.get_wallet(db, current["delivery_boy_id"])
 
 
-@router.get(
-    "/wallet/transactions",
-    response_model=WalletTransactionListResponse,
-    summary="List My Wallet Transactions",
-    description=(
-        "**Fetch wallet transaction history, newest first.**\n\n"
-        "Filter by `type` (`credit` | `debit`). Each credit references the delivered "
-        "order via `reference_id`/`reference_type`.\n\n"
-        "**When to call:** On the Transaction History screen."
-    )
-)
+@router.get("/wallet/transactions", response_model=WalletTransactionListResponse, summary="List My Wallet Transactions")
 def list_wallet_transactions(
     type: Optional[str] = Query(None, description="credit | debit"),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    current=Depends(get_current_delivery_boy)
+    current=Depends(get_active_delivery_boy)
 ):
-    return DeliveryBoyAccountService.get_transactions(
-        db, current["delivery_boy_id"], txn_type=type, limit=limit
-    )
+    return DeliveryBoyAccountService.get_transactions(db, current["delivery_boy_id"], txn_type=type, limit=limit)
+
+
+@router.post(
+    "/wallet/withdraw",
+    summary="Request a Withdrawal",
+    description=(
+        "Moves the amount from the balance into a pending withdrawal request. An Orleeno admin pays it "
+        "to the saved payout details (manual transfer in this phase) or rejects it, which returns the amount."
+    ),
+    dependencies=[Depends(limit_by_ip("delivery_withdraw", 10, 3600))],
+)
+def request_withdrawal(
+    payload: DeliveryWithdrawalRequest,
+    db: Session = Depends(get_db),
+    current=Depends(get_active_delivery_boy)
+):
+    return DeliveryBoyAccountService.request_withdrawal(db, current["delivery_boy_id"], payload)
+
+
+@router.get("/wallet/withdrawals", summary="My Withdrawal Requests")
+def list_withdrawals(db: Session = Depends(get_db), current=Depends(get_active_delivery_boy)):
+    return DeliveryBoyAccountService.list_withdrawals(db, current["delivery_boy_id"])
 
 
 @router.get(
     "/earnings",
     response_model=EarningsSummaryResponse,
     summary="Get My Earnings Summary",
-    description=(
-        "**Earnings dashboard numbers: today, last 7 days, and this calendar month.**\n\n"
-        "`deliveries` counts payout credits in the period; `earnings` sums them. "
-        "Also returns the current wallet snapshot.\n\n"
-        "**When to call:** On the Earnings screen."
-    )
+    description="Delivery payouts today, in the last 7 days and this calendar month (business time zone).",
 )
-def get_earnings(
-    db: Session = Depends(get_db),
-    current=Depends(get_current_delivery_boy)
-):
+def get_earnings(db: Session = Depends(get_db), current=Depends(get_active_delivery_boy)):
     return DeliveryBoyAccountService.get_earnings_summary(db, current["delivery_boy_id"])
 
 
 # ── Notifications ─────────────────────────────────────────
 
-@router.get(
-    "/notifications",
-    response_model=NotificationListResponse,
-    summary="List My Notifications",
-    description=(
-        "**Fetch notifications for this delivery boy, newest first.**\n\n"
-        "Created automatically when an order is assigned and when a payout is credited.\n\n"
-        "**When to call:** On the Notifications screen; poll or refresh on app focus."
-    )
-)
+@router.get("/notifications", response_model=NotificationListResponse, summary="List My Notifications")
 def list_notifications(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    current=Depends(get_current_delivery_boy)
+    current=Depends(get_delivery_session)
 ):
-    return DeliveryBoyAccountService.list_notifications(
-        db, current["delivery_boy_id"], limit=limit
-    )
+    return DeliveryBoyAccountService.list_notifications(db, current["delivery_boy_id"], limit=limit)
 
 
-@router.put(
-    "/notifications/read-all",
-    summary="Mark All Notifications Read",
-    description="**Mark every unread notification as read.**"
-)
-def mark_all_notifications_read(
-    db: Session = Depends(get_db),
-    current=Depends(get_current_delivery_boy)
-):
-    return DeliveryBoyAccountService.mark_all_notifications_read(
-        db, current["delivery_boy_id"]
-    )
+@router.put("/notifications/read-all", summary="Mark All Notifications Read")
+def mark_all_notifications_read(db: Session = Depends(get_db), current=Depends(get_delivery_session)):
+    return DeliveryBoyAccountService.mark_all_notifications_read(db, current["delivery_boy_id"])
 
 
-@router.put(
-    "/notifications/{notification_id}/read",
-    summary="Mark a Notification Read",
-    description="**Mark a single notification as read.**"
-)
-def mark_notification_read(
-    notification_id: str,
-    db: Session = Depends(get_db),
-    current=Depends(get_current_delivery_boy)
-):
-    return DeliveryBoyAccountService.mark_notification_read(
-        db, current["delivery_boy_id"], notification_id
-    )
+@router.put("/notifications/{notification_id}/read", summary="Mark a Notification Read")
+def mark_notification_read(notification_id: UUID, db: Session = Depends(get_db), current=Depends(get_delivery_session)):
+    return DeliveryBoyAccountService.mark_notification_read(db, current["delivery_boy_id"], notification_id)

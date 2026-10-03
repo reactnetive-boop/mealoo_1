@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.rate_limit import limit_by_ip
+from app.dependencies.auth_dependency import get_delivery_session
 from app.services.delivery_boy_auth_service import DeliveryBoyAuthService
 from app.schemas.delivery_boy_schema import (
     DeliveryBoyRegisterRequest,
@@ -9,8 +11,10 @@ from app.schemas.delivery_boy_schema import (
     DeliveryBoyVerifyOTPRequest,
     DeliveryBoyLoginRequest,
     DeliveryBoyAuthResponse,
+    DeliveryBoyForgotPasswordRequest,
+    DeliveryBoyResetPasswordRequest,
 )
-from app.schemas.auth_schema import LogoutResponse
+from app.schemas.auth_schema import LogoutResponse, ChangePasswordRequest
 
 router = APIRouter()
 
@@ -20,27 +24,13 @@ router = APIRouter()
     response_model=DeliveryBoyRegisterResponse,
     summary="Delivery Boy Register – Step 1: Send OTP",
     description=(
-        "**First step of delivery boy registration.**\n\n"
-        "Provide a mobile number and password. An OTP is sent to the mobile. "
-        "The delivery boy account is pre-assigned to a provider by the admin. "
-        "Call `/delivery/verify-otp` next with the received OTP.\n\n"
-        "**Flow:** `POST /delivery/register` → `POST /delivery/verify-otp` → `POST /delivery/login`"
-    )
+        "Rejected with 409 if the number is already registered. The OTP is echoed only "
+        "outside production (no SMS gateway yet)."
+    ),
+    dependencies=[Depends(limit_by_ip("delivery_otp", 10, 600))],
 )
-def register(
-    payload: DeliveryBoyRegisterRequest,
-    db: Session = Depends(get_db)
-):
-    try:
-        return DeliveryBoyAuthService.generate_otp(
-            db,
-            payload.mobile_number,
-            payload.password
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+def register(payload: DeliveryBoyRegisterRequest, db: Session = Depends(get_db)):
+    return DeliveryBoyAuthService.generate_otp(db, payload.mobile_number, payload.password)
 
 
 @router.post(
@@ -48,16 +38,12 @@ def register(
     response_model=DeliveryBoyAuthResponse,
     summary="Delivery Boy Register – Step 2: Verify OTP",
     description=(
-        "**Second step of delivery boy registration.**\n\n"
-        "Submit the OTP received during registration to activate the account. "
-        "On success the account is active and the delivery boy can log in.\n\n"
-        "**Flow:** `POST /delivery/register` → `POST /delivery/verify-otp` → `POST /delivery/login`"
-    )
+        "Creates the partner account and signs in. New partners are 'pending' until an admin "
+        "verifies their documents and approves them; call `GET /delivery/me/state` next."
+    ),
+    dependencies=[Depends(limit_by_ip("delivery_verify", 20, 600))],
 )
-def verify_otp(
-    payload: DeliveryBoyVerifyOTPRequest,
-    db: Session = Depends(get_db)
-):
+def verify_otp(payload: DeliveryBoyVerifyOTPRequest, db: Session = Depends(get_db)):
     return DeliveryBoyAuthService.verify_otp(db, payload.mobile_number, payload.otp)
 
 
@@ -65,31 +51,57 @@ def verify_otp(
     "/login",
     response_model=DeliveryBoyAuthResponse,
     summary="Delivery Boy Login",
-    description=(
-        "**Login for delivery personnel using mobile number and password.**\n\n"
-        "Returns a JWT `access_token`. Include this in all delivery API calls as "
-        "`Authorization: Bearer <token>`.\n\n"
-        "**After login:** Call `GET /delivery/profile` to load the delivery boy's details "
-        "and `GET /delivery/orders` to see today's assigned deliveries."
-    )
+    dependencies=[Depends(limit_by_ip("delivery_login", 20, 300))],
 )
-def login(
-    payload: DeliveryBoyLoginRequest,
-    db: Session = Depends(get_db)
-):
+def login(payload: DeliveryBoyLoginRequest, db: Session = Depends(get_db)):
     return DeliveryBoyAuthService.login(db, payload.mobile_number, payload.password)
+
+
+@router.post(
+    "/forgot-password/send-otp",
+    summary="Forgot Password – Step 1",
+    dependencies=[Depends(limit_by_ip("delivery_forgot", 10, 600))],
+)
+def forgot_password_send_otp(payload: DeliveryBoyForgotPasswordRequest, db: Session = Depends(get_db)):
+    return DeliveryBoyAuthService.forgot_password_send_otp(db, payload.mobile_number)
+
+
+@router.post(
+    "/forgot-password/verify-otp",
+    summary="Forgot Password – Step 2 (returns reset_token)",
+    dependencies=[Depends(limit_by_ip("delivery_forgot_verify", 20, 600))],
+)
+def forgot_password_verify(payload: DeliveryBoyVerifyOTPRequest, db: Session = Depends(get_db)):
+    return DeliveryBoyAuthService.forgot_password_verify_otp(db, payload.mobile_number, payload.otp)
+
+
+@router.post(
+    "/forgot-password/reset",
+    summary="Forgot Password – Step 3",
+    dependencies=[Depends(limit_by_ip("delivery_reset", 10, 600))],
+)
+def forgot_password_reset(payload: DeliveryBoyResetPasswordRequest, db: Session = Depends(get_db)):
+    return DeliveryBoyAuthService.reset_password(
+        db, payload.mobile_number, payload.reset_token, payload.new_password, payload.confirm_password
+    )
+
+
+@router.put("/change-password", summary="Change Password (signs out other sessions)")
+def change_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current=Depends(get_delivery_session),
+):
+    return DeliveryBoyAuthService.change_password(
+        db, current["delivery_boy_id"], payload.current_password, payload.new_password
+    )
 
 
 @router.post(
     "/logout",
     response_model=LogoutResponse,
     summary="Delivery Boy Logout",
-    description=(
-        "**Invalidate the current delivery boy session.**\n\n"
-        "Call this when the delivery boy logs out of the app. "
-        "The client should discard the stored token after this call."
-    )
+    description="Invalidates every token issued so far and marks the partner offline.",
 )
-async def logout_delivery_boy():
-
-    return await DeliveryBoyAuthService.logout_delivery_boy()
+def logout_delivery_boy(db: Session = Depends(get_db), current=Depends(get_delivery_session)):
+    return DeliveryBoyAuthService.logout_delivery_boy(db, current["delivery_boy_id"])

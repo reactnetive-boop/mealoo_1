@@ -7,20 +7,26 @@ from app.core.database import SessionLocal
 from app.models.admin_user_model import AdminUser
 from app.core.security import hash_password
 
-ADMIN_USERS = [
-    {
-        "full_name": "Rahul Verma",
-        "email": "rahul.admin@mealoo.in",
-        "password": "Admin@1234",
-        "role": "super_admin",
-    },
-    {
-        "full_name": "Priya Sharma",
-        "email": "priya.admin@mealoo.in",
-        "password": "Admin@5678",
-        "role": "moderator",
-    },
-]
+# Credentials come from the environment, never from source control:
+#   ADMIN_SEED_EMAIL, ADMIN_SEED_PASSWORD (12+ chars), ADMIN_SEED_NAME,
+#   ADMIN_SEED_ROLE (super_admin | moderator, default moderator)
+def _admin_users():
+    email = os.getenv("ADMIN_SEED_EMAIL")
+    password = os.getenv("ADMIN_SEED_PASSWORD")
+    if not email or not password:
+        print("ADMIN_SEED_EMAIL / ADMIN_SEED_PASSWORD not set - no admin seeded.")
+        return []
+    if len(password) < 12:
+        raise SystemExit("ADMIN_SEED_PASSWORD must be at least 12 characters")
+    role = os.getenv("ADMIN_SEED_ROLE", "moderator")
+    if role not in ("super_admin", "moderator"):
+        raise SystemExit("ADMIN_SEED_ROLE must be super_admin or moderator")
+    return [{
+        "full_name": os.getenv("ADMIN_SEED_NAME", "Orleeno Admin"),
+        "email": email.strip().lower(),
+        "password": password,
+        "role": role,
+    }]
 
 
 def seed():
@@ -30,7 +36,7 @@ def seed():
         inserted = 0
         skipped = 0
 
-        for user in ADMIN_USERS:
+        for user in _admin_users():
             exists = (
                 db.query(AdminUser)
                 .filter(AdminUser.email == user["email"])

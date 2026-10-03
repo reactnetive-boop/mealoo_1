@@ -1,12 +1,18 @@
 from typing import List, Optional
 from uuid import UUID
 from decimal import Decimal
-from datetime import date, datetime
+from datetime import date, date as Date, datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
-# ── Subscription Order ────────────────────────────────────
+# ── Subscription meal (kitchen view: never carries the customer's code) ──
+
+class OrderPackageLine(BaseModel):
+    package_id: UUID
+    package_name: str
+    quantity: int
+
 
 class SubscriptionOrderResponse(BaseModel):
 
@@ -23,7 +29,16 @@ class SubscriptionOrderResponse(BaseModel):
     is_free_skip: bool
     delivered_at: Optional[datetime]
     delivery_notes: Optional[str]
-    otp_for_delivery: Optional[str]
+    cancel_reason: Optional[str] = None
+    # Read out to the delivery partner at hand-over
+    pickup_code: Optional[str] = None
+    delivery_boy_reference_id: Optional[UUID] = None
+    delivery_boy_name: Optional[str] = None
+    customer_name: Optional[str] = None
+    delivery_area: Optional[str] = None
+    packages: List[OrderPackageLine] = []
+    # Status changes this kitchen may make next
+    next_actions: List[str] = []
     created_at: Optional[datetime]
 
 
@@ -45,6 +60,7 @@ class ProviderSubscriptionResponse(BaseModel):
     end_date: date
     total_amount: Decimal
     discount_amount: Decimal
+    charges_amount: Decimal = Decimal("0")
     final_amount: Decimal
     free_skips_total: int
     free_skips_used: int
@@ -55,42 +71,36 @@ class ProviderSubscriptionResponse(BaseModel):
 
 
 class ProviderSubscriptionListResponse(BaseModel):
-
     success: bool
     total: int
     subscriptions: List[ProviderSubscriptionResponse]
 
 
 class ProviderSubscriptionDetailResponse(BaseModel):
-
     success: bool
     subscription: ProviderSubscriptionResponse
     orders: List[SubscriptionOrderResponse]
 
 
-# ── Subscription Orders ───────────────────────────────────
-
 class SubscriptionOrderListResponse(BaseModel):
-
     success: bool
+    date: Optional[Date] = None
     total: int
     orders: List[SubscriptionOrderResponse]
 
 
 class UpdateOrderStatusRequest(BaseModel):
-
-    status: str
+    status: str = Field(..., max_length=30)
 
 
 class UpdateOrderStatusResponse(BaseModel):
-
     success: bool
     message: str
     order_id: UUID
     status: str
 
 
-# ── Extra Orders ──────────────────────────────────────────
+# ── One-time orders ───────────────────────────────────────
 
 class ProviderExtraOrderResponse(BaseModel):
 
@@ -101,17 +111,24 @@ class ProviderExtraOrderResponse(BaseModel):
     vendor_reference_id: UUID
     address_reference_id: UUID
     package_reference_id: UUID
+    package_name: Optional[str] = None
     quantity: int
     unit_price: Decimal
     total_price: Decimal
     delivery_date: date
     meal_slot: str
     status: str
+    cancel_reason: Optional[str] = None
+    pickup_code: Optional[str] = None
+    delivery_boy_reference_id: Optional[UUID] = None
+    delivery_boy_name: Optional[str] = None
+    customer_name: Optional[str] = None
+    delivery_area: Optional[str] = None
+    next_actions: List[str] = []
     created_at: Optional[datetime]
 
 
 class ProviderExtraOrderListResponse(BaseModel):
-
     success: bool
     total: int
     orders: List[ProviderExtraOrderResponse]
@@ -120,18 +137,23 @@ class ProviderExtraOrderListResponse(BaseModel):
 # ── Daily Food Calculator ─────────────────────────────────
 
 class FoodSummaryItemResponse(BaseModel):
-
     item_name: str
     quantity_per_serving: str
     total_servings: int
 
 
-class DailyFoodSummaryResponse(BaseModel):
+class FoodSummaryPackageResponse(BaseModel):
+    package_id: UUID
+    package_name: Optional[str]
+    meals: int
 
+
+class DailyFoodSummaryResponse(BaseModel):
     success: bool
-    date: date
+    date: Date
     meal_slot: str
     subscription_orders_count: int
     extra_orders_count: int
     total_orders_count: int
+    packages: List[FoodSummaryPackageResponse] = []
     items: List[FoodSummaryItemResponse]

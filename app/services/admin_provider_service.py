@@ -1,24 +1,76 @@
-from decimal import Decimal
 from datetime import date as Date
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit, business_event
+from app.core.clock import now_utc, today_local
+from app.core.errors import DomainError
+from app.domain import capacity, ledger
+from app.domain.eligibility import serviceable_pincode
+from app.domain.pricing import money
 from app.models.provider_model import Provider
 from app.models.subscription_model import Subscription
 from app.models.menu_package_model import MenuPackage
 from app.models.provider_wallet_model import ProviderWallet
 from app.models.provider_wallet_transaction_model import ProviderWalletTransaction
 from app.models.provider_unavailability_model import ProviderUnavailability
-from app.repositories.provider_wallet_repository import ProviderWalletRepository
-from app.repositories.package_capacity_repository import PackageCapacityRepository
+from app.services.admin_views import provider_view, package_admin_view, subscription_admin_view
+from app.services.auth_common import revoke_sessions
+from app.services.provider_service import missing_profile_fields
+
+APPROVAL_STATUSES = ("pending", "approved", "rejected")
+
+
+def _provider(db: Session, provider_id, lock: bool = False) -> Provider:
+    q = db.query(Provider).filter(Provider.provider_id == provider_id)
+    if lock:
+        q = q.with_for_update()
+    provider = q.first()
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    return provider
+
+
+def _open_subscription_count(db: Session, provider_id) -> int:
+    return db.query(Subscription).filter(
+        Subscription.vendor_reference_id == provider_id,
+        Subscription.status.in_(("active", "paused")),
+    ).count()
+
+
+def _wallet_view(w) -> dict | None:
+    if w is None:
+        return None
+    return {
+        "provider_wallet_id": w.provider_wallet_id,
+        "balance": w.balance,
+        "total_earned": w.total_earned,
+        "total_withdrawn": w.total_withdrawn,
+    }
+
+
+def _txn_view(t) -> dict:
+    return {
+        "provider_wallet_transaction_id": t.provider_wallet_transaction_id,
+        "type": t.type,
+        "reason": t.reason,
+        "amount": t.amount,
+        "balance_before": t.balance_before,
+        "balance_after": t.balance_after,
+        "reference_type": t.reference_type,
+        "reference_id": t.reference_id,
+        "description": t.description,
+        "created_at": t.created_at,
+    }
 
 
 class AdminProviderService:
 
     @staticmethod
     def list_providers(db: Session, search: str = None, pincode: int = None,
-                       is_profile_completed: bool = None, page: int = 1, limit: int = 20):
+                       is_profile_completed: bool = None, approval_status: str = None,
+                       is_active: bool = None, page: int = 1, limit: int = 20):
         query = db.query(Provider)
         if search:
             pattern = f"%{search}%"
@@ -31,20 +83,24 @@ class AdminProviderService:
             query = query.filter(Provider.pincode == pincode)
         if is_profile_completed is not None:
             query = query.filter(Provider.is_profile_completed == is_profile_completed)
+        if approval_status:
+            if approval_status not in APPROVAL_STATUSES:
+                raise DomainError(f"approval_status must be one of: {', '.join(APPROVAL_STATUSES)}")
+            query = query.filter(Provider.approval_status == approval_status)
+        if is_active is not None:
+            query = query.filter(Provider.is_active == is_active)
 
         total = query.count()
         providers = query.order_by(Provider.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
-        return {"success": True, "total": total, "page": page, "providers": providers}
+        return {"success": True, "total": total, "page": page, "providers": [provider_view(p) for p in providers]}
 
     @staticmethod
     def get_provider_detail(db: Session, provider_id: str):
-        provider = db.query(Provider).filter(Provider.provider_id == provider_id).first()
-        if not provider:
-            raise HTTPException(status_code=404, detail="Provider not found")
+        provider = _provider(db, provider_id)
 
         packages = (
             db.query(MenuPackage)
-            .filter(MenuPackage.provider_id == provider_id)
+            .filter(MenuPackage.provider_id == provider_id, MenuPackage.is_predefined == False)  # noqa: E712
             .order_by(MenuPackage.created_at.desc())
             .all()
         )
@@ -66,98 +122,151 @@ class AdminProviderService:
 
         return {
             "success": True,
-            "provider": provider,
-            "packages": packages,
-            "recent_subscriptions": subscriptions,
-            "wallet": wallet,
-            "recent_transactions": txns
+            "provider": provider_view(provider),
+            "missing_profile_fields": missing_profile_fields(provider),
+            "packages": [package_admin_view(p) for p in packages],
+            "recent_subscriptions": [subscription_admin_view(s) for s in subscriptions],
+            "wallet": _wallet_view(wallet),
+            "recent_transactions": [_txn_view(t) for t in txns],
         }
 
-    @staticmethod
-    def update_provider(db: Session, provider_id: str, payload):
-        provider = db.query(Provider).filter(Provider.provider_id == provider_id).first()
-        if not provider:
-            raise HTTPException(status_code=404, detail="Provider not found")
+    # ── Approval ──────────────────────────────────────────
 
+    @staticmethod
+    def set_approval(db: Session, provider_id: str, *, approve: bool, note: str | None, admin_id: str, ip: str | None = None):
+        provider = _provider(db, provider_id, lock=True)
+        before = provider_view(provider)
+
+        if approve:
+            missing = missing_profile_fields(provider)
+            if missing:
+                raise DomainError(f"Kitchen profile is incomplete: {', '.join(missing)}")
+            if not serviceable_pincode(db, provider.pincode):
+                raise DomainError("The kitchen's pincode is not an active Orleeno service area")
+            provider.approval_status = "approved"
+            provider.approval_note = note
+            provider.approved_at = now_utc()
+            provider.approved_by = admin_id
+        else:
+            if not note:
+                raise DomainError("Give the kitchen a reason for the rejection")
+            if provider.approval_status == "approved" and _open_subscription_count(db, provider_id):
+                raise DomainError(
+                    "This kitchen has running subscriptions. Deactivate or move them before revoking approval."
+                )
+            provider.approval_status = "rejected"
+            provider.approval_note = note
+            provider.approved_at = None
+            provider.approved_by = None
+
+        record_audit(
+            db, table="provider.providers", record_id=provider.provider_id,
+            old=before, new=provider_view(provider), actor_id=admin_id, actor_type="admin", ip=ip,
+        )
+        db.commit()
+        business_event("provider.approval", provider_id=provider_id, approved=approve, admin_id=admin_id)
+        return {
+            "success": True,
+            "message": "Kitchen approved" if approve else "Kitchen application rejected",
+            "provider": provider_view(provider),
+        }
+
+    # ── Edit ──────────────────────────────────────────────
+
+    @staticmethod
+    def update_provider(db: Session, provider_id: str, payload, admin_id: str, ip: str | None = None):
+        provider = _provider(db, provider_id, lock=True)
+        before = provider_view(provider)
         update_data = payload.model_dump(exclude_unset=True)
 
+        if "pincode" in update_data and update_data["pincode"] is not None:
+            if update_data["pincode"] != provider.pincode and _open_subscription_count(db, provider_id):
+                raise DomainError("The pincode cannot change while the kitchen has running subscriptions")
+            if not serviceable_pincode(db, update_data["pincode"]):
+                raise DomainError("That pincode is not an active Orleeno service area")
+
         # a lowered daily limit must still cover meals already committed
-        new_quota = update_data.get("daily_meal_quota")
-        if new_quota is not None:
-            PackageCapacityRepository.validate_provider_quota_reduction(
-                db, provider_id, new_quota
-            )
+        if update_data.get("daily_meal_quota") is not None:
+            peak = capacity.peak_future_demand(db, provider_id, today_local())
+            if update_data["daily_meal_quota"] < peak:
+                raise DomainError(
+                    f"The kitchen already has {peak} meals booked for a single meal time; "
+                    "the daily limit cannot be lower than that"
+                )
 
         for key, value in update_data.items():
             setattr(provider, key, value)
+        provider.is_profile_completed = not missing_profile_fields(provider)
+
+        record_audit(
+            db, table="provider.providers", record_id=provider.provider_id,
+            old=before, new=provider_view(provider), actor_id=admin_id, actor_type="admin", ip=ip,
+        )
         db.commit()
         db.refresh(provider)
-
-        return {"success": True, "message": "Provider updated", "provider": provider}
+        return {"success": True, "message": "Provider updated", "provider": provider_view(provider)}
 
     @staticmethod
     def get_daily_quota_status(db: Session, provider_id: str, for_date: Date = None):
-        provider = db.query(Provider).filter(Provider.provider_id == provider_id).first()
-        if not provider:
-            raise HTTPException(status_code=404, detail="Provider not found")
-
-        status = PackageCapacityRepository.get_provider_quota_status(
-            db, provider_id, for_date or Date.today()
-        )
+        provider = _provider(db, provider_id)
+        status = capacity.quota_status(db, provider_id, for_date or today_local())
         return {
             "success": True,
             "provider_id": provider.provider_id,
             "business_name": provider.business_name,
-            **status
+            **status,
         }
 
     @staticmethod
-    def set_provider_active(db: Session, provider_id: str, is_active: bool):
-        provider = db.query(Provider).filter(Provider.provider_id == provider_id).first()
-        if not provider:
-            raise HTTPException(status_code=404, detail="Provider not found")
+    def set_provider_active(db: Session, provider_id: str, is_active: bool, admin_id: str, ip: str | None = None):
+        provider = _provider(db, provider_id, lock=True)
+        before = provider_view(provider)
 
         if not is_active:
-            active_subs = db.query(Subscription).filter(
-                Subscription.vendor_reference_id == provider_id,
-                Subscription.status == "active"
-            ).count()
-            if active_subs:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot deactivate provider with {active_subs} active subscription(s)."
+            open_subs = _open_subscription_count(db, provider_id)
+            if open_subs:
+                raise DomainError(
+                    f"Cannot deactivate a kitchen with {open_subs} running subscription(s). "
+                    "Stop new orders (accepting-orders) and move or cancel those subscriptions first."
                 )
+            # deactivation also signs the kitchen out everywhere
+            revoke_sessions(provider)
 
         provider.is_active = is_active
+        record_audit(
+            db, table="provider.providers", record_id=provider.provider_id,
+            old=before, new=provider_view(provider), actor_id=admin_id, actor_type="admin", ip=ip,
+        )
         db.commit()
-        action = "activated" if is_active else "deactivated"
-        return {"success": True, "message": f"Provider {action}"}
+        return {"success": True, "message": f"Provider {'activated' if is_active else 'deactivated'}"}
 
     @staticmethod
-    def toggle_accepting_orders(db: Session, provider_id: str, accepting: bool):
-        provider = db.query(Provider).filter(Provider.provider_id == provider_id).first()
-        if not provider:
-            raise HTTPException(status_code=404, detail="Provider not found")
+    def toggle_accepting_orders(db: Session, provider_id: str, accepting: bool, admin_id: str, ip: str | None = None):
+        provider = _provider(db, provider_id, lock=True)
+        before = provider_view(provider)
         provider.is_accepting_orders = accepting
+        record_audit(
+            db, table="provider.providers", record_id=provider.provider_id,
+            old=before, new=provider_view(provider), actor_id=admin_id, actor_type="admin", ip=ip,
+        )
         db.commit()
-        state = "now accepting orders" if accepting else "not accepting orders"
+        state = "now accepting orders" if accepting else "not accepting new orders"
         return {"success": True, "message": f"Provider is {state}"}
 
+    # ── Holidays ──────────────────────────────────────────
+
     @staticmethod
-    def mark_unavailable(db: Session, provider_id: str, payload):
-        provider = db.query(Provider).filter(Provider.provider_id == provider_id).first()
-        if not provider:
-            raise HTTPException(status_code=404, detail="Provider not found")
+    def mark_unavailable(db: Session, provider_id: str, payload, admin_id: str, ip: str | None = None):
+        _provider(db, provider_id)
+        if payload.date < today_local():
+            raise DomainError("Holidays cannot be added for past dates")
 
         existing = db.query(ProviderUnavailability).filter(
             ProviderUnavailability.provider_reference_id == provider_id,
             ProviderUnavailability.unavailable_date == payload.date
         ).first()
         if existing:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Provider is already marked unavailable on {payload.date}"
-            )
+            raise HTTPException(status_code=409, detail=f"Provider is already marked unavailable on {payload.date}")
 
         record = ProviderUnavailability(
             provider_reference_id=provider_id,
@@ -165,71 +274,102 @@ class AdminProviderService:
             reason=payload.reason,
         )
         db.add(record)
+        record_audit(
+            db, table="provider.provider_unavailability", record_id=provider_id, operation="I",
+            new={"date": payload.date, "reason": payload.reason}, actor_id=admin_id, actor_type="admin", ip=ip,
+        )
         db.commit()
         db.refresh(record)
-        return {"success": True, "message": f"Provider marked unavailable on {payload.date}", "record": record}
+        return {
+            "success": True,
+            "message": (
+                f"Provider marked unavailable on {payload.date}. Reassign that day's orders to another "
+                "kitchen; anything left at the cut-off is cancelled and refunded automatically."
+            ),
+            "record": {
+                "provider_unavailability_id": record.provider_unavailability_id,
+                "unavailable_date": record.unavailable_date,
+                "reason": record.reason,
+            },
+        }
 
     @staticmethod
-    def remove_unavailability(db: Session, provider_id: str, unavailable_date: Date):
+    def remove_unavailability(db: Session, provider_id: str, unavailable_date: Date, admin_id: str, ip: str | None = None):
         record = db.query(ProviderUnavailability).filter(
             ProviderUnavailability.provider_reference_id == provider_id,
             ProviderUnavailability.unavailable_date == unavailable_date
         ).first()
         if not record:
             raise HTTPException(status_code=404, detail="Unavailability record not found")
+        if unavailable_date < today_local():
+            raise DomainError("Past holidays cannot be removed")
         db.delete(record)
+        record_audit(
+            db, table="provider.provider_unavailability", record_id=provider_id, operation="D",
+            old={"date": unavailable_date, "reason": record.reason}, actor_id=admin_id, actor_type="admin", ip=ip,
+        )
         db.commit()
         return {"success": True, "message": f"Unavailability removed for {unavailable_date}"}
 
     @staticmethod
     def list_unavailability(db: Session, provider_id: str):
-        provider = db.query(Provider).filter(Provider.provider_id == provider_id).first()
-        if not provider:
-            raise HTTPException(status_code=404, detail="Provider not found")
+        _provider(db, provider_id)
         records = (
             db.query(ProviderUnavailability)
             .filter(ProviderUnavailability.provider_reference_id == provider_id)
             .order_by(ProviderUnavailability.unavailable_date.desc())
             .all()
         )
-        return {"success": True, "total": len(records), "records": records}
-
-    @staticmethod
-    def adjust_wallet(db: Session, provider_id: str, payload, admin_id: str):
-        if payload.type not in ("credit", "debit"):
-            raise HTTPException(status_code=400, detail="type must be 'credit' or 'debit'")
-
-        provider = db.query(Provider).filter(Provider.provider_id == provider_id).first()
-        if not provider:
-            raise HTTPException(status_code=404, detail="Provider not found")
-
-        amount = Decimal(str(payload.amount))
-        wallet = ProviderWalletRepository.get_or_create(db, provider_id)
-        balance_before = Decimal(str(wallet.balance))
-
-        if payload.type == "debit" and amount > balance_before:
-            raise HTTPException(status_code=400, detail=f"Insufficient balance. Available: ₹{balance_before}")
-
-        if payload.type == "credit":
-            ProviderWalletRepository.credit(db, wallet, amount)
-        else:
-            ProviderWalletRepository.debit(db, wallet, amount)
-
-        ProviderWalletRepository.create_transaction(db, {
-            "wallet_reference_id": wallet.provider_wallet_id,
-            "provider_reference_id": provider_id,
-            "type": payload.type,
-            "reason": "manual_credit" if payload.type == "credit" else "adjustment",
-            "amount": amount,
-            "balance_before": balance_before,
-            "balance_after": Decimal(str(wallet.balance)),
-            "description": payload.reason,
-        })
-        db.commit()
-
         return {
             "success": True,
-            "message": f"Provider wallet {payload.type}ed ₹{amount}",
-            "balance_before": balance_before,
-            "balance_after": Decimal(str(wallet.balance))
+            "total": len(records),
+            "records": [
+                {
+                    "provider_unavailability_id": r.provider_unavailability_id,
+                    "unavailable_date": r.unavailable_date,
+                    "reason": r.reason,
+                    "created_at": r.created_at,
+                }
+                for r in records
+            ],
+        }
+
+    # ── Money ─────────────────────────────────────────────
+
+    @staticmethod
+    def adjust_wallet(db: Session, provider_id: str, payload, admin_id: str, idempotency_key: str, ip: str | None = None):
+        if payload.type not in ("credit", "debit"):
+            raise DomainError("type must be 'credit' or 'debit'")
+        _provider(db, provider_id)
+
+        amount = money(payload.amount)
+        txn = ledger.post_provider(
+            db, provider_id,
+            type=payload.type, amount=amount,
+            reason="manual_credit" if payload.type == "credit" else "adjustment",
+            idempotency_key=f"admin_adjust:provider:{idempotency_key}",
+            reference_type="admin_adjustment",
+            description=payload.reason if not payload.description else f"{payload.reason} - {payload.description}",
+        )
+        # The platform funds a manual credit and recovers a manual debit
+        ledger.post_platform(
+            db, entry_type="manual_adjustment",
+            direction="debit" if payload.type == "credit" else "credit",
+            amount=amount, reference_type="provider_wallet_transaction",
+            reference_id=txn.provider_wallet_transaction_id,
+            idempotency_key=f"platform:admin_adjust:provider:{idempotency_key}",
+            description=payload.reason,
+        )
+        record_audit(
+            db, table="provider.provider_wallet_transactions", record_id=txn.provider_wallet_transaction_id,
+            operation="I", new={"provider_id": provider_id, "type": payload.type, "amount": amount, "reason": payload.reason},
+            actor_id=admin_id, actor_type="admin", ip=ip,
+        )
+        db.commit()
+        business_event("wallet.admin_adjust", owner="provider", owner_id=provider_id, type=payload.type, amount=amount, admin_id=admin_id)
+        return {
+            "success": True,
+            "message": f"Provider wallet {payload.type}ed Rs {amount}",
+            "balance_before": txn.balance_before,
+            "balance_after": txn.balance_after,
         }

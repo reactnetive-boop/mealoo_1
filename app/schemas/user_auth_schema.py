@@ -2,22 +2,23 @@ from typing import Optional
 
 from pydantic import BaseModel
 from pydantic import Field
-from pydantic import model_validator
+
+from app.schemas.auth_schema import MOBILE_PATTERN
 
 
 class UserGenerateOTPRequest(BaseModel):
 
-    phone: Optional[str] = Field(
-        None,
-        min_length=10,
-        max_length=15,
-        description="10-15 digit mobile number"
+    phone: str = Field(
+        ...,
+        pattern=MOBILE_PATTERN,
+        description="10 digit Indian mobile number"
     )
 
     email: Optional[str] = Field(
         None,
         max_length=255,
-        description="User email address"
+        pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$",
+        description="Optional email address"
     )
 
     password: str = Field(
@@ -26,19 +27,12 @@ class UserGenerateOTPRequest(BaseModel):
         max_length=64
     )
 
-    @model_validator(mode="after")
-    def check_phone_or_email(self):
-        if not self.phone and not self.email:
-            raise ValueError("Either phone or email is required")
-        return self
-
 
 class UserVerifyOTPRequest(BaseModel):
 
-    phone: Optional[str] = Field(
-        None,
-        min_length=10,
-        max_length=15
+    phone: str = Field(
+        ...,
+        pattern=MOBILE_PATTERN
     )
 
     email: Optional[str] = Field(
@@ -48,15 +42,8 @@ class UserVerifyOTPRequest(BaseModel):
 
     otp: str = Field(
         ...,
-        min_length=6,
-        max_length=6
+        pattern=r"^\d{6}$"
     )
-
-    @model_validator(mode="after")
-    def check_phone_or_email(self):
-        if not self.phone and not self.email:
-            raise ValueError("Either phone or email is required")
-        return self
 
 
 class UserLoginRequest(BaseModel):
@@ -64,12 +51,35 @@ class UserLoginRequest(BaseModel):
     phone: str = Field(
         ...,
         min_length=10,
-        max_length=15,
+        max_length=10,
         description="Registered mobile number"
     )
 
     password: str = Field(
         ...,
-        min_length=8,
+        min_length=1,
         max_length=64
     )
+
+
+class UserForgotPasswordRequest(BaseModel):
+
+    phone: str = Field(..., pattern=MOBILE_PATTERN)
+
+
+class UserForgotPasswordVerifyRequest(BaseModel):
+
+    phone: str = Field(..., pattern=MOBILE_PATTERN)
+
+    otp: str = Field(..., pattern=r"^\d{6}$")
+
+
+class UserResetPasswordRequest(BaseModel):
+
+    phone: str = Field(..., pattern=MOBILE_PATTERN)
+
+    reset_token: str = Field(..., min_length=20, max_length=200)
+
+    new_password: str = Field(..., min_length=8, max_length=64)
+
+    confirm_password: str = Field(..., min_length=8, max_length=64)

@@ -9,9 +9,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, timezone
 
 from app.core.database import Base
+from app.models.mixins import AccountSecurityMixin
 
 
-class User(Base):
+class User(AccountSecurityMixin, Base):
 
     __tablename__ = "users"
 

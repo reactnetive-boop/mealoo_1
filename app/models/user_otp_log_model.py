@@ -75,3 +75,15 @@ class UserOTPLog(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc)
     )
+
+    # Password reset: verifying a reset OTP issues a one-time token (stored
+    # hashed) that the final reset call must present.
+    reset_token_hash = Column(
+        Text,
+        nullable=True
+    )
+
+    reset_token_expires_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )

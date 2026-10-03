@@ -1,356 +1,153 @@
-from datetime import datetime
-from datetime import timedelta,timezone
-
 from sqlalchemy.orm import Session
 
-from app.repositories.otp_repository import (
-    OTPRepository
+from app.core.audit import security_event
+from app.core.errors import DomainError
+from app.core.security import (
+    hash_password,
+    verify_password,
+    burn_password_check,
+    create_access_token,
+    ROLE_PROVIDER,
+)
+from app.models.otp_log_model import OTPLog
+from app.repositories.provider_repository import ProviderRepository
+from app.services.auth_common import (
+    OtpTable,
+    INVALID_CREDENTIALS,
+    issue_otp,
+    consume_otp,
+    issue_reset_token,
+    redeem_reset_token,
+    otp_response,
+    assert_not_locked,
+    register_failed_login,
+    register_successful_login,
+    revoke_sessions,
 )
 
-from app.utils.otp_generator import (
-    generate_otp
-)
+PROVIDER_OTP = OtpTable(model=OTPLog, identity="mobile_number", code="otp", used="is_verified")
 
-from app.core.security import hash_password
-
-from app.repositories.provider_repository import (
-    ProviderRepository
-)
-
-from app.core.security import verify_password
-from app.core.security import create_access_token
 
 class AuthService:
 
     @staticmethod
-    def generate_otp(
-        db: Session,
-        mobile_number: str,
-        password: str
-    ):
+    def generate_otp(db: Session, mobile_number: str, password: str):
+        """Registration step 1. An existing number can never be re-registered."""
 
-        otp = generate_otp()
+        if ProviderRepository.get_by_mobile(db, mobile_number):
+            raise DomainError(
+                "This mobile number is already registered. Please log in or use Forgot Password.",
+                409,
+                code="ALREADY_REGISTERED",
+            )
 
-        hashed_password = hash_password(
-            password
+        code = issue_otp(
+            db, PROVIDER_OTP, mobile_number, "registration",
+            hashed_password=hash_password(password),
         )
+        db.commit()
+        return otp_response(code, mobile_number=mobile_number)
 
-        otp_data = {
+    @staticmethod
+    def verify_otp(db: Session, mobile_number: str, otp: str):
+        """Registration step 2: creates the kitchen account. Never touches an existing one."""
 
+        row = consume_otp(db, PROVIDER_OTP, mobile_number, "registration", otp)
+
+        if ProviderRepository.get_by_mobile(db, mobile_number):
+            db.commit()
+            raise DomainError("This mobile number is already registered. Please log in.", 409, code="ALREADY_REGISTERED")
+
+        provider = ProviderRepository.create_provider(db, {
             "mobile_number": mobile_number,
-
-            "otp": otp,
-
-            "is_verified": False,
-
-            "attempts": 0,
-
-            "expires_at": (
-                datetime.now(timezone.utc)
-                + timedelta(minutes=15)
-            ),
-
-            "hashed_password": hashed_password,
-
-            "purpose": "registration",
-        }
-
-        OTPRepository.create_otp(
-            db,
-            otp_data
-        )
-
-        # TEMPORARY
-        # Later integrate SMS provider
+            "hashed_password": row.hashed_password,
+            "is_mobile_verified": True,
+            "is_profile_completed": False,
+            "approval_status": "pending",
+        })
 
         return {
             "success": True,
-            "mobile_number": mobile_number,
-            "message": "OTP generated successfully",
-            "otp": otp
+            "message": "OTP verified successfully. You can now log in.",
+            "provider_id": str(provider.provider_id),
+            "is_profile_completed": provider.is_profile_completed,
         }
-    
+
     @staticmethod
-    def verify_otp(
-        db: Session,
-        mobile_number: str,
-        otp: str
-    ):
+    def forgot_password_send_otp(db: Session, mobile_number: str):
+        """Same response whether or not the number exists (no account enumeration)."""
 
-        otp_record = (
-            OTPRepository.get_latest_otp(
-                db,
-                mobile_number
-            )
-        )
-
-        if not otp_record:
-
-            raise Exception(
-                "OTP not found"
-            )
-
-        if otp_record.is_verified:
-
-            raise Exception(
-                "OTP already used"
-            )
-
-        if datetime.now(timezone.utc) > otp_record.expires_at:
-
-            raise Exception(
-                "OTP expired"
-            )
-
-        if otp_record.otp != otp:
-
-            otp_record.attempts += 1
-
-            db.commit()
-
-            raise Exception(
-                "Invalid OTP"
-            )
-
-        otp_record.is_verified = True
-
-        db.commit()
-
-        provider = (
-            ProviderRepository.get_by_mobile(
-                db,
-                mobile_number
-            )
-        )
-
-        if provider:
-
-            # A password-reset OTP only proves ownership of the number here;
-            # the new password arrives later via /forgot-password/reset.
-            if otp_record.purpose != "password_reset":
-
-                provider.hashed_password = (
-                    otp_record.hashed_password
-                )
-
-                db.commit()
-
-            db.refresh(provider)
-
-        else:
-
-            provider_data = {
-
+        provider = ProviderRepository.get_by_mobile(db, mobile_number)
+        if provider is None or not provider.is_active:
+            security_event("password_reset.unknown_or_inactive", identity=mobile_number[-4:])
+            return {
+                "success": True,
                 "mobile_number": mobile_number,
-
-                "hashed_password": (
-                    otp_record.hashed_password
-                ),
-
-                "is_mobile_verified": True,
-
-                "is_profile_completed": False
+                "message": "If this number is registered, an OTP has been sent.",
             }
 
-            provider = (
-                ProviderRepository.create_provider(
-                    db,
-                    provider_data
-                )
-            )
-
-        return {
-            "success": True,
-            "message": "OTP verified successfully",
-            "provider_id": str(
-                provider.provider_id
-            ),
-
-            "is_profile_completed": (
-                provider.is_profile_completed
-            )
-        }
-    
-    @staticmethod
-    def forgot_password_send_otp(
-        db: Session,
-        mobile_number: str
-    ):
-        """
-        Step 1 of password recovery. Unlike registration this takes no password —
-        the provider has forgotten it — so the OTP row carries the provider's
-        current hash. That keeps `hashed_password` populated and makes the shared
-        `verify_otp` step a no-op re-assignment instead of a password change.
-        """
-
-        provider = (
-            ProviderRepository.get_by_mobile(
-                db,
-                mobile_number
-            )
-        )
-
-        if not provider:
-
-            raise Exception(
-                "Provider not found"
-            )
-
-        if not provider.is_active:
-
-            raise Exception(
-                "Provider account is inactive. Please contact support."
-            )
-
-        otp = generate_otp()
-
-        otp_data = {
-
-            "mobile_number": mobile_number,
-
-            "otp": otp,
-
-            "is_verified": False,
-
-            "attempts": 0,
-
-            "expires_at": (
-                datetime.now(timezone.utc)
-                + timedelta(minutes=15)
-            ),
-
-            "hashed_password": provider.hashed_password,
-
-            "purpose": "password_reset",
-        }
-
-        OTPRepository.create_otp(
-            db,
-            otp_data
-        )
-
-        # TEMPORARY
-        # Later integrate SMS provider
-
-        return {
-            "success": True,
-            "mobile_number": mobile_number,
-            "message": "OTP sent successfully",
-            "otp": otp
-        }
+        code = issue_otp(db, PROVIDER_OTP, mobile_number, "password_reset", hashed_password="")
+        db.commit()
+        body = otp_response(code, mobile_number=mobile_number)
+        body["message"] = "If this number is registered, an OTP has been sent."
+        return body
 
     @staticmethod
-    def reset_password(
-        db: Session,
-        mobile_number: str,
-        new_password: str,
-        confirm_password: str
-    ):
-        """
-        Step 3 of password recovery. Only callable while the most recent OTP for
-        this mobile number is verified and still inside its validity window; the
-        OTP is burnt afterwards so it cannot be replayed for a second reset.
-        """
+    def forgot_password_verify_otp(db: Session, mobile_number: str, otp: str):
+        row = consume_otp(db, PROVIDER_OTP, mobile_number, "password_reset", otp)
+        token = issue_reset_token(row)
+        db.commit()
+        return {"success": True, "message": "OTP verified", "reset_token": token}
+
+    @staticmethod
+    def reset_password(db: Session, mobile_number: str, reset_token: str, new_password: str, confirm_password: str):
 
         if new_password != confirm_password:
+            raise DomainError("New password and confirm password do not match")
 
-            raise Exception(
-                "New password and confirm password do not match"
-            )
+        redeem_reset_token(db, PROVIDER_OTP, mobile_number, reset_token)
+        provider = ProviderRepository.get_by_mobile(db, mobile_number)
+        if provider is None:
+            raise DomainError("Password reset session is invalid or has expired. Please start again.")
 
-        provider = (
-            ProviderRepository.get_by_mobile(
-                db,
-                mobile_number
-            )
-        )
-
-        if not provider:
-
-            raise Exception(
-                "Provider not found"
-            )
-
-        otp_record = (
-            OTPRepository.get_latest_otp(
-                db,
-                mobile_number,
-                purpose="password_reset"
-            )
-        )
-
-        if not otp_record or not otp_record.is_verified:
-
-            raise Exception(
-                "OTP not verified. Please verify the OTP before resetting the password."
-            )
-
-        if datetime.now(timezone.utc) > otp_record.expires_at:
-
-            raise Exception(
-                "OTP session expired. Please request a new OTP."
-            )
-
-        hashed_password = hash_password(
-            new_password
-        )
-
-        provider.hashed_password = hashed_password
-
-        # Burn the OTP: expiring it blocks both a replayed reset and a
-        # re-verification of the same code.
-        otp_record.hashed_password = hashed_password
-        otp_record.expires_at = datetime.now(timezone.utc)
-
+        provider.hashed_password = hash_password(new_password)
+        provider.failed_login_count = 0
+        provider.locked_until = None
+        revoke_sessions(provider)
         db.commit()
-        db.refresh(provider)
+        security_event("password_reset.completed", role="provider", provider_id=provider.provider_id)
 
         return {
             "success": True,
             "message": "Password reset successfully",
-            "provider_id": str(
-                provider.provider_id
-            )
+            "provider_id": str(provider.provider_id),
         }
 
     @staticmethod
-    def login(
-        db: Session,
-        mobile_number: str,
-        password: str
-    ):
+    def login(db: Session, mobile_number: str, password: str):
 
-        provider = (
-            ProviderRepository.get_by_mobile(
-                db,
-                mobile_number
-            )
-        )
+        provider = ProviderRepository.get_by_mobile(db, mobile_number)
+        assert_not_locked(provider)
 
-        if not provider:
+        if provider is None:
+            burn_password_check(password)
+            security_event("login.failed", role="provider", identity=mobile_number[-4:])
+            raise DomainError(INVALID_CREDENTIALS, 401)
 
-            raise Exception(
-                "Provider not found"
-            )
+        if not verify_password(password, provider.hashed_password):
+            register_failed_login(db, provider, mobile_number)
+            raise DomainError(INVALID_CREDENTIALS, 401)
 
-        is_password_valid = verify_password(
-            password,
-            provider.hashed_password
-        )
+        if not provider.is_active:
+            raise DomainError("Your kitchen account is inactive. Please contact support.", 403, code="ACCOUNT_INACTIVE")
 
-        if not is_password_valid:
-
-            raise Exception(
-                "Invalid password"
-            )
+        register_successful_login(provider)
+        db.commit()
 
         access_token = create_access_token(
-            {
-                "provider_id": str(
-                    provider.provider_id
-                ),
-                "mobile_number": provider.mobile_number
-            }
+            {"provider_id": str(provider.provider_id), "mobile_number": provider.mobile_number},
+            role=ROLE_PROVIDER,
+            token_version=provider.token_version,
         )
 
         return {
@@ -358,15 +155,25 @@ class AuthService:
             "message": "Login successful",
             "access_token": access_token,
             "token_type": "bearer",
-            "provider_id": str(
-                provider.provider_id
-            )
+            "provider_id": str(provider.provider_id),
+            "is_profile_completed": bool(provider.is_profile_completed),
+            "approval_status": provider.approval_status,
         }
 
     @staticmethod
-    async def logout_provider():
+    def change_password(db: Session, provider_id: str, current_password: str, new_password: str):
+        provider = ProviderRepository.get_by_provider_id(db, provider_id)
+        if not verify_password(current_password, provider.hashed_password):
+            raise DomainError("Current password is incorrect")
+        provider.hashed_password = hash_password(new_password)
+        revoke_sessions(provider)
+        db.commit()
+        return {"success": True, "message": "Password changed. Please log in again."}
 
-        return {
-            "success": True,
-            "message": "Logged out successfully"
-        }
+    @staticmethod
+    def logout_provider(db: Session, provider_id: str):
+        provider = ProviderRepository.get_by_provider_id(db, provider_id)
+        if provider:
+            revoke_sessions(provider)
+            db.commit()
+        return {"success": True, "message": "Logged out successfully"}

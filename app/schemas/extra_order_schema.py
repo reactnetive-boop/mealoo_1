@@ -27,10 +27,12 @@ class OrderItemRequest(BaseModel):
 
 class PlaceExtraOrderRequest(BaseModel):
 
+    # The kitchen; all packages must be sold by it
     vendor_id: UUID
 
     address_id: UUID
 
+    # Business-local date (YYYY-MM-DD, IST). Today only before the slot cut-off.
     delivery_date: date
 
     meal_slot: MealSlot
@@ -38,6 +40,7 @@ class PlaceExtraOrderRequest(BaseModel):
     items: List[OrderItemRequest] = Field(
         ...,
         min_length=1,
+        max_length=10,
         description="At least one package item required"
     )
 
@@ -48,25 +51,48 @@ class ExtraOrderResponse(BaseModel):
 
     extra_order_id: UUID
 
+    checkout_id: Optional[UUID] = None
+
     user_reference_id: UUID
 
     vendor_reference_id: UUID
+
+    vendor_name: Optional[str] = None
 
     address_reference_id: UUID
 
     package_reference_id: UUID
 
+    package_name: Optional[str] = None
+
     quantity: int
 
+    # Selling price per unit of the package
     unit_price: Decimal
 
+    charges_amount: Decimal = Decimal("0")
+
+    # What the customer paid for this order (food + charges)
     total_price: Decimal
+
+    price_breakdown: Optional[dict] = None
 
     delivery_date: date
 
     meal_slot: str
 
     status: str
+
+    cancel_reason: Optional[str] = None
+
+    refund_amount: Optional[Decimal] = None
+
+    # Shown to the customer on the delivery day only; never to the kitchen
+    otp_for_delivery: Optional[str] = None
+
+    can_cancel: bool = False
+
+    delivered_at: Optional[datetime] = None
 
     created_at: Optional[datetime]
 

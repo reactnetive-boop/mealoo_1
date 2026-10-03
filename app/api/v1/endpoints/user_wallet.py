@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.rate_limit import limit_by_ip
 from app.dependencies.auth_dependency import get_current_user
 from app.schemas.wallet_schema import (
     WalletRechargeRequest,
@@ -62,25 +63,25 @@ def get_transaction_history(
 @router.post(
     "/recharge",
     response_model=WalletRechargeResponse,
-    summary="Recharge Wallet",
+    summary="Add Money (internal wallet top-up)",
     description=(
-        "**Add money to the user's wallet.**\n\n"
-        "Send `amount` (in INR). In a real implementation this would be called after a payment "
-        "gateway confirms a successful transaction. Returns the updated balance.\n\n"
-        "**When to call:** After the user completes payment on the recharge screen, "
-        "or when the checkout flow detects insufficient balance.\n\n"
-        "**Flow:** Check balance (`GET /user/wallet`) → insufficient → payment gateway → "
-        "`POST /user/wallet/recharge` → retry subscription / order"
-    )
+        "Internal wallet top-up for the current phase: no payment gateway is connected and no "
+        "UPI / card transaction takes place. Each top-up is recorded as a payment with method "
+        "`internal_wallet` and a ledger credit. Limited per top-up and per day; send an "
+        "`Idempotency-Key` header so a retried request is not credited twice."
+    ),
+    dependencies=[Depends(limit_by_ip("wallet_topup", 20, 3600))],
 )
 def recharge_wallet(
     payload: WalletRechargeRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", max_length=80),
 ):
 
     return WalletService.recharge(
         db,
         current_user["user_id"],
-        payload
+        payload,
+        idempotency_key,
     )

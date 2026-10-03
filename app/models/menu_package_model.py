@@ -137,4 +137,34 @@ class MenuPackage(Base):
         back_populates="menu_package",
         cascade="all, delete-orphan"
     )
-    
+
+    # Admin review: pending | approved | rejected. is_active is the admin's
+    # on/off switch for an approved package; deleted_at is the kitchen's
+    # soft delete. A package is sellable only when approved, active,
+    # available and not deleted.
+    approval_status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending"
+    )
+
+    approval_note = Column(
+        Text,
+        nullable=True
+    )
+
+    approved_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=True
+    )
+
+    approved_by = Column(
+        UUID(as_uuid=True),
+        nullable=True
+    )
+
+    deleted_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=True
+    )

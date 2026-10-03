@@ -18,27 +18,27 @@ class CompleteProfileRequest(
     BaseModel
 ):
 
-    full_name: str
+    full_name: str = Field(..., min_length=2, max_length=128)
 
-    business_name: str
+    business_name: str = Field(..., min_length=2, max_length=256)
 
-    city: str
+    city: str = Field(..., min_length=2, max_length=128)
 
-    area: str
+    area: str = Field(..., min_length=2, max_length=256)
 
-    address: str
+    address: str = Field(..., min_length=5, max_length=500)
 
-    kitchen_type: str
+    kitchen_type: str = Field(..., min_length=2, max_length=128)
 
-    pincode: int
+    pincode: int = Field(..., ge=100000, le=999999)
 
-    house_no: Optional[str] = None
+    house_no: str = Field(..., min_length=1, max_length=64)
 
-    landmark: Optional[str] = None
+    landmark: Optional[str] = Field(None, max_length=128)
 
-    state: str
+    state: str = Field(..., min_length=2, max_length=128)
 
-    meal_service_type: Optional[MealServiceType] = None
+    meal_service_type: MealServiceType
 
     fssai_licence: Optional[str] = Field(
         None,
@@ -46,12 +46,13 @@ class CompleteProfileRequest(
         description="14-digit FSSAI food business licence number"
     )
 
-    daily_meal_quota: Optional[int] = Field(
-        None,
+    daily_meal_quota: int = Field(
+        ...,
         gt=0,
+        le=10000,
         description=(
             "Meals this kitchen can serve per meal-slot per day across all packages "
-            "(e.g. 15 = 15 breakfasts, 15 lunches and 15 dinners). Omit for no limit."
+            "(e.g. 15 = 15 breakfasts, 15 lunches and 15 dinners)."
         )
     )
 
@@ -90,6 +91,16 @@ class ProviderProfileResponse(
     fssai_licence: Optional[str] = None
 
     daily_meal_quota: Optional[int] = None
+
+    profile_image: Optional[str] = None
+
+    is_active: bool = True
+
+    is_accepting_orders: bool = True
+
+    approval_status: str = "pending"
+
+    approval_note: Optional[str] = None
 
 
 class UpdateDailyQuotaRequest(BaseModel):
@@ -150,11 +161,22 @@ class UpdateProfileImageResponse(
     profile_image: str
 
 class ProviderAddressUpdateRequest(BaseModel):
+    # The kitchen always comes from the login session; a provider_id sent by
+    # older app versions is ignored.
+    provider_id: Optional[str] = None
+    house_no: str = Field(..., min_length=1, max_length=64)
+    address: str = Field(..., min_length=5, max_length=500)
+    landmark: Optional[str] = Field(None, max_length=128)
+    area: Optional[str] = Field(None, max_length=256)
+    city: str = Field(..., min_length=2, max_length=128)
+    state: str = Field(..., min_length=2, max_length=128)
+    pincode: int = Field(..., ge=100000, le=999999)
 
-    provider_id: str
-    house_no: str
-    address: str
-    landmark: Optional[str] = None
-    city: str
-    state: str
-    pincode: int    
+
+class AcceptingOrdersRequest(BaseModel):
+    accepting: bool
+
+
+class HolidayRequest(BaseModel):
+    date: date
+    reason: Optional[str] = Field(None, max_length=500)

@@ -60,7 +60,7 @@ def set_review_visibility(
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminReviewService.set_visibility(db, str(review_id), is_visible)
+    return AdminReviewService.set_visibility(db, str(review_id), is_visible, current["admin_id"])
 
 
 @router.delete(
@@ -77,4 +77,4 @@ def delete_review(
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminReviewService.delete_review(db, str(review_id))
+    return AdminReviewService.delete_review(db, str(review_id), current["admin_id"])

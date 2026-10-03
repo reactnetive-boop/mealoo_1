@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies.auth_dependency import get_current_delivery_boy
+from app.dependencies.auth_dependency import get_active_delivery_boy as get_current_delivery_boy
 from app.services.delivery_boy_complaint_service import DeliveryBoyComplaintService
 from app.schemas.delivery_boy_complaint_schema import (
     RaiseDeliveryBoyComplaintRequest,

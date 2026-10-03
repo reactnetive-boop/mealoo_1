@@ -1,26 +1,24 @@
 from fastapi import APIRouter
 from fastapi import Depends
-from fastapi import HTTPException
 
 from sqlalchemy.orm import Session
 
-from app.dependencies.provider_dependency import (
-    get_db
-)
-
+from app.core.database import get_db
+from app.core.rate_limit import limit_by_ip
+from app.dependencies.auth_dependency import get_provider_session
 from app.schemas.auth_schema import (
-    GenerateOTPRequest, VerifyOTPRequest,
-    ForgotPasswordOTPRequest, ForgotPasswordOTPResponse,
-    ResetPasswordRequest, ResetPasswordResponse
+    GenerateOTPRequest,
+    VerifyOTPRequest,
+    ForgotPasswordOTPRequest,
+    ForgotPasswordOTPResponse,
+    ForgotPasswordVerifyResponse,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
+    LoginRequest,
+    LogoutResponse,
+    ChangePasswordRequest,
 )
-
-
-from app.services.auth_service import (
-    AuthService
-)
-
-from app.schemas.auth_schema import LoginRequest
-from app.schemas.auth_schema import LogoutResponse
+from app.services.auth_service import AuthService
 
 
 router = APIRouter()
@@ -30,182 +28,94 @@ router = APIRouter()
     "/generate-otp",
     summary="Provider Register – Step 1: Send OTP",
     description=(
-        "**First step of provider (vendor/kitchen) registration.**\n\n"
-        "Provide a mobile number and password. An OTP is sent to the mobile number. "
-        "Call `/provider/verify-otp` next with the same mobile and the received OTP.\n\n"
+        "**First step of kitchen registration.** Rejected with 409 if the number is already "
+        "registered (use Forgot Password instead). The OTP is returned in the response only "
+        "outside production, until an SMS gateway is connected.\n\n"
         "**Flow:** `POST /generate-otp` → `POST /verify-otp` → `POST /login` → "
         "`PUT /provider/complete-profile`"
-    )
+    ),
+    dependencies=[Depends(limit_by_ip("provider_otp", 10, 600))],
 )
-def generate_otp(
-    request: GenerateOTPRequest,
-    db: Session = Depends(get_db)
-):
-
-    try:
-
-        return AuthService.generate_otp(
-            db,
-            request.mobile_number,
-            request.password
-        )
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+def generate_otp(request: GenerateOTPRequest, db: Session = Depends(get_db)):
+    return AuthService.generate_otp(db, request.mobile_number, request.password)
 
 
 @router.post(
     "/verify-otp",
     summary="Provider Register – Step 2: Verify OTP",
-    description=(
-        "**Second step of provider registration.**\n\n"
-        "Submit the OTP received on the registered mobile number. "
-        "On success the provider account is activated and can log in.\n\n"
-        "**Flow:** `POST /generate-otp` → `POST /verify-otp` → `POST /login`"
-    )
+    description="Creates the kitchen account. Never changes an existing account.",
+    dependencies=[Depends(limit_by_ip("provider_verify", 20, 600))],
 )
-def verify_otp(
-    request: VerifyOTPRequest,
-    db: Session = Depends(get_db)
-):
-
-    try:
-
-        return AuthService.verify_otp(
-            db,
-            request.mobile_number,
-            request.otp
-        )
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+def verify_otp(request: VerifyOTPRequest, db: Session = Depends(get_db)):
+    return AuthService.verify_otp(db, request.mobile_number, request.otp)
 
 
 @router.post(
     "/forgot-password/send-otp",
     response_model=ForgotPasswordOTPResponse,
     summary="Forgot Password - Step 1: Send OTP",
-    description=(
-        "**First step of provider password recovery.**\n\n"
-        "Send only the registered mobile number - no password is required, since the "
-        "provider has forgotten it. An OTP is sent to that mobile number.\n\n"
-        "Fails with 400 if no provider is registered with the number, or if the account "
-        "is deactivated.\n\n"
-        "**Flow:** `POST /forgot-password/send-otp` -> `POST /verify-otp` -> "
-        "`POST /forgot-password/reset` -> `POST /login` with the new password\n\n"
-        "**When to call:** When the provider taps 'Forgot password?' on the login screen."
-    )
+    description="Responds the same way whether or not the number is registered.",
+    dependencies=[Depends(limit_by_ip("provider_forgot", 10, 600))],
 )
-def forgot_password_send_otp(
-    request: ForgotPasswordOTPRequest,
-    db: Session = Depends(get_db)
-):
+def forgot_password_send_otp(request: ForgotPasswordOTPRequest, db: Session = Depends(get_db)):
+    return AuthService.forgot_password_send_otp(db, request.mobile_number)
 
-    try:
 
-        return AuthService.forgot_password_send_otp(
-            db,
-            request.mobile_number
-        )
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+@router.post(
+    "/forgot-password/verify-otp",
+    response_model=ForgotPasswordVerifyResponse,
+    summary="Forgot Password - Step 2: Verify OTP",
+    description="Returns a one-time `reset_token` that step 3 must present.",
+    dependencies=[Depends(limit_by_ip("provider_forgot_verify", 20, 600))],
+)
+def forgot_password_verify(request: VerifyOTPRequest, db: Session = Depends(get_db)):
+    return AuthService.forgot_password_verify_otp(db, request.mobile_number, request.otp)
 
 
 @router.post(
     "/forgot-password/reset",
     response_model=ResetPasswordResponse,
     summary="Forgot Password - Step 3: Set New Password",
-    description=(
-        "**Final step of provider password recovery.**\n\n"
-        "Submit `new_password` and `confirm_password` for the mobile number whose OTP was "
-        "just verified through `POST /verify-otp` (step 2). The two must match and be "
-        "8-16 characters.\n\n"
-        "The OTP is single-use: it is burnt once the password is changed, so a second "
-        "reset needs a fresh `POST /forgot-password/send-otp`. The request is rejected "
-        "with 400 if the OTP was never verified or the 15 minute window has lapsed.\n\n"
-        "**When to call:** On the 'Set new password' screen, after OTP verification. "
-        "Send the provider to the login screen afterwards - no token is issued here."
-    )
+    description="Requires the `reset_token` from step 2. Signs the kitchen out everywhere.",
+    dependencies=[Depends(limit_by_ip("provider_reset", 10, 600))],
 )
-def forgot_password_reset(
-    request: ResetPasswordRequest,
-    db: Session = Depends(get_db)
-):
-
-    try:
-
-        return AuthService.reset_password(
-            db,
-            request.mobile_number,
-            request.new_password,
-            request.confirm_password
-        )
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+def forgot_password_reset(request: ResetPasswordRequest, db: Session = Depends(get_db)):
+    return AuthService.reset_password(
+        db,
+        request.mobile_number,
+        request.reset_token,
+        request.new_password,
+        request.confirm_password,
+    )
 
 
 @router.post(
     "/login",
     summary="Provider Login",
     description=(
-        "**Login for providers (vendors/kitchens) using mobile number and password.**\n\n"
-        "Returns a JWT `access_token`. Include this in all provider API calls as "
-        "`Authorization: Bearer <token>`.\n\n"
-        "**After first login:** Call `PUT /provider/complete-profile` to fill in business details "
-        "before the provider can accept orders."
-    )
+        "Returns a JWT `access_token`. After login call `GET /provider/me/state` to decide which "
+        "screen to show."
+    ),
+    dependencies=[Depends(limit_by_ip("provider_login", 20, 300))],
 )
-def login(
-    request: LoginRequest,
-    db: Session = Depends(get_db)
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    return AuthService.login(db, request.mobile_number, request.password)
+
+
+@router.put("/change-password", summary="Change Password (signs out other sessions)")
+def change_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current=Depends(get_provider_session),
 ):
-
-    try:
-
-        return AuthService.login(
-            db,
-            request.mobile_number,
-            request.password
-        )
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+    return AuthService.change_password(db, current["provider_id"], payload.current_password, payload.new_password)
 
 
 @router.post(
     "/logout",
     response_model=LogoutResponse,
     summary="Provider Logout",
-    description=(
-        "**Invalidate the current provider session.**\n\n"
-        "Call this when the provider logs out of the app. "
-        "The client should discard the stored token after this call."
-    )
+    description="Invalidates every token issued to this kitchen so far.",
 )
-async def logout_provider():
-
-    response = await AuthService.logout_provider()
-
-    return response
+def logout_provider(db: Session = Depends(get_db), current=Depends(get_provider_session)):
+    return AuthService.logout_provider(db, current["provider_id"])

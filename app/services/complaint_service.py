@@ -2,6 +2,9 @@ from fastapi import HTTPException
 
 from sqlalchemy.orm import Session
 
+from app.core.errors import DomainError
+from app.models.extra_order_model import ExtraOrder
+from app.models.subscription_model import Subscription
 from app.repositories.complaint_repository import ComplaintRepository
 
 # Statuses that allow user edits
@@ -25,6 +28,35 @@ class ComplaintService:
         complaint_data["subscription_reference_id"] = complaint_data.pop("subscription_id", None)
 
         complaint_data["user_reference_id"] = user_id
+
+        # Linked order / subscription must be the customer's own; the kitchen
+        # is derived from it rather than trusted from the request
+        if complaint_data["order_reference_id"]:
+            order = db.query(ExtraOrder).filter(
+                ExtraOrder.extra_order_id == complaint_data["order_reference_id"],
+                ExtraOrder.user_reference_id == user_id,
+            ).first()
+            if order is None:
+                raise DomainError("Order not found", 404)
+            complaint_data["vendor_reference_id"] = order.vendor_reference_id
+        if complaint_data["subscription_reference_id"]:
+            sub = db.query(Subscription).filter(
+                Subscription.subscription_id == complaint_data["subscription_reference_id"],
+                Subscription.user_reference_id == user_id,
+            ).first()
+            if sub is None:
+                raise DomainError("Subscription not found", 404)
+            complaint_data["vendor_reference_id"] = sub.vendor_reference_id
+        elif complaint_data["vendor_reference_id"] and not complaint_data["order_reference_id"]:
+            ordered = db.query(Subscription).filter(
+                Subscription.user_reference_id == user_id,
+                Subscription.vendor_reference_id == complaint_data["vendor_reference_id"],
+            ).first() or db.query(ExtraOrder).filter(
+                ExtraOrder.user_reference_id == user_id,
+                ExtraOrder.vendor_reference_id == complaint_data["vendor_reference_id"],
+            ).first()
+            if not ordered:
+                raise DomainError("You can only complain about kitchens you have ordered from")
 
         complaint_data["status"] = "open"
 
@@ -75,8 +107,8 @@ class ComplaintService:
         if str(complaint.user_reference_id) != user_id:
 
             raise HTTPException(
-                status_code=403,
-                detail="Access denied"
+                status_code=404,
+                detail="Complaint not found"
             )
 
         return complaint
@@ -103,8 +135,8 @@ class ComplaintService:
         if str(complaint.user_reference_id) != user_id:
 
             raise HTTPException(
-                status_code=403,
-                detail="Access denied"
+                status_code=404,
+                detail="Complaint not found"
             )
 
         if complaint.status not in EDITABLE_STATUSES:
@@ -150,8 +182,8 @@ class ComplaintService:
         if str(complaint.user_reference_id) != user_id:
 
             raise HTTPException(
-                status_code=403,
-                detail="Access denied"
+                status_code=404,
+                detail="Complaint not found"
             )
 
         if complaint.status not in EDITABLE_STATUSES:

@@ -1,6 +1,10 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.errors import DomainError
+from app.models.extra_order_model import ExtraOrder
+from app.models.order_model import Order
+from app.models.provider_model import Provider
 from app.repositories.delivery_boy_complaint_repository import DeliveryBoyComplaintRepository
 
 EDITABLE_STATUSES = {"open"}
@@ -13,6 +17,15 @@ class DeliveryBoyComplaintService:
         data = payload.model_dump()
         data["provider_reference_id"] = data.pop("provider_id", None)
         data["delivery_boy_reference_id"] = delivery_boy_id
+
+        if data["provider_reference_id"] and not db.query(Provider).filter(
+            Provider.provider_id == data["provider_reference_id"]
+        ).first():
+            raise DomainError("Kitchen not found", 404)
+        if data.get("order_id"):
+            model, key = (ExtraOrder, ExtraOrder.extra_order_id) if data.get("order_type") == "extra_order" else (Order, Order.order_id)
+            if not db.query(model).filter(key == data["order_id"], model.delivery_boy_reference_id == delivery_boy_id).first():
+                raise DomainError("Order not found", 404)
         data["status"] = "open"
 
         complaint = DeliveryBoyComplaintRepository.create(db, data)

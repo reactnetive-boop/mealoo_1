@@ -11,7 +11,7 @@ OUT_DIR = Path(r"D:\mealoo\docs\api")
 SOURCES = {
     "Provider Auth": ("app/api/v1/endpoints/auth.py", "app/services/auth_service.py, app/services/otp_service.py"),
     "Provider": ("app/api/v1/endpoints/provider.py", "app/services/provider_service.py"),
-    "Provider Menu": ("app/api/v1/endpoints/menu.py, app/api/v1/endpoints/provider_selected_package_endpoint.py", "app/services/menu_service.py, app/services/provider_selected_package_service.py"),
+    "Provider Menu": ("app/api/v1/endpoints/menu.py, app/api/v1/endpoints/provider_selected_package_endpoint.py", "app/services/menu_service.py"),
     "Provider Package Item": ("app/api/v1/endpoints/package_item.py", "app/services/package_item_service.py"),
     "Provider Package Image": ("app/api/v1/endpoints/package_image.py", "app/services/package_image_service.py"),
     "Provider Orders": ("app/api/v1/endpoints/provider_orders.py", "app/services/provider_order_service.py"),
@@ -97,6 +97,43 @@ No token is issued by step 3 - the app must send the provider back to the login 
 
 **Note.** OTPs are returned in the API response while SMS delivery is not wired up; drop
 the `otp` field from the response once an SMS provider is integrated.
+
+## Capacity: two limits, both enforced
+
+A kitchen can be capped at two levels, and an incoming order must fit inside **both**.
+Either one left as `null` means that level is not enforced.
+
+| Limit | Field | Scope | Set with |
+|---|---|---|---|
+| Per package | `daily_capacity` on `provider_selected_packages` | One package, per meal-slot, per day | `PUT /provider-package/capacity` |
+| Per provider | `daily_meal_quota` on `providers` | **All** packages together, per meal-slot, per day | `PUT /provider/daily-quota` |
+
+`daily_meal_quota = 15` means 15 breakfasts **and** 15 lunches **and** 15 dinners a day,
+whatever mix of packages those meals come from. A provider running three packages capped
+at 10 each, with a quota of 15, can still only serve 15 meals in a slot.
+
+**What counts against a slot.** Quantities from every `active` subscription whose
+`meal_slot` covers that slot (`all_slots` counts towards all three), plus quantities from
+non-cancelled one-time orders on the date being checked.
+
+**Where it is enforced.** `POST /user/subscription`, `POST /user/subscription/{id}/switch`
+(against the *new* provider) and `POST /user/order/extra`. All items in one request are
+summed before the check, so a single order cannot straddle the limit. Over the limit
+returns `400` naming the slot, the limit, what is already committed and what is left.
+
+**Changing the limit.** A new quota below the meals already committed to active
+subscriptions is rejected with `400`; the response carries that figure as
+`current_peak_demand`. Lowering the limit never cancels running subscriptions - it only
+stops new ones. Send `null` to remove the limit.
+
+**Reading it.** `GET /provider/daily-quota` (provider app) and
+`GET /admin/providers/{provider_id}/daily-quota` (admin panel) return, per slot,
+`subscription_committed`, `extra_orders`, `total_committed`, `available` and `is_full`,
+for today or any `?date=`.
+
+**Source files.** Model: `app/models/provider_model.py` (`daily_meal_quota`) - checks:
+`app/domain/capacity.py` - migration:
+`alembic/versions/d8e9f0a1b2c3_add_provider_quota_and_fssai.py`.
 """,
     },
     "user": {

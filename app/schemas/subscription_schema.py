@@ -35,11 +35,23 @@ class SubscriptionPlanResponse(BaseModel):
 
     meal_slot: str
 
+    # The individual daily meals of the plan, e.g. ["lunch", "dinner"]
+    meal_slots: List[str] = []
+
     duration_days: int
+
+    # Custom plans: the customer picks the end date within these bounds
+    is_custom: bool = False
+
+    custom_min_days: Optional[int] = None
+
+    custom_max_days: Optional[int] = None
 
     free_skips: int
 
     discount_percent: Decimal
+
+    earliest_start_date: Optional[date] = None
 
 
 class SubscriptionPlanListResponse(BaseModel):
@@ -61,7 +73,7 @@ class SubscriptionItemRequest(BaseModel):
         ...,
         ge=1,
         le=5,
-        description="Quantity per package (1-5)"
+        description="Quantity per meal (1-5)"
     )
 
 
@@ -75,10 +87,32 @@ class CreateSubscriptionRequest(BaseModel):
 
     start_date: date
 
+    # Custom plans only: last meal date (inclusive)
+    end_date: Optional[date] = None
+
+    # One package per subscription (the cart holds one tiffin)
     items: List[SubscriptionItemRequest] = Field(
         ...,
-        min_length=1
+        min_length=1,
+        max_length=1
     )
+
+
+class SubscriptionQuoteRequest(BaseModel):
+
+    vendor_id: UUID
+
+    package_id: UUID
+
+    plan_id: UUID
+
+    quantity: int = Field(1, ge=1, le=5)
+
+    address_id: Optional[UUID] = None
+
+    start_date: Optional[date] = None
+
+    end_date: Optional[date] = None
 
 
 # ── Subscription responses ───────────────────────────────
@@ -106,9 +140,13 @@ class SubscriptionResponse(BaseModel):
 
     vendor_reference_id: UUID
 
+    vendor_name: Optional[str] = None
+
     plan_reference_id: UUID
 
     user_address_reference_id: UUID
+
+    address_line: Optional[str] = None
 
     status: str
 
@@ -118,7 +156,10 @@ class SubscriptionResponse(BaseModel):
 
     start_date: date
 
+    # Exclusive: the last meal is on last_meal_date
     end_date: date
+
+    last_meal_date: Optional[date] = None
 
     free_skips_total: int
 
@@ -128,7 +169,13 @@ class SubscriptionResponse(BaseModel):
 
     discount_amount: Decimal
 
+    charges_amount: Decimal = Decimal("0")
+
     final_amount: Decimal
+
+    refunded_amount: Decimal = Decimal("0")
+
+    meal_value: Optional[Decimal] = None
 
     pause_start_date: Optional[date]
 
@@ -142,6 +189,26 @@ class SubscriptionResponse(BaseModel):
 
     created_at: Optional[datetime]
 
+    package_id: Optional[UUID] = None
+
+    package_name: Optional[str] = None
+
+    quantity: Optional[int] = None
+
+    unit_price: Optional[Decimal] = None
+
+    price_breakdown: Optional[dict] = None
+
+    next_meal: Optional[dict] = None
+
+    can_pause: bool = False
+
+    can_resume: bool = False
+
+    can_cancel: bool = False
+
+    can_switch: bool = False
+
     packages: List[SubscriptionPackageResponse] = []
 
 
@@ -153,13 +220,21 @@ class CreateSubscriptionResponse(BaseModel):
 
     subscription_id: UUID
 
+    start_date: Optional[date] = None
+
+    end_date: Optional[date] = None
+
     total_amount: Decimal
 
     discount_amount: Decimal
 
+    charges_amount: Decimal = Decimal("0")
+
     final_amount: Decimal
 
     wallet_balance_after: Decimal
+
+    price_breakdown: Optional[dict] = None
 
 
 class SubscriptionListResponse(BaseModel):
@@ -206,7 +281,7 @@ class ResumeSubscriptionResponse(BaseModel):
 # ── Subscription Orders (customer view) ──────────────────
 
 class UserSubscriptionOrderResponse(BaseModel):
-    """One generated meal delivery belonging to a subscription."""
+    """One daily meal belonging to a subscription."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -231,14 +306,24 @@ class UserSubscriptionOrderResponse(BaseModel):
 
     skip_requested_at: Optional[datetime]
 
+    # Same-day cut-off for this meal (free skip / cancellation window)
     skip_deadline: Optional[datetime]
 
     delivered_at: Optional[datetime]
 
     delivery_notes: Optional[str]
 
-    # Shared by the customer with the delivery partner at hand-over
+    cancel_reason: Optional[str] = None
+
+    refund_amount: Optional[Decimal] = None
+
+    # The code the customer gives the delivery partner. Only returned on the
+    # day of the meal, and never to the kitchen.
     otp_for_delivery: Optional[str]
+
+    can_skip: bool = False
+
+    skip_will_refund: bool = False
 
     created_at: Optional[datetime]
 
@@ -388,6 +473,10 @@ class SkipOrderResponse(BaseModel):
 class PackageSwitchRequest(BaseModel):
 
     new_package_id: UUID
+
+    # The kitchen selling the new package (required for Orleeno catalogue
+    # packages; defaults to the package's own kitchen otherwise)
+    new_provider_id: Optional[UUID] = None
 
     # Required only when the subscription holds more than one package
     old_package_id: Optional[UUID] = None

@@ -70,7 +70,7 @@ def update_profile(
         "**Requires:** Bearer token from `POST /user/login`"
     )
 )
-async def update_profile_image(
+def update_profile_image(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
@@ -81,3 +81,17 @@ async def update_profile_image(
         current_user["user_id"],
         file
     )
+
+
+@router.get(
+    "/me/state",
+    summary="Customer Account State (drives app navigation)",
+    description=(
+        "`next_step`: `add_address`, `area_not_serviceable`, `no_kitchens`, `browse` or "
+        "`account_inactive`, computed from the saved default address and Orleeno's serviceable "
+        "pincodes."
+    ),
+)
+def get_state(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    from app.services.user_menu_service import UserMenuService
+    return UserMenuService.customer_state(db, current_user["user_id"])

@@ -1,18 +1,19 @@
-from typing import List, Optional, Any, Union
+from typing import List, Optional, Any, Union, Literal
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.utils.meal_type import normalize_meal_type
+from app.utils.meal_type import normalize_meal_type, normalize_food_type
+from app.schemas.menu_schema import _zero_is_none
 
 
 # ── Auth ──────────────────────────────────────────────────
 
 class AdminLoginRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(..., max_length=255)
+    password: str = Field(..., max_length=128)
 
 
 class AdminLoginResponse(BaseModel):
@@ -36,8 +37,12 @@ class AdminProfileResponse(BaseModel):
 
 
 class AdminChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str = Field(..., min_length=6)
+    current_password: str = Field(..., max_length=128)
+    new_password: str = Field(..., min_length=10, max_length=128)
+
+
+class AdminApprovalRequest(BaseModel):
+    note: Optional[str] = Field(None, min_length=3, max_length=500, description="Reason shown to the applicant")
 
 
 # ── User Management ───────────────────────────────────────
@@ -63,14 +68,14 @@ class AdminUserListResponse(BaseModel):
 
 
 class AdminUpdateUserStatusRequest(BaseModel):
-    status: str = Field(..., description="active | inactive | suspended")
+    status: Literal["active", "inactive", "suspended"]
     reason: Optional[str] = Field(None, max_length=500)
 
 
 class AdminWalletAdjustRequest(BaseModel):
-    amount: Decimal = Field(..., gt=0)
-    type: str = Field(..., description="credit or debit")
-    reason: str = Field(..., max_length=255)
+    amount: Decimal = Field(..., gt=0, le=100000, max_digits=12, decimal_places=2)
+    type: Literal["credit", "debit"]
+    reason: str = Field(..., min_length=3, max_length=255)
     description: Optional[str] = Field(None, max_length=500)
 
 
@@ -100,12 +105,17 @@ class AdminProviderListResponse(BaseModel):
 
 
 class AdminUpdateProviderRequest(BaseModel):
-    full_name: Optional[str] = Field(None, max_length=128)
-    business_name: Optional[str] = Field(None, max_length=256)
+    full_name: Optional[str] = Field(None, min_length=2, max_length=128)
+    business_name: Optional[str] = Field(None, min_length=2, max_length=256)
+    kitchen_type: Optional[str] = Field(None, max_length=50)
+    meal_service_type: Optional[str] = Field(None, max_length=50)
+    house_no: Optional[str] = Field(None, max_length=100)
+    address: Optional[str] = Field(None, max_length=500)
+    landmark: Optional[str] = Field(None, max_length=256)
     city: Optional[str] = Field(None, max_length=128)
+    state: Optional[str] = Field(None, max_length=128)
     area: Optional[str] = Field(None, max_length=256)
-    pincode: Optional[int] = None
-    is_profile_completed: Optional[bool] = None
+    pincode: Optional[int] = Field(None, ge=100000, le=999999)
     fssai_licence: Optional[str] = Field(
         None,
         pattern=r"^\d{14}$",
@@ -114,10 +124,8 @@ class AdminUpdateProviderRequest(BaseModel):
     daily_meal_quota: Optional[int] = Field(
         None,
         gt=0,
-        description=(
-            "Meals the provider can serve per meal-slot per day across all packages. "
-            "Send null to remove the limit."
-        )
+        le=10000,
+        description="Meals the kitchen can serve per meal time per day across all packages."
     )
 
 
@@ -143,25 +151,29 @@ class AdminDeliveryBoyListResponse(BaseModel):
 
 
 class AdminUpdateDeliveryBoyRequest(BaseModel):
-    full_name: Optional[str] = Field(None, max_length=128)
-    vehicle_type: Optional[str] = None
-    vehicle_number: Optional[str] = Field(None, max_length=20)
-    assigned_provider_id: Optional[UUID] = None
+    full_name: Optional[str] = Field(None, min_length=2, max_length=128)
+    vehicle_type: Optional[Literal["bike", "cycle", "scooter", "car"]] = None
+    vehicle_number: Optional[str] = Field(None, min_length=4, max_length=20, pattern=r"^[A-Za-z0-9 -]+$")
     is_active: Optional[bool] = None
+
+
+class AdminDocumentReviewRequest(BaseModel):
+    status: Literal["verified", "rejected"]
+    remarks: Optional[str] = Field(None, max_length=500, description="Required when rejecting")
 
 
 # ── Package Management ────────────────────────────────────
 
 class AdminPackageItemRequest(BaseModel):
-    item_name: str
-    quantity: Optional[str] = None
+    item_name: str = Field(..., min_length=1, max_length=255)
+    quantity: Optional[str] = Field(None, max_length=50)
 
 
 class AdminCreatePackageRequest(BaseModel):
     category_id: UUID
-    package_name: str = Field(..., max_length=255)
+    package_name: str = Field(..., min_length=2, max_length=255)
     short_description: Optional[str] = Field(None, max_length=500)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=5000)
     meal_type: Union[str, List[str]] = Field(
         ...,
         description=(
@@ -170,17 +182,31 @@ class AdminCreatePackageRequest(BaseModel):
         ),
         examples=[["lunch", "dinner"]]
     )
-    food_type: str = Field(..., description="veg | non_veg | egg")
+    food_type: Union[str, List[str]] = Field(..., description="veg | non_veg | egg | vegan | jain (one or more)")
 
     @field_validator("meal_type", mode="after")
     @classmethod
     def _normalize_meal_type(cls, value):
         return normalize_meal_type(value)
-    price: Decimal = Field(..., gt=0)
-    discounted_price: Optional[Decimal] = Field(None, ge=0)
+
+    @field_validator("food_type", mode="after")
+    @classmethod
+    def _normalize_food_type(cls, value):
+        return normalize_food_type(value)
+
+    # base price (MRP) per meal
+    price: Decimal = Field(..., gt=0, le=100000)
+    # selling price for one-time orders, <= price; omit for no discount
+    discounted_price: Optional[Decimal] = Field(None, gt=0, le=100000)
     is_subscription_available: bool = False
-    subscription_price: Optional[Decimal] = Field(None, ge=0)
-    items: List[AdminPackageItemRequest] = Field(..., min_length=1)
+    # per-meal price for subscriptions, <= price
+    subscription_price: Optional[Decimal] = Field(None, gt=0, le=100000)
+    items: List[AdminPackageItemRequest] = Field(..., min_length=1, max_length=50)
+
+    @field_validator("discounted_price", "subscription_price", mode="before")
+    @classmethod
+    def _zero_none(cls, value):
+        return _zero_is_none(value)
 
 
 class AdminPackageResponse(BaseModel):
@@ -205,12 +231,27 @@ class AdminPackageListResponse(BaseModel):
 
 
 class AdminUpdatePackageRequest(BaseModel):
-    package_name: Optional[str] = Field(None, max_length=255)
-    description: Optional[str] = None
-    price: Optional[Decimal] = Field(None, gt=0)
-    discounted_price: Optional[Decimal] = Field(None, ge=0)
+    package_name: Optional[str] = Field(None, min_length=2, max_length=255)
+    short_description: Optional[str] = Field(None, max_length=500)
+    description: Optional[str] = Field(None, max_length=5000)
+    meal_type: Optional[Union[str, List[str]]] = None
+    food_type: Optional[Union[str, List[str]]] = None
+    price: Optional[Decimal] = Field(None, gt=0, le=100000)
+    # send 0 to clear the discount
+    discounted_price: Optional[Decimal] = Field(None, ge=0, le=100000)
+    subscription_price: Optional[Decimal] = Field(None, ge=0, le=100000)
     is_active: Optional[bool] = None
     is_available: Optional[bool] = None
+
+    @field_validator("meal_type", mode="after")
+    @classmethod
+    def _normalize_meal_type(cls, value):
+        return normalize_meal_type(value) if value is not None else None
+
+    @field_validator("food_type", mode="after")
+    @classmethod
+    def _normalize_food_type(cls, value):
+        return normalize_food_type(value) if value is not None else None
 
 
 class AdminPackageSubscriptionToggleRequest(BaseModel):
@@ -219,19 +260,29 @@ class AdminPackageSubscriptionToggleRequest(BaseModel):
         description="true = users can subscribe to this package; false = blocks new subscriptions / switches to it"
     )
     subscription_price: Optional[Decimal] = Field(
-        None, ge=0,
-        description="Per-meal subscription price. Required when enabling if the package has no subscription_price yet."
+        None, gt=0, le=100000,
+        description="Per-meal subscription price. Optional: without it subscriptions are charged the selling price."
     )
 
 
 # ── Subscription Plan Management ──────────────────────────
 
+PLAN_TYPES = ("weekly", "fortnightly", "monthly", "quarterly", "half_yearly", "annually", "custom")
+
+
 class AdminCreatePlanRequest(BaseModel):
-    subscription_type: str = Field(..., description="monthly | weekly | custom")
-    meal_slot: str = Field(..., description="breakfast | lunch | dinner | all")
-    duration_days: int = Field(..., gt=0)
-    free_skips: int = Field(0, ge=0)
-    discount_percent: Decimal = Field(Decimal("0"), ge=0, le=100)
+    subscription_type: Literal["weekly", "fortnightly", "monthly", "quarterly", "half_yearly", "annually", "custom"]
+    meal_slot: str = Field(
+        ...,
+        max_length=30,
+        description=(
+            "breakfast | lunch | dinner | breakfast_lunch | lunch_dinner | breakfast_dinner | all_slots"
+        ),
+    )
+    # ignored for custom plans (the customer picks the dates)
+    duration_days: int = Field(0, ge=0, le=366)
+    free_skips: int = Field(0, ge=0, le=60)
+    discount_percent: Decimal = Field(Decimal("0"), ge=0, le=90, max_digits=5, decimal_places=2)
 
 
 class AdminPlanResponse(BaseModel):
@@ -253,9 +304,9 @@ class AdminPlanListResponse(BaseModel):
 
 
 class AdminUpdatePlanRequest(BaseModel):
-    free_skips: Optional[int] = Field(None, ge=0)
-    discount_percent: Optional[Decimal] = Field(None, ge=0, le=100)
-    duration_days: Optional[int] = Field(None, gt=0)
+    free_skips: Optional[int] = Field(None, ge=0, le=60)
+    discount_percent: Optional[Decimal] = Field(None, ge=0, le=90, max_digits=5, decimal_places=2)
+    duration_days: Optional[int] = Field(None, gt=0, le=366)
     is_active: Optional[bool] = None
 
 
@@ -293,7 +344,7 @@ class AdminComplaintListResponse(BaseModel):
 
 
 class AdminResolveComplaintRequest(BaseModel):
-    status: str = Field(..., description="in_progress | resolved | rejected | closed")
+    status: Literal["in_progress", "resolved", "rejected", "closed"]
     admin_notes: Optional[str] = Field(None, max_length=1000)
     resolution: Optional[str] = Field(None, max_length=2000)
 
@@ -328,8 +379,9 @@ class AdminOrderListResponse(BaseModel):
 
 
 class AdminForceStatusRequest(BaseModel):
-    status: str
-    reason: Optional[str] = Field(None, max_length=500)
+    status: str = Field(..., max_length=30)
+    # every forced change is audited with its reason
+    reason: str = Field(..., min_length=5, max_length=500)
 
 
 class AdminAssignDeliveryBoyRequest(BaseModel):
@@ -375,14 +427,14 @@ class AdminPincodeListResponse(BaseModel):
 
 
 class AdminCreatePincodeRequest(BaseModel):
-    pincode: int
-    city: str = Field(..., max_length=100)
-    state: str = Field(..., max_length=100)
+    pincode: int = Field(..., ge=100000, le=999999)
+    city: str = Field(..., min_length=2, max_length=100)
+    state: str = Field(..., min_length=2, max_length=100)
 
 
 class AdminUpdatePincodeRequest(BaseModel):
-    city: Optional[str] = Field(None, max_length=100)
-    state: Optional[str] = Field(None, max_length=100)
+    city: Optional[str] = Field(None, min_length=2, max_length=100)
+    state: Optional[str] = Field(None, min_length=2, max_length=100)
     is_active: Optional[bool] = None
 
 
@@ -397,3 +449,45 @@ class AdminDashboardResponse(BaseModel):
     orders: dict
     complaints: dict
     revenue: dict
+
+
+# ── Pricing configuration ─────────────────────────────────
+
+class AdminPricingComponentUpdate(BaseModel):
+    label: Optional[str] = Field(None, min_length=2, max_length=100)
+    calc_type: Literal["fixed", "percentage"]
+    value: Decimal = Field(..., ge=0, le=100000, max_digits=12, decimal_places=2)
+    applies_to: Literal["all", "subscription", "extra_order"] = "all"
+    charge_basis: Literal["per_unit", "per_delivery", "per_order"] = "per_delivery"
+    is_active: bool = True
+    change_reason: str = Field(..., min_length=5, max_length=500)
+
+    @field_validator("value")
+    @classmethod
+    def _percent_cap(cls, value, info):
+        if info.data.get("calc_type") == "percentage" and value > 100:
+            raise ValueError("A percentage cannot exceed 100")
+        return value
+
+
+class AdminPricingPreviewRequest(BaseModel):
+    kind: Literal["subscription", "extra_order"] = "subscription"
+    base_unit_price: Decimal = Field(..., gt=0, le=100000)
+    quantity: int = Field(1, ge=1, le=5)
+    deliveries: int = Field(1, ge=1, le=1100)
+    discount_percent: Decimal = Field(Decimal("0"), ge=0, le=90)
+
+
+# ── Withdrawals ───────────────────────────────────────────
+
+class AdminProcessPayoutRequest(BaseModel):
+    action: Literal["paid", "rejected"]
+    payout_reference: Optional[str] = Field(None, min_length=4, max_length=100, pattern=r"^[A-Za-z0-9/_.-]+$")
+    admin_note: Optional[str] = Field(None, max_length=500)
+
+
+# ── Payments ──────────────────────────────────────────────
+
+class AdminReverseTopupRequest(BaseModel):
+    amount: Optional[Decimal] = Field(None, gt=0, le=100000, max_digits=12, decimal_places=2)
+    reason: str = Field(..., min_length=5, max_length=255)

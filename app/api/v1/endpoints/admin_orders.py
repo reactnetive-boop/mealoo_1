@@ -2,10 +2,11 @@ from typing import Optional
 from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.rate_limit import client_ip
 from app.dependencies.auth_dependency import get_current_admin, require_super_admin
 from app.services.admin_order_service import AdminOrderService
 from app.schemas.admin_schema import AdminForceStatusRequest, AdminAssignDeliveryBoyRequest, AdminReassignProviderRequest
@@ -80,10 +81,11 @@ def list_subscription_orders(
 def assign_delivery_boy_to_order(
     order_id: UUID,
     payload: AdminAssignDeliveryBoyRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminOrderService.assign_delivery_boy(db, str(order_id), payload)
+    return AdminOrderService.assign_delivery_boy(db, str(order_id), payload, current["admin_id"], client_ip(request))
 
 
 @router.put(
@@ -92,36 +94,39 @@ def assign_delivery_boy_to_order(
     description=(
         "**Move a subscription order to a different provider.**\n\n"
         "Use in emergency situations when the original provider cannot fulfill the order "
-        "(e.g. kitchen closure, quality issue). Send `new_vendor_id` in the request body."
+        "(kitchen holiday). The current kitchen must be marked unavailable for the date; the new kitchen must be "
+        "approved, open, serve the customer's pincode and have room. Allowed until the meal's cut-off. "
+        "Send `new_provider_id`."
     )
 )
 def reassign_subscription_order_provider(
     order_id: UUID,
     payload: AdminReassignProviderRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminOrderService.reassign_provider(db, str(order_id), payload)
+    return AdminOrderService.reassign_provider(db, str(order_id), payload, current["admin_id"], client_ip(request))
 
 
 @router.put(
     "/subscription-orders/{order_id}/status",
     summary="Admin: Force Update Subscription Order Status",
     description=(
-        "**Override a subscription order's status to any value.**\n\n"
-        "Use only for dispute resolution or data correction. "
-        "Normal status changes should go through the provider (`PUT /provider/orders/subscription-orders/{id}/status`) "
-        "or delivery boy (`PUT /delivery/orders/{id}/pickup` or `/deliver`) endpoints instead.\n\n"
+        "**Correct a stuck subscription meal.** Only transitions the order state machine allows for admins. "
+        "`delivered` settles the kitchen / partner / platform money once; `cancelled` refunds the customer once. "
+        "`reason` is required and audited.\n\n"
         "**Requires:** `super_admin` role."
     )
 )
 def force_update_order_status(
     order_id: UUID,
     payload: AdminForceStatusRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current=Depends(require_super_admin)
 ):
-    return AdminOrderService.force_update_order_status(db, str(order_id), payload)
+    return AdminOrderService.force_update_order_status(db, str(order_id), payload, current["admin_id"], client_ip(request))
 
 
 @router.get(
@@ -163,10 +168,11 @@ def list_extra_orders(
 def assign_delivery_boy_to_extra_order(
     order_id: UUID,
     payload: AdminAssignDeliveryBoyRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminOrderService.assign_extra_delivery_boy(db, str(order_id), payload)
+    return AdminOrderService.assign_extra_delivery_boy(db, str(order_id), payload, current["admin_id"], client_ip(request))
 
 
 @router.put(
@@ -174,33 +180,33 @@ def assign_delivery_boy_to_extra_order(
     summary="Admin: Reassign Extra Order to Another Provider",
     description=(
         "**Move a one-time order to a different provider.**\n\n"
-        "Use for emergency reassignments when the original provider cannot fulfill. "
-        "Send `new_vendor_id` in the request body."
+        "Same rules as subscription meals; the new kitchen confirms the order again. Send `new_provider_id`."
     )
 )
 def reassign_extra_order_provider(
     order_id: UUID,
     payload: AdminReassignProviderRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminOrderService.reassign_extra_order_provider(db, str(order_id), payload)
+    return AdminOrderService.reassign_extra_order_provider(db, str(order_id), payload, current["admin_id"], client_ip(request))
 
 
 @router.put(
     "/extra-orders/{order_id}/status",
     summary="Admin: Force Update Extra Order Status",
     description=(
-        "**Override a one-time order's status to any value.**\n\n"
-        "Use only for dispute resolution or data correction. "
-        "Normal status changes should go through the provider endpoint.\n\n"
+        "**Correct a stuck one-time order.** Same rules as subscription meals: `delivered` settles once, "
+        "`cancelled` refunds once, `reason` is required and audited.\n\n"
         "**Requires:** `super_admin` role."
     )
 )
 def force_update_extra_order_status(
     order_id: UUID,
     payload: AdminForceStatusRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current=Depends(require_super_admin)
 ):
-    return AdminOrderService.force_update_extra_order_status(db, str(order_id), payload)
+    return AdminOrderService.force_update_extra_order_status(db, str(order_id), payload, current["admin_id"], client_ip(request))

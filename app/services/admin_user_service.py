@@ -1,16 +1,45 @@
-from decimal import Decimal
-
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit, business_event
+from app.core.errors import DomainError
+from app.domain import ledger
+from app.domain.pricing import money
 from app.models.user_model import User
 from app.models.user_address_model import UserAddress
 from app.models.subscription_model import Subscription
 from app.models.wallet_model import Wallet
 from app.models.wallet_transaction_model import WalletTransaction
-from app.repositories.wallet_repository import WalletRepository
+from app.services.admin_views import user_view, address_view, subscription_admin_view
+from app.services.auth_common import revoke_sessions
+from app.services.subscription_service import SubscriptionService
 
-VALID_STATUSES = {"active", "inactive", "suspended"}
+VALID_STATUSES = ("active", "inactive", "suspended")
+
+
+def _user(db: Session, user_id, lock: bool = False) -> User:
+    q = db.query(User).filter(User.user_id == user_id)
+    if lock:
+        q = q.with_for_update()
+    user = q.first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+def _txn_view(t) -> dict:
+    return {
+        "wallet_transaction_id": t.wallet_transaction_id,
+        "type": t.type,
+        "reason": t.reason,
+        "amount": t.amount,
+        "balance_before": t.balance_before,
+        "balance_after": t.balance_after,
+        "reference_type": t.reference_type,
+        "reference_id": t.reference_id,
+        "description": t.description,
+        "created_at": t.created_at,
+    }
 
 
 class AdminUserService:
@@ -19,24 +48,19 @@ class AdminUserService:
     def list_users(db: Session, status: str = None, search: str = None, page: int = 1, limit: int = 20):
         query = db.query(User)
         if status:
+            if status not in VALID_STATUSES:
+                raise DomainError(f"status must be one of: {', '.join(VALID_STATUSES)}")
             query = query.filter(User.status == status)
         if search:
             pattern = f"%{search}%"
-            query = query.filter(
-                User.full_name.ilike(pattern) |
-                User.phone.ilike(pattern) |
-                User.email.ilike(pattern)
-            )
+            query = query.filter(User.full_name.ilike(pattern) | User.phone.ilike(pattern) | User.email.ilike(pattern))
         total = query.count()
         users = query.order_by(User.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
-        return {"success": True, "total": total, "page": page, "users": users}
+        return {"success": True, "total": total, "page": page, "users": [user_view(u) for u in users]}
 
     @staticmethod
     def get_user_detail(db: Session, user_id: str):
-        user = db.query(User).filter(User.user_id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
+        user = _user(db, user_id)
         addresses = db.query(UserAddress).filter(UserAddress.user_reference_id == user_id).all()
         subscriptions = (
             db.query(Subscription)
@@ -52,94 +76,108 @@ class AdminUserService:
             .limit(20)
             .all()
         )
-
         return {
             "success": True,
-            "user": user,
-            "addresses": addresses,
-            "subscriptions": subscriptions,
-            "wallet": wallet,
-            "recent_transactions": txns
+            "user": user_view(user),
+            "addresses": [address_view(a) for a in addresses],
+            "subscriptions": [subscription_admin_view(s) for s in subscriptions],
+            "wallet": {
+                "wallet_id": wallet.wallet_id,
+                "user_reference_id": wallet.user_reference_id,
+                "balance": wallet.balance,
+                "created_at": wallet.created_at,
+                "updated_at": wallet.updated_at,
+            } if wallet else None,
+            "recent_transactions": [_txn_view(t) for t in txns],
         }
 
     @staticmethod
-    def update_user_status(db: Session, user_id: str, payload, admin_id: str):
+    def update_user_status(db: Session, user_id: str, payload, admin_id: str, ip: str | None = None):
         if payload.status not in VALID_STATUSES:
-            raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(VALID_STATUSES)}")
+            raise DomainError(f"Invalid status. Must be one of: {', '.join(VALID_STATUSES)}")
 
-        user = db.query(User).filter(User.user_id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+        user = _user(db, user_id, lock=True)
+        before = user_view(user)
 
-        if payload.status == "inactive":
-            active_subs = db.query(Subscription).filter(
+        if payload.status != "active":
+            open_subs = db.query(Subscription).filter(
                 Subscription.user_reference_id == user_id,
-                Subscription.status == "active"
+                Subscription.status.in_(("active", "paused")),
             ).count()
-            if active_subs:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot deactivate user with {active_subs} active subscription(s). Cancel them first."
+            if open_subs:
+                raise DomainError(
+                    f"Cannot block a customer with {open_subs} running subscription(s). Cancel them first "
+                    "(refunds go to the customer's wallet)."
                 )
+            # blocked accounts lose every session immediately
+            revoke_sessions(user)
 
         user.status = payload.status
+        record_audit(
+            db, table="auth.users", record_id=user.user_id,
+            old=before, new={**user_view(user), "reason": payload.reason},
+            actor_id=admin_id, actor_type="admin", ip=ip,
+        )
         db.commit()
-
         return {"success": True, "message": f"User status updated to '{payload.status}'", "user_id": user_id}
 
     @staticmethod
-    def adjust_wallet(db: Session, user_id: str, payload, admin_id: str):
+    def adjust_wallet(db: Session, user_id: str, payload, admin_id: str, idempotency_key: str, ip: str | None = None):
         if payload.type not in ("credit", "debit"):
-            raise HTTPException(status_code=400, detail="type must be 'credit' or 'debit'")
+            raise DomainError("type must be 'credit' or 'debit'")
+        _user(db, user_id)
 
-        user = db.query(User).filter(User.user_id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        amount = Decimal(str(payload.amount))
-        wallet = WalletRepository.get_or_create(db, user_id)
-        balance_before = Decimal(str(wallet.balance))
-
-        if payload.type == "debit" and amount > balance_before:
-            raise HTTPException(status_code=400, detail=f"Insufficient balance. Available: ₹{balance_before}")
-
-        if payload.type == "credit":
-            WalletRepository.credit_balance(db, wallet, amount)
-        else:
-            WalletRepository.deduct_balance(db, wallet, amount)
-
-        WalletRepository.create_transaction(db, {
-            "wallet_reference_id": wallet.wallet_id,
-            "user_reference_id": user_id,
-            "type": payload.type,
-            "reason": "adjustment",
-            "amount": amount,
-            "balance_before": balance_before,
-            "balance_after": Decimal(str(wallet.balance)),
-            "description": payload.reason,
-            "created_by": admin_id,
-        })
+        amount = money(payload.amount)
+        txn = ledger.post_customer(
+            db, user_id,
+            type=payload.type, amount=amount, reason="adjustment",
+            idempotency_key=f"admin_adjust:user:{idempotency_key}",
+            reference_type="admin_adjustment",
+            description=payload.reason if not payload.description else f"{payload.reason} - {payload.description}",
+            created_by=admin_id,
+        )
+        ledger.post_platform(
+            db, entry_type="manual_adjustment",
+            direction="debit" if payload.type == "credit" else "credit",
+            amount=amount, reference_type="wallet_transaction", reference_id=txn.wallet_transaction_id,
+            idempotency_key=f"platform:admin_adjust:user:{idempotency_key}",
+            description=payload.reason,
+        )
+        record_audit(
+            db, table="subscription.wallet_transactions", record_id=txn.wallet_transaction_id, operation="I",
+            new={"user_id": user_id, "type": payload.type, "amount": amount, "reason": payload.reason},
+            actor_id=admin_id, actor_type="admin", ip=ip,
+        )
         db.commit()
-
+        business_event("wallet.admin_adjust", owner="user", owner_id=user_id, type=payload.type, amount=amount, admin_id=admin_id)
         return {
             "success": True,
-            "message": f"Wallet {payload.type}ed ₹{amount}",
-            "balance_before": balance_before,
-            "balance_after": Decimal(str(wallet.balance))
+            "message": f"Wallet {payload.type}ed Rs {amount}",
+            "balance_before": txn.balance_before,
+            "balance_after": txn.balance_after,
         }
 
     @staticmethod
-    def cancel_subscription(db: Session, subscription_id: str, reason: str, admin_id: str):
-        sub = db.query(Subscription).filter(Subscription.subscription_id == subscription_id).first()
+    def cancel_subscription(db: Session, subscription_id: str, reason: str, admin_id: str, ip: str | None = None):
+        sub = (
+            db.query(Subscription)
+            .filter(Subscription.subscription_id == subscription_id)
+            .with_for_update()
+            .first()
+        )
         if not sub:
             raise HTTPException(status_code=404, detail="Subscription not found")
-        if sub.status == "cancelled":
-            raise HTTPException(status_code=400, detail="Subscription is already cancelled")
-
-        from datetime import datetime, timezone
-        sub.status = "cancelled"
-        sub.cancelled_at = datetime.now(timezone.utc)
-        sub.cancel_reason = reason or "Cancelled by admin"
+        before = subscription_admin_view(sub)
+        result = SubscriptionService.cancel(db, sub, reason=reason or "Cancelled by Orleeno support", actor="admin")
+        record_audit(
+            db, table="subscription.subscriptions", record_id=sub.subscription_id,
+            old=before, new={**subscription_admin_view(sub), **result},
+            actor_id=admin_id, actor_type="admin", ip=ip,
+        )
         db.commit()
-
-        return {"success": True, "message": "Subscription cancelled", "subscription_id": subscription_id}
+        return {
+            "success": True,
+            "message": f"Subscription cancelled. Rs {result['refund_amount']} refunded to the customer's wallet.",
+            "subscription_id": subscription_id,
+            **result,
+        }

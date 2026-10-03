@@ -89,3 +89,11 @@ class WalletTransaction(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
+
+    # Deterministic key per business operation (e.g. "skip_refund:<order>").
+    # Unique, so a retried or concurrent request can never post twice.
+    idempotency_key = Column(
+        String(120),
+        nullable=True,
+        unique=True
+    )

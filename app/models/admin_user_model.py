@@ -5,9 +5,10 @@ from sqlalchemy.dialects.postgresql import UUID, CITEXT
 from sqlalchemy.sql import func
 
 from app.core.database import Base
+from app.models.mixins import AccountSecurityMixin
 
 
-class AdminUser(Base):
+class AdminUser(AccountSecurityMixin, Base):
 
     __tablename__ = "admin_users"
 

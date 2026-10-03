@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Header
 
 from sqlalchemy.orm import Session
 
@@ -7,11 +7,13 @@ from uuid import UUID
 from datetime import date
 
 from app.core.database import get_db
+from app.core.rate_limit import limit_by_ip
 from app.dependencies.auth_dependency import get_current_user
 from app.schemas.subscription_schema import (
     SubscriptionPlanListResponse,
     SubscriptionPlanOptionsResponse,
     CreateSubscriptionRequest,
+    SubscriptionQuoteRequest,
     CreateSubscriptionResponse,
     SubscriptionListResponse,
     SubscriptionResponse,
@@ -131,14 +133,35 @@ def list_subscribed_packages(
 def create_subscription(
     payload: CreateSubscriptionRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", max_length=80),
 ):
 
     return SubscriptionService.create_subscription(
         db,
         current_user["user_id"],
-        payload
+        payload,
+        idempotency_key=idempotency_key,
     )
+
+
+@router.post(
+    "/quote",
+    summary="Price a Subscription (no charge)",
+    description=(
+        "Returns the exact breakdown `POST /user/subscription` would charge: package price, "
+        "plan discount, every configured charge (delivery, packaging, SMS, payment gateway, "
+        "Orleeno commission), the total, the wallet balance and any shortfall. All prices are "
+        "computed on the server; the app only displays them."
+    ),
+    dependencies=[Depends(limit_by_ip("quote", 120, 60))],
+)
+def quote_subscription(
+    payload: SubscriptionQuoteRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return SubscriptionService.quote(db, current_user["user_id"], payload)
 
 
 @router.get(

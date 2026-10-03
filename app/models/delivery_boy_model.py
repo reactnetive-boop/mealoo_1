@@ -8,9 +8,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from app.core.database import Base
+from app.models.mixins import AccountSecurityMixin
 
 
-class DeliveryBoy(Base):
+class DeliveryBoy(AccountSecurityMixin, Base):
 
     __tablename__ = "delivery_boys"
 
@@ -76,3 +77,15 @@ class DeliveryBoy(Base):
         server_default=func.now(),
         onupdate=func.now()
     )
+
+    # Admin review after documents are verified: pending | approved | rejected.
+    # Only approved, active partners can be assigned deliveries.
+    approval_status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending"
+    )
+    approval_note = Column(Text, nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    approved_by = Column(UUID(as_uuid=True), nullable=True)
