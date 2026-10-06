@@ -1,189 +1,51 @@
-from datetime import datetime, timedelta, timezone
+"""Customer app accounts."""
 
-from sqlalchemy.orm import Session
-
-from app.repositories.user_otp_repository import UserOTPRepository
+from app.core.clock import now_utc
+from app.core.security import ROLE_CUSTOMER
+from app.models.user_otp_log_model import UserOTPLog
 from app.repositories.user_repository import UserRepository
-from app.utils.otp_generator import generate_otp
-from app.core.security import hash_password, verify_password, create_access_token
+from app.services.account_auth import AccountAuth
+from app.services.auth_common import OtpTable
 
 
-class UserAuthService:
+class CustomerAccountAuth(AccountAuth):
+    role = ROLE_CUSTOMER
+    otp = OtpTable(model=UserOTPLog, identity="contact", code="otp_hash", used="is_used")
+    password_field = "password_hash"
+    id_field = "user_id"
+    otp_extra = {"channel": "sms"}
 
-    @staticmethod
-    def generate_otp(
-        db: Session,
-        phone: str,
-        email: str,
-        password: str
-    ):
+    def find_by_phone(self, db, phone):
+        return UserRepository.get_by_phone(db, phone)
 
-        contact = phone if phone else email
-        channel = "sms" if phone else "email"
+    def find_by_id(self, db, account_id):
+        return UserRepository.get_by_user_id(db, account_id)
 
-        otp = generate_otp()
+    def create(self, db, phone, password_hash, email=None, **_):
+        return UserRepository.create_user(db, {
+            "phone": phone,
+            "email": email or None,
+            "phone_verified": True,
+            "email_verified": False,
+            "password_hash": password_hash,
+            "is_profile_completed": False,
+            "status": "active",
+        })
 
-        otp_data = {
-            "contact": contact,
-            "channel": channel,
-            "purpose": "registration",
-            "otp_hash": hash_password(otp),
-            "hashed_password": hash_password(password),
-            "is_used": False,
-            "attempts": 0,
-            "expires_at": (
-                datetime.now(timezone.utc)
-                + timedelta(minutes=15)
-            ),
-        }
+    def is_active(self, account):
+        return account.status == "active"
 
-        UserOTPRepository.create_otp(db, otp_data)
+    def inactive_message(self, account):
+        return f"Your account is {account.status}. Please contact support."
 
-        # TEMPORARY — integrate SMS/email provider later
-        return {
-            "success": True,
-            "contact": contact,
-            "message": "OTP generated successfully",
-            "otp": otp
-        }
+    def token_claims(self, account):
+        return {"user_id": str(account.user_id), "contact": account.phone or account.email}
 
-    @staticmethod
-    def verify_otp(
-        db: Session,
-        phone: str,
-        email: str,
-        otp: str
-    ):
+    def account_fields(self, account):
+        return {"is_profile_completed": bool(account.is_profile_completed)}
 
-        contact = phone if phone else email
+    def on_login(self, account):
+        account.last_login_at = now_utc()
 
-        otp_record = UserOTPRepository.get_latest_otp(
-            db,
-            contact,
-            "registration"
-        )
 
-        if not otp_record:
-            raise Exception("OTP not found")
-
-        if otp_record.is_used:
-            raise Exception("OTP already used")
-
-        if datetime.now(timezone.utc) > otp_record.expires_at:
-            raise Exception("OTP expired")
-
-        if not verify_password(otp, otp_record.otp_hash):
-
-            otp_record.attempts += 1
-
-            db.commit()
-
-            raise Exception("Invalid OTP")
-
-        otp_record.is_used = True
-        otp_record.verified_at = datetime.now(timezone.utc)
-
-        db.commit()
-
-        user = (
-            UserRepository.get_by_phone(db, phone)
-            if phone
-            else UserRepository.get_by_email(db, email)
-        )
-
-        if user:
-
-            if phone:
-                user.phone_verified = True
-            else:
-                user.email_verified = True
-
-            user.password_hash = otp_record.hashed_password
-
-            db.commit()
-
-            db.refresh(user)
-
-        else:
-
-            user_data = {
-                "phone": phone if phone else None,
-                "email": email if email else None,
-                "phone_verified": bool(phone),
-                "email_verified": bool(email),
-                "password_hash": otp_record.hashed_password,
-                "is_profile_completed": False,
-                "status": "active"
-            }
-
-            user = UserRepository.create_user(db, user_data)
-
-        access_token = create_access_token(
-            {
-                "user_id": str(user.user_id),
-                "contact": contact
-            }
-        )
-
-        return {
-            "success": True,
-            "message": "OTP verified successfully",
-            "user_id": str(user.user_id),
-            "is_profile_completed": user.is_profile_completed,
-            "access_token": access_token,
-            "token_type": "bearer"
-        }
-
-    @staticmethod
-    def login(
-        db: Session,
-        phone: str,
-        email: str,
-        password: str
-    ):
-
-        user = (
-            UserRepository.get_by_phone(db, phone)
-            if phone
-            else UserRepository.get_by_email(db, email)
-        )
-
-        if not user:
-            raise Exception("User not found")
-
-        if not user.password_hash:
-            raise Exception(
-                "Password not set. Please login via OTP."
-            )
-
-        if not verify_password(password, user.password_hash):
-            raise Exception("Invalid password")
-
-        user.last_login_at = datetime.now(timezone.utc)
-
-        db.commit()
-
-        contact = phone if phone else email
-
-        access_token = create_access_token(
-            {
-                "user_id": str(user.user_id),
-                "contact": contact
-            }
-        )
-
-        return {
-            "success": True,
-            "message": "Login successful",
-            "user_id": str(user.user_id),
-            "access_token": access_token,
-            "token_type": "bearer"
-        }
-
-    @staticmethod
-    async def logout_user():
-
-        return {
-            "success": True,
-            "message": "Logged out successfully"
-        }
+UserAuthService = CustomerAccountAuth()

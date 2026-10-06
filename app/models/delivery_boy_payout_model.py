@@ -4,6 +4,7 @@ from sqlalchemy import Column, String, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
+from app.core.crypto import EncryptedString
 from app.core.database import Base
 
 
@@ -40,7 +41,8 @@ class DeliveryBoyPayoutDetails(Base):
     # Bank transfer details — all optional so a partner can save UPI only.
     account_holder_name = Column(String(128), nullable=True)
 
-    account_number = Column(String(30), nullable=True)
+    # encrypted at rest (app.core.crypto)
+    account_number = Column(EncryptedString, nullable=True)
 
     ifsc_code = Column(String(20), nullable=True)
 

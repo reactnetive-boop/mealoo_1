@@ -86,3 +86,38 @@ def meal_type_to_list(value) -> list:
         return []
 
     return [slot.strip() for slot in str(value).split(",") if slot.strip()]
+
+
+# ── Food type ─────────────────────────────────────────────────
+
+FOOD_TYPES = ("veg", "non_veg", "egg", "vegan", "jain")
+
+_FOOD_ALIASES = {
+    "vegetarian": "veg",
+    "nonveg": "non_veg",
+    "non_vegetarian": "non_veg",
+    "eggetarian": "egg",
+}
+
+
+def normalize_food_type(value) -> str:
+    """
+    Accept "Veg, Jain", ["veg", "jain"], "non-veg" ... and return the canonical
+    comma separated form ("veg,jain"). Unknown values raise ValueError (422).
+    """
+
+    if value is None:
+        raise ValueError("food_type is required")
+    tokens = value if isinstance(value, (list, tuple, set)) else str(value).replace("|", ",").split(",")
+    selected = set()
+    for token in tokens:
+        t = str(token).strip().lower().replace(" ", "_").replace("-", "_")
+        if not t:
+            continue
+        t = _FOOD_ALIASES.get(t, t)
+        if t not in FOOD_TYPES:
+            raise ValueError(f"Invalid food_type '{token}'. Allowed: {', '.join(FOOD_TYPES)}")
+        selected.add(t)
+    if not selected:
+        raise ValueError("food_type must contain at least one value")
+    return ",".join(t for t in FOOD_TYPES if t in selected)

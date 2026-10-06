@@ -1,16 +1,18 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from sqlalchemy.orm import Session
 
 from uuid import UUID
 
 from app.core.database import get_db
+from app.core.paging import Paging, paging
 from app.dependencies.auth_dependency import get_current_user
 from app.schemas.review_schema import (
     AddReviewRequest,
     UpdateReviewRequest,
     ReviewResponse,
-    ReviewListResponse
+    ReviewListResponse,
+    PublicReviewListResponse,
 )
 from app.services.review_service import ReviewService
 
@@ -56,14 +58,11 @@ def add_review(
     )
 )
 def get_my_reviews(
+    page: Paging = Depends(paging),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-
-    return ReviewService.get_my_reviews(
-        db,
-        current_user["user_id"]
-    )
+    return ReviewService.get_my_reviews(db, current_user["user_id"], page)
 
 
 @router.get(
@@ -140,7 +139,7 @@ def delete_review(
 
 @router.get(
     "/vendor/{vendor_id}",
-    response_model=ReviewListResponse,
+    response_model=PublicReviewListResponse,
     summary="Get All Reviews for a Vendor",
     description=(
         "**Fetch all public reviews left for a specific vendor.**\n\n"
@@ -151,11 +150,9 @@ def delete_review(
 )
 def get_vendor_reviews(
     vendor_id: UUID,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-
-    return ReviewService.get_vendor_reviews(
-        db,
-        vendor_id
-    )
+    return ReviewService.get_vendor_reviews(db, vendor_id, page=page, limit=limit)

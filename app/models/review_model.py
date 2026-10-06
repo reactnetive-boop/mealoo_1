@@ -59,6 +59,13 @@ class Review(Base):
         nullable=True
     )
 
+    # A specific delivered meal of a subscription (subscription.orders)
+    subscription_order_reference_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("subscription.orders.order_id", name="reviews_subscription_order_id_fkey"),
+        nullable=True,
+    )
+
     package_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey("master.menu_packages.package_id", name="reviews_package_id_fkey"),

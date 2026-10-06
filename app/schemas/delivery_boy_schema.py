@@ -1,33 +1,49 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.payout_schema import PayoutDetailsRequest
+
 
 # ── Auth ──────────────────────────────────────────────────
 
+MOBILE_PATTERN = r"^[6-9]\d{9}$"
+
+
 class DeliveryBoyRegisterRequest(BaseModel):
-    mobile_number: str = Field(..., min_length=10, max_length=15)
-    password: str = Field(..., min_length=6)
+    mobile_number: str = Field(..., pattern=MOBILE_PATTERN)
+    password: str = Field(..., min_length=8, max_length=64)
 
 
 class DeliveryBoyVerifyOTPRequest(BaseModel):
-    mobile_number: str
-    otp: str = Field(..., min_length=6, max_length=6)
+    mobile_number: str = Field(..., pattern=MOBILE_PATTERN)
+    otp: str = Field(..., pattern=r"^\d{6}$")
 
 
 class DeliveryBoyLoginRequest(BaseModel):
-    mobile_number: str
-    password: str
+    mobile_number: str = Field(..., min_length=10, max_length=15)
+    password: str = Field(..., min_length=1, max_length=64)
+
+
+class DeliveryBoyForgotPasswordRequest(BaseModel):
+    mobile_number: str = Field(..., pattern=MOBILE_PATTERN)
+
+
+class DeliveryBoyResetPasswordRequest(BaseModel):
+    mobile_number: str = Field(..., pattern=MOBILE_PATTERN)
+    reset_token: str = Field(..., min_length=20, max_length=200)
+    new_password: str = Field(..., min_length=8, max_length=64)
+    confirm_password: str = Field(..., min_length=8, max_length=64)
 
 
 class DeliveryBoyRegisterResponse(BaseModel):
     success: bool
     contact: str
     message: str
-    otp: str  # remove in production — send via SMS
+    otp: Optional[str] = None  # only outside production (no SMS gateway yet)
 
 
 class DeliveryBoyAuthResponse(BaseModel):
@@ -57,17 +73,19 @@ class DeliveryBoyProfileResponse(BaseModel):
     vehicle_number: Optional[str]
     profile_image: Optional[str]
     assigned_provider_reference_id: Optional[UUID]
+    approval_status: str = "pending"
+    approval_note: Optional[str] = None
     created_at: Optional[datetime]
 
 
 class UpdateDeliveryBoyProfileRequest(BaseModel):
-    full_name: Optional[str] = Field(None, max_length=128)
-    email: Optional[str] = Field(None, max_length=255)
+    full_name: Optional[str] = Field(None, min_length=2, max_length=128)
+    email: Optional[str] = Field(None, max_length=255, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
     date_of_birth: Optional[date] = Field(None, description="YYYY-MM-DD")
-    gender: Optional[str] = Field(None, description="male | female | other")
-    vehicle_type: Optional[str] = Field(None, description="bike | cycle | scooter | car")
-    vehicle_number: Optional[str] = Field(None, max_length=20)
-    is_online: Optional[bool] = Field(None, description="Duty status — true when accepting deliveries")
+    gender: Optional[Literal["male", "female", "other"]] = None
+    vehicle_type: Optional[Literal["bike", "cycle", "scooter", "car"]] = None
+    vehicle_number: Optional[str] = Field(None, min_length=4, max_length=20, pattern=r"^[A-Za-z0-9 -]+$")
+    is_online: Optional[bool] = Field(None, description="Duty status: only online partners can be assigned deliveries")
 
 
 # ── User & Address info (embedded in order detail) ────────
@@ -131,7 +149,26 @@ class DeliverySubscriptionOrderResponse(BaseModel):
     status: str
     is_free_skip: bool
     delivered_at: Optional[datetime]
+    picked_up_at: Optional[datetime] = None
     delivery_notes: Optional[str]
+    # True after too many wrong customer codes; admin must resolve
+    delivery_locked: bool = False
+    # Names and progress for list cards (pickup_status: not_started | preparing |
+    # ready | locked | picked_up | cancelled; delivery_status: pending | picked_up |
+    # on_the_way | delivered | failed | cancelled | skipped)
+    vendor_name: Optional[str] = None
+    vendor_address: Optional[str] = None
+    customer_name: Optional[str] = None
+    delivery_area: Optional[str] = None
+    delivery_address_short: Optional[str] = None
+    pickup_status: Optional[str] = None
+    delivery_status: Optional[str] = None
+    # True after too many wrong kitchen codes; admin must resolve
+    pickup_locked: bool = False
+    out_for_delivery_at: Optional[datetime] = None
+    arrived_at: Optional[datetime] = None
+    # promised delivery time, e.g. {"from": "12:00", "to": "14:30"}
+    delivery_window: Optional[dict] = None
     created_at: Optional[datetime]
 
 
@@ -151,11 +188,14 @@ class DeliverySubscriptionOrderDetailResponse(BaseModel):
 
 
 class PickupRequest(BaseModel):
+    # The kitchen's 6-digit code for today; proves the hand-over at that kitchen
+    pickup_code: str = Field(..., pattern=r"^\d{6}$", description="Today's pickup code from the kitchen")
     delivery_notes: Optional[str] = Field(None, max_length=500)
 
 
 class DeliverRequest(BaseModel):
-    otp: str = Field(..., min_length=6, max_length=6, description="OTP received from user")
+    # 6-digit code the customer reads out at the door
+    otp: str = Field(..., pattern=r"^\d{6}$", description="Delivery code from the customer")
     delivery_notes: Optional[str] = Field(None, max_length=500)
 
 
@@ -164,6 +204,10 @@ class OrderActionResponse(BaseModel):
     message: str
     order_id: UUID
     status: str
+    # True when the action had already happened (retried request); nothing changed
+    already_done: bool = False
+    # other packages of the same one-time checkout that moved with this one (one trip)
+    also_updated: List[UUID] = []
 
 
 # ── Extra Orders ──────────────────────────────────────────
@@ -181,6 +225,26 @@ class DeliveryExtraOrderResponse(BaseModel):
     delivery_date: date
     meal_slot: str
     status: str
+    delivered_at: Optional[datetime] = None
+    picked_up_at: Optional[datetime] = None
+    delivery_locked: bool = False
+    package_name: Optional[str] = None
+    # Names and progress for list cards (pickup_status: not_started | preparing |
+    # ready | locked | picked_up | cancelled; delivery_status: pending | picked_up |
+    # on_the_way | delivered | failed | cancelled | skipped)
+    vendor_name: Optional[str] = None
+    vendor_address: Optional[str] = None
+    customer_name: Optional[str] = None
+    delivery_area: Optional[str] = None
+    delivery_address_short: Optional[str] = None
+    pickup_status: Optional[str] = None
+    delivery_status: Optional[str] = None
+    # True after too many wrong kitchen codes; admin must resolve
+    pickup_locked: bool = False
+    out_for_delivery_at: Optional[datetime] = None
+    arrived_at: Optional[datetime] = None
+    # promised delivery time, e.g. {"from": "12:00", "to": "14:30"}
+    delivery_window: Optional[dict] = None
     created_at: Optional[datetime]
 
 
@@ -215,8 +279,10 @@ class DeliveryBoyDocumentResponse(BaseModel):
 
     delivery_boy_document_id: UUID
     document_type: str
-    file_url: str
+    # Private file: fetch through GET /delivery/documents/{id}/file
+    file_url: Optional[str] = None
     status: str
+    remarks: Optional[str] = None
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
@@ -252,12 +318,7 @@ class GetPayoutDetailsResponse(BaseModel):
     payout_details: Optional[DeliveryBoyPayoutDetailsResponse] = None
 
 
-class UpdatePayoutDetailsRequest(BaseModel):
-    account_holder_name: Optional[str] = Field(None, max_length=128)
-    account_number: Optional[str] = Field(None, max_length=30)
-    ifsc_code: Optional[str] = Field(None, max_length=20)
-    bank_name: Optional[str] = Field(None, max_length=128)
-    upi_id: Optional[str] = Field(None, max_length=128)
+UpdatePayoutDetailsRequest = PayoutDetailsRequest
 
 
 class UpdatePayoutDetailsResponse(BaseModel):
@@ -334,3 +395,23 @@ class NotificationListResponse(BaseModel):
     total: int
     unread: int
     notifications: List[DeliveryBoyNotificationResponse]
+
+
+class DeliveryWithdrawalRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0, le=1000000, max_digits=12, decimal_places=2)
+    note: Optional[str] = Field(None, max_length=255)
+
+
+class LeaveRequest(BaseModel):
+    leave_date: date
+    reason: Optional[str] = Field(None, max_length=255)
+
+
+class BulkPickupRequest(BaseModel):
+    provider_id: UUID
+    pickup_code: str = Field(..., min_length=4, max_length=10)
+
+
+class DeliveryFailedRequest(BaseModel):
+    reason: Literal["customer_unavailable", "wrong_address", "customer_refused", "other"]
+    note: Optional[str] = Field(None, max_length=300)

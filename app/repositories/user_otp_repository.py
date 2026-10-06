@@ -15,7 +15,7 @@ class UserOTPRepository:
 
         db.add(otp_log)
 
-        db.commit()
+        db.flush()
 
         db.refresh(otp_log)
 

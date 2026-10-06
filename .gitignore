@@ -28,3 +28,9 @@ htmlcov/
 
 uploads
 uploads/*
+# Database dumps (may contain personal data) and runtime uploads
+*.sql
+*.dump
+uploads/
+env/
+tests/.uploads/

@@ -1,119 +1,54 @@
-from datetime import datetime, timedelta, timezone
+"""Delivery partner app accounts."""
 
-from fastapi import HTTPException
-from sqlalchemy.orm import Session
-
+from app.core.security import ROLE_DELIVERY
+from app.models.delivery_boy_otp_log_model import DeliveryBoyOTPLog
 from app.repositories.delivery_boy_repository import DeliveryBoyRepository
-from app.core.security import hash_password, verify_password, create_access_token
-from app.utils.otp_generator import generate_otp
+from app.services.account_auth import AccountAuth
+from app.services.auth_common import OtpTable
 
 
-class DeliveryBoyAuthService:
+def _profile_completed(boy) -> bool:
+    return bool(boy.full_name and boy.vehicle_type)
 
-    @staticmethod
-    def generate_otp(db: Session, mobile_number: str, password: str):
-        otp = generate_otp()
 
-        DeliveryBoyRepository.create_otp(db, {
-            "mobile_number": mobile_number,
-            "otp": otp,
-            "hashed_password": hash_password(password),
-            "is_verified": False,
-            "attempts": 0,
-            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15),
+class DeliveryPartnerAccountAuth(AccountAuth):
+    role = ROLE_DELIVERY
+    otp = OtpTable(model=DeliveryBoyOTPLog, identity="mobile_number", code="otp", used="is_verified")
+    password_field = "hashed_password"
+    id_field = "delivery_boy_id"
+    reset_otp_password = ""
+
+    def find_by_phone(self, db, phone):
+        return DeliveryBoyRepository.get_by_mobile(db, phone)
+
+    def find_by_id(self, db, account_id):
+        return DeliveryBoyRepository.get_by_id(db, account_id)
+
+    def create(self, db, phone, password_hash, **fields):
+        # New partners start offline and pending admin approval
+        return DeliveryBoyRepository.create(db, {
+            "mobile_number": phone,
+            "hashed_password": password_hash,
+            "is_mobile_verified": True,
+            "is_active": True,
+            "is_online": False,
+            "approval_status": "pending",
         })
 
-        return {
-            "success": True,
-            "contact": mobile_number,
-            "message": "OTP generated successfully",
-            "otp": otp  # remove in production — send via SMS
-        }
+    def is_active(self, account):
+        return bool(account.is_active)
 
-    @staticmethod
-    def verify_otp(db: Session, mobile_number: str, otp: str):
-        record = DeliveryBoyRepository.get_latest_otp(db, mobile_number)
+    def inactive_message(self, account):
+        return "Account is deactivated. Please contact support."
 
-        if not record:
-            raise HTTPException(status_code=400, detail="OTP not found")
-        if record.is_verified:
-            raise HTTPException(status_code=400, detail="OTP already used")
-        if datetime.now(timezone.utc) > record.expires_at:
-            raise HTTPException(status_code=400, detail="OTP expired")
-        if record.otp != otp:
-            record.attempts += 1
-            db.commit()
-            raise HTTPException(status_code=400, detail="Invalid OTP")
+    def token_claims(self, account):
+        return {"delivery_boy_id": str(account.delivery_boy_id), "mobile_number": account.mobile_number}
 
-        record.is_verified = True
-        db.commit()
+    def account_fields(self, account):
+        return {"is_profile_completed": _profile_completed(account)}
 
-        boy = DeliveryBoyRepository.get_by_mobile(db, mobile_number)
+    def on_logout(self, account):
+        account.is_online = False
 
-        if boy:
-            boy.hashed_password = record.hashed_password
-            boy.is_mobile_verified = True
-            db.commit()
-            db.refresh(boy)
-        else:
-            boy = DeliveryBoyRepository.create(db, {
-                "mobile_number": mobile_number,
-                "hashed_password": record.hashed_password,
-                "is_mobile_verified": True,
-                "is_active": True,
-            })
 
-        access_token = create_access_token({
-            "delivery_boy_id": str(boy.delivery_boy_id),
-            "mobile_number": boy.mobile_number,
-            "role": "delivery_boy"
-        })
-
-        is_profile_completed = bool(boy.full_name and boy.vehicle_type)
-
-        return {
-            "success": True,
-            "message": "OTP verified successfully",
-            "delivery_boy_id": str(boy.delivery_boy_id),
-            "is_profile_completed": is_profile_completed,
-            "access_token": access_token,
-            "token_type": "bearer"
-        }
-
-    @staticmethod
-    def login(db: Session, mobile_number: str, password: str):
-        boy = DeliveryBoyRepository.get_by_mobile(db, mobile_number)
-
-        if not boy:
-            raise HTTPException(status_code=404, detail="Delivery boy not found")
-        if not boy.is_mobile_verified:
-            raise HTTPException(status_code=403, detail="Mobile number not verified")
-        if not boy.is_active:
-            raise HTTPException(status_code=403, detail="Account is deactivated")
-        if not verify_password(password, boy.hashed_password):
-            raise HTTPException(status_code=401, detail="Invalid password")
-
-        access_token = create_access_token({
-            "delivery_boy_id": str(boy.delivery_boy_id),
-            "mobile_number": boy.mobile_number,
-            "role": "delivery_boy"
-        })
-
-        is_profile_completed = bool(boy.full_name and boy.vehicle_type)
-
-        return {
-            "success": True,
-            "message": "Login successful",
-            "delivery_boy_id": str(boy.delivery_boy_id),
-            "is_profile_completed": is_profile_completed,
-            "access_token": access_token,
-            "token_type": "bearer"
-        }
-
-    @staticmethod
-    async def logout_delivery_boy():
-
-        return {
-            "success": True,
-            "message": "Logged out successfully"
-        }
+DeliveryBoyAuthService = DeliveryPartnerAccountAuth()

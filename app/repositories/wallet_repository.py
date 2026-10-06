@@ -1,4 +1,3 @@
-import uuid
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -47,32 +46,6 @@ class WalletRepository:
             db.add(wallet)
 
             db.flush()
-
-        return wallet
-
-    @staticmethod
-    def credit_balance(
-        db: Session,
-        wallet: Wallet,
-        amount
-    ):
-
-        wallet.balance = wallet.balance + amount
-
-        db.flush()
-
-        return wallet
-
-    @staticmethod
-    def deduct_balance(
-        db: Session,
-        wallet: Wallet,
-        amount
-    ):
-
-        wallet.balance = wallet.balance - amount
-
-        db.flush()
 
         return wallet
 

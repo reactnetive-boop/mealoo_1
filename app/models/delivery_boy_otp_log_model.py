@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -17,14 +17,23 @@ class DeliveryBoyOTPLog(Base):
 
     mobile_number = Column(String(15), nullable=False, index=True)
 
-    otp = Column(String(6), nullable=False)
+    # Keyed hash of the code, never the code itself
+    otp = Column(Text, nullable=False)
 
+    # Only set for registration OTPs (the password chosen at sign-up)
     hashed_password = Column(String, nullable=False)
+
+    # 'registration' | 'password_reset'
+    purpose = Column(String(30), nullable=False, default="registration", server_default="registration")
 
     is_verified = Column(Boolean, default=False)
 
-    attempts = Column(Integer, default=0)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
 
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    reset_token_hash = Column(Text, nullable=True)
+
+    reset_token_expires_at = Column(DateTime(timezone=True), nullable=True)

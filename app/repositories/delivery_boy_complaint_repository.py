@@ -9,7 +9,7 @@ class DeliveryBoyComplaintRepository:
     def create(db: Session, data: dict) -> DeliveryBoyComplaint:
         complaint = DeliveryBoyComplaint(**data)
         db.add(complaint)
-        db.commit()
+        db.flush()
         db.refresh(complaint)
         return complaint
 
@@ -48,13 +48,13 @@ class DeliveryBoyComplaintRepository:
     def update(db: Session, complaint: DeliveryBoyComplaint, data: dict) -> DeliveryBoyComplaint:
         for key, value in data.items():
             setattr(complaint, key, value)
-        db.commit()
+        db.flush()
         db.refresh(complaint)
         return complaint
 
     @staticmethod
     def withdraw(db: Session, complaint: DeliveryBoyComplaint) -> DeliveryBoyComplaint:
         complaint.status = "closed"
-        db.commit()
+        db.flush()
         db.refresh(complaint)
         return complaint

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Header
 
 from sqlalchemy.orm import Session
 
@@ -7,11 +7,14 @@ from uuid import UUID
 from datetime import date
 
 from app.core.database import get_db
+from app.core.paging import Paging, paging
+from app.core.rate_limit import limit_by_ip
 from app.dependencies.auth_dependency import get_current_user
 from app.schemas.subscription_schema import (
     SubscriptionPlanListResponse,
     SubscriptionPlanOptionsResponse,
     CreateSubscriptionRequest,
+    SubscriptionQuoteRequest,
     CreateSubscriptionResponse,
     SubscriptionListResponse,
     SubscriptionResponse,
@@ -25,7 +28,6 @@ from app.schemas.subscription_schema import (
     UserSubscriptionOrderDetailResponse,
     SkipOrderResponse,
 )
-from app.schemas.user_menu_schema import UserPackageListResponse
 from app.services.subscription_service import SubscriptionService
 from app.services.package_switch_service import PackageSwitchService
 
@@ -131,14 +133,35 @@ def list_subscribed_packages(
 def create_subscription(
     payload: CreateSubscriptionRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_current_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", max_length=80),
 ):
 
     return SubscriptionService.create_subscription(
         db,
         current_user["user_id"],
-        payload
+        payload,
+        idempotency_key=idempotency_key,
     )
+
+
+@router.post(
+    "/quote",
+    summary="Price a Subscription (no charge)",
+    description=(
+        "Returns the exact breakdown `POST /user/subscription` would charge: package price, "
+        "plan discount, every configured charge (delivery, packaging, SMS, payment gateway, "
+        "Orleeno commission), the total, the wallet balance and any shortfall. All prices are "
+        "computed on the server; the app only displays them."
+    ),
+    dependencies=[Depends(limit_by_ip("quote", 120, 60))],
+)
+def quote_subscription(
+    payload: SubscriptionQuoteRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return SubscriptionService.quote(db, current_user["user_id"], payload)
 
 
 @router.get(
@@ -153,14 +176,11 @@ def create_subscription(
     )
 )
 def get_my_subscriptions(
+    page: Paging = Depends(paging),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-
-    return SubscriptionService.get_my_subscriptions(
-        db,
-        current_user["user_id"]
-    )
+    return SubscriptionService.get_my_subscriptions(db, current_user["user_id"], page)
 
 
 @router.get(
@@ -197,7 +217,7 @@ def get_subscription(
         "(e.g. a `lunch_dinner` plan yields two orders per day). Orders are returned in "
         "date → meal-slot order and include the delivery `status`, the `otp_for_delivery` "
         "the user must share with the delivery partner, and `delivery_boy_reference_id` once assigned.\n\n"
-        "Optional filters: `status` (`scheduled`, `preparing`, `out_for_delivery`, `delivered`, "
+        "Optional filters: `status` (`scheduled`, `preparing`, `ready_for_pickup`, `picked_up`, `out_for_delivery`, `delivered`, "
         "`skipped`, `cancelled`) and `order_date` (YYYY-MM-DD). "
         "`status_summary` gives a per-status count for progress indicators.\n\n"
         "**When to call:** On the 'Subscription Detail' → 'Meal Schedule' / 'Order History' screen, "
@@ -210,7 +230,7 @@ def list_subscription_orders(
     subscription_id: UUID,
     status: str = Query(
         default=None,
-        description="Filter by order status e.g. scheduled, preparing, out_for_delivery, delivered, skipped, cancelled"
+        description="Filter by order status e.g. scheduled, preparing, ready_for_pickup, picked_up, out_for_delivery, delivered, skipped, cancelled"
     ),
     order_date: date = Query(
         default=None,

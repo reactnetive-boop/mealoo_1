@@ -1,4 +1,4 @@
-from datetime import date as date_type, timedelta
+from datetime import date as date_type
 
 from sqlalchemy.orm import Session
 
@@ -14,24 +14,11 @@ from app.models.delivery_boy_model import DeliveryBoy
 class SubscriptionRepository:
 
     @staticmethod
-    def get_active_by_user(
-        db: Session,
-        user_id
-    ):
-
-        return (
-            db.query(Subscription)
-            .filter(
-                Subscription.user_reference_id == user_id,
-                Subscription.status == "active"
-            )
-            .first()
-        )
-
-    @staticmethod
     def get_all_by_user(
         db: Session,
-        user_id
+        user_id,
+        offset: int = 0,
+        limit: int | None = None,
     ):
 
         return (
@@ -42,7 +29,19 @@ class SubscriptionRepository:
             .order_by(
                 Subscription.created_at.desc()
             )
+            .offset(offset)
+            .limit(limit)
             .all()
+        )
+
+    @staticmethod
+    def count_by_user(db: Session, user_id) -> int:
+        return (
+            db.query(Subscription)
+            .filter(
+                Subscription.user_reference_id == user_id
+            )
+            .count()
         )
 
     @staticmethod
@@ -139,38 +138,6 @@ class SubscriptionRepository:
         )
 
     @staticmethod
-    def get_orders_by_vendor(
-        db: Session,
-        vendor_id,
-        order_date: date_type = None,
-        status: str = None
-    ):
-        query = (
-            db.query(Order)
-            .filter(Order.vendor_reference_id == vendor_id)
-        )
-        if order_date:
-            query = query.filter(Order.order_date == order_date)
-        if status:
-            query = query.filter(Order.status == status)
-        return query.order_by(Order.order_date.asc(), Order.meal_slot.asc()).all()
-
-    @staticmethod
-    def get_order_by_id_and_vendor(
-        db: Session,
-        order_id,
-        vendor_id
-    ):
-        return (
-            db.query(Order)
-            .filter(
-                Order.order_id == order_id,
-                Order.vendor_reference_id == vendor_id
-            )
-            .first()
-        )
-
-    @staticmethod
     def get_orders_by_subscription(
         db: Session,
         subscription_id,
@@ -208,21 +175,6 @@ class SubscriptionRepository:
         )
 
     @staticmethod
-    def get_order_by_id_and_subscription(
-        db: Session,
-        order_id,
-        subscription_id
-    ):
-        return (
-            db.query(Order)
-            .filter(
-                Order.order_id == order_id,
-                Order.subscription_reference_id == subscription_id
-            )
-            .first()
-        )
-
-    @staticmethod
     def skip_order(
         db: Session,
         order: Order,
@@ -239,18 +191,6 @@ class SubscriptionRepository:
         db.flush()
 
         return order
-
-    @staticmethod
-    def consume_free_skip(
-        db: Session,
-        subscription: Subscription
-    ) -> Subscription:
-
-        subscription.free_skips_used = (subscription.free_skips_used or 0) + 1
-
-        db.flush()
-
-        return subscription
 
     @staticmethod
     def get_packages_with_menu_by_subscription(

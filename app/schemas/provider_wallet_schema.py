@@ -39,6 +39,7 @@ class ProviderWalletDetailsResponse(BaseModel):
 
     success: bool
     wallet: ProviderWalletResponse
+    pending_withdrawals: List[dict] = []
     recent_transactions: List[ProviderWalletTransactionResponse]
 
 
@@ -54,6 +55,9 @@ class WithdrawalRequest(BaseModel):
     amount: Decimal = Field(
         ...,
         gt=0,
+        le=1000000,
+        max_digits=12,
+        decimal_places=2,
         description="Amount to withdraw (must be positive and <= current balance)"
     )
 
@@ -70,3 +74,4 @@ class WithdrawalResponse(BaseModel):
     balance_before: Decimal
     amount_withdrawn: Decimal
     balance_after: Decimal
+    request: Optional[dict] = None

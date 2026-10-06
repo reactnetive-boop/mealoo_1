@@ -1,0 +1,24 @@
+# CI: lint + migrations + tests (coverage gate 75% in pyproject.toml)
+image: python:3.11
+
+definitions:
+  services:
+    postgres:
+      image: postgres:16
+      variables:
+        POSTGRES_DB: mealoo_test
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: postgres
+
+pipelines:
+  default:
+    - step:
+        name: Lint and test
+        caches: [pip]
+        services: [postgres]
+        script:
+          - pip install -r requirements.txt
+          - ruff check app tests
+          - export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/mealoo_test
+          - export APP_ENV=test JWT_SECRET_KEY=ci-secret-key-that-is-long-enough-1234567890 RUN_SCHEDULER=false
+          - python -m pytest -q

@@ -54,3 +54,8 @@ class DeliveryBoyDocument(Base):
         server_default=func.now(),
         onupdate=func.now()
     )
+
+    # Reviewer's note, shown to the partner when a document is rejected
+    remarks = Column(Text, nullable=True)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    verified_by = Column(UUID(as_uuid=True), nullable=True)

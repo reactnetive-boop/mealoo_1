@@ -45,7 +45,7 @@ class ProviderWalletTransaction(Base):
         nullable=False
     )
 
-    # credit: 'order_delivered' | 'adjustment' | 'manual_credit'
+    # credit: 'order_delivered' | 'no_pickup_compensation' | 'adjustment' | 'manual_credit'
     # debit : 'withdrawal' | 'refund_issued' | 'penalty'
     reason = Column(
         String(50),
@@ -87,4 +87,12 @@ class ProviderWalletTransaction(Base):
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now()
+    )
+
+    # Deterministic key per business operation (e.g. "skip_refund:<order>").
+    # Unique, so a retried or concurrent request can never post twice.
+    idempotency_key = Column(
+        String(120),
+        nullable=True,
+        unique=True
     )

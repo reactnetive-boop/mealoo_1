@@ -2,8 +2,8 @@ import uuid
 
 from sqlalchemy import Column, String, Text, Boolean, DateTime, Numeric, ForeignKey, Index, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func
 
-from datetime import datetime, timezone
 
 from app.core.database import Base
 
@@ -103,11 +103,11 @@ class UserAddress(Base):
 
     created_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc)
+        server_default=func.now()
     )
 
     updated_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        server_default=func.now(),
+        onupdate=func.now()
     )

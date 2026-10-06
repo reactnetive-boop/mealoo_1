@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies.auth_dependency import get_current_provider
+from app.dependencies.auth_dependency import get_active_provider as get_current_provider
 from app.services.provider_complaint_service import ProviderComplaintService
 from app.schemas.provider_complaint_schema import (
     RaiseProviderComplaintRequest,

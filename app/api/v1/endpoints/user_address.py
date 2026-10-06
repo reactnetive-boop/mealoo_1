@@ -41,7 +41,7 @@ def add_address(
             payload
         )
 
-    except Exception as e:
+    except Exception:
 
         raise
 
@@ -117,7 +117,7 @@ def update_address(
             payload
         )
 
-    except Exception as e:
+    except Exception:
 
         raise
 
@@ -146,6 +146,6 @@ def delete_address(
             address_id
         )
 
-    except Exception as e:
+    except Exception:
 
         raise

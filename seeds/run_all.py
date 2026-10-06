@@ -20,6 +20,10 @@ def run(label, fn):
 
 
 if __name__ == "__main__":
+    # Demo data carries well-known test passwords; it must never reach production.
+    if os.getenv("APP_ENV", "development").strip().lower() == "production":
+        raise SystemExit("Refusing to load demo seed data with APP_ENV=production")
+
     # ── Standalone (no FK deps) ────────────────────────────────────────────
     from seeds.admin_users_seeder import seed as seed_admins
     from seeds.serviceable_pincodes_seeder import seed as seed_pincodes

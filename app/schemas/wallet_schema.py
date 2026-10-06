@@ -11,7 +11,9 @@ class WalletRechargeRequest(BaseModel):
     amount: Decimal = Field(
         ...,
         gt=0,
-        description="Amount to add to wallet (must be positive)"
+        max_digits=10,
+        decimal_places=2,
+        description="Amount to add to wallet (positive, up to 2 decimals)"
     )
 
     description: Optional[str] = Field(
@@ -37,6 +39,10 @@ class WalletTransactionResponse(BaseModel):
 
     balance_after: Decimal
 
+    reference_type: Optional[str] = None
+
+    reference_id: Optional[UUID] = None
+
     description: Optional[str]
 
     created_at: Optional[datetime]
@@ -46,7 +52,8 @@ class WalletResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    wallet_id: UUID
+    # None until the first credit creates the wallet row
+    wallet_id: Optional[UUID] = None
 
     user_reference_id: UUID
 
@@ -77,6 +84,8 @@ class WalletRechargeResponse(BaseModel):
     amount_added: Decimal
 
     balance_after: Decimal
+
+    payment_id: Optional[UUID] = None
 
 
 class WalletTransactionListResponse(BaseModel):

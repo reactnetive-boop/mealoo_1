@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import Column, String, SmallInteger, Integer, Numeric, Text, Date, DateTime, ForeignKey, CheckConstraint, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -20,6 +20,7 @@ class Subscription(Base):
         Index("idx_subscriptions_vendor", "vendor_reference_id"),
         Index("idx_subscriptions_status", "status"),
         Index("idx_subscriptions_dates", "start_date", "end_date"),
+        Index("idx_subscriptions_delivery_boy", "delivery_boy_reference_id"),
         {"schema": "subscription"},
     )
 
@@ -53,6 +54,14 @@ class Subscription(Base):
         UUID(as_uuid=True),
         ForeignKey("auth.user_addresses.user_address_id", name="subscriptions_user_address_id_fkey"),
         nullable=False
+    )
+
+    # Delivery partner currently serving this subscription (admin assignment).
+    # New meals inherit it; history lives in subscription_delivery_assignments.
+    delivery_boy_reference_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("delivery.delivery_boys.delivery_boy_id", name="subscriptions_delivery_boy_id_fkey"),
+        nullable=True,
     )
 
     # 'pending' | 'active' | 'paused' | 'cancelled' | 'expired' | 'switched'
@@ -120,6 +129,29 @@ class Subscription(Base):
         Integer,
         nullable=False,
         default=0
+    )
+
+    # Platform charges (delivery, packaging, commission, ...) included in
+    # final_amount. Breakdown and per-meal settlement figures are frozen in
+    # pricing_snapshot so later price changes never touch this subscription.
+    charges_amount = Column(
+        Numeric(10, 2),
+        nullable=False,
+        default=0,
+        server_default="0"
+    )
+
+    pricing_snapshot = Column(
+        JSONB,
+        nullable=True
+    )
+
+    # Total returned to the wallet (skips, cancellation, switch)
+    refunded_amount = Column(
+        Numeric(10, 2),
+        nullable=False,
+        default=0,
+        server_default="0"
     )
 
     notes = Column(

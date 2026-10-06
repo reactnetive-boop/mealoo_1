@@ -11,7 +11,7 @@ OUT_DIR = Path(r"D:\mealoo\docs\api")
 SOURCES = {
     "Provider Auth": ("app/api/v1/endpoints/auth.py", "app/services/auth_service.py, app/services/otp_service.py"),
     "Provider": ("app/api/v1/endpoints/provider.py", "app/services/provider_service.py"),
-    "Provider Menu": ("app/api/v1/endpoints/menu.py, app/api/v1/endpoints/provider_selected_package_endpoint.py", "app/services/menu_service.py, app/services/provider_selected_package_service.py"),
+    "Provider Menu": ("app/api/v1/endpoints/menu.py, app/api/v1/endpoints/provider_selected_package_endpoint.py", "app/services/menu_service.py"),
     "Provider Package Item": ("app/api/v1/endpoints/package_item.py", "app/services/package_item_service.py"),
     "Provider Package Image": ("app/api/v1/endpoints/package_image.py", "app/services/package_image_service.py"),
     "Provider Orders": ("app/api/v1/endpoints/provider_orders.py", "app/services/provider_order_service.py"),
@@ -132,7 +132,7 @@ stops new ones. Send `null` to remove the limit.
 for today or any `?date=`.
 
 **Source files.** Model: `app/models/provider_model.py` (`daily_meal_quota`) - checks:
-`app/repositories/package_capacity_repository.py` - migration:
+`app/domain/capacity.py` - migration:
 `alembic/versions/d8e9f0a1b2c3_add_provider_quota_and_fssai.py`.
 """,
     },

@@ -19,7 +19,7 @@ class ServiceUnavailableLogRepository:
 
         db.add(log)
 
-        db.commit()
+        db.flush()
 
         db.refresh(log)
 

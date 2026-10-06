@@ -11,7 +11,7 @@ class NotificationRepository:
     def create(db: Session, data: dict) -> Notification:
         notification = Notification(**data)
         db.add(notification)
-        db.commit()
+        db.flush()
         db.refresh(notification)
         return notification
 
@@ -60,7 +60,7 @@ class NotificationRepository:
     def mark_read(db: Session, notification: Notification) -> Notification:
         notification.is_read = True
         notification.read_at = datetime.now(timezone.utc)
-        db.commit()
+        db.flush()
         db.refresh(notification)
         return notification
 
@@ -77,5 +77,5 @@ class NotificationRepository:
                 synchronize_session=False
             )
         )
-        db.commit()
+        db.flush()
         return updated

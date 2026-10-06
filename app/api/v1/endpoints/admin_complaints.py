@@ -1,13 +1,14 @@
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.rate_limit import client_ip
 from app.dependencies.auth_dependency import get_current_admin
 from app.services.admin_complaint_service import AdminComplaintService
-from app.schemas.admin_schema import AdminResolveComplaintRequest
+from app.schemas.admin_schema import AdminAssignComplaintRequest, AdminResolveComplaintRequest
 
 router = APIRouter()
 
@@ -29,13 +30,18 @@ def list_all_complaints(
     complaint_type: Optional[str] = Query(None, description="user, provider, or delivery_boy"),
     status: Optional[str] = Query(None),
     against: Optional[str] = Query(None),
+    assigned_to: Optional[str] = Query(
+        None, description="An admin id, `me` or `unassigned`", pattern=r"^(me|unassigned|[0-9a-fA-F-]{36})$"
+    ),
+    overdue: Optional[bool] = Query(None, description="Only open complaints past the SLA"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
     return AdminComplaintService.list_all_complaints(
-        db, complaint_type=complaint_type, status=status, against=against, page=page, limit=limit
+        db, complaint_type=complaint_type, status=status, against=against, page=page, limit=limit,
+        assigned_to=current["admin_id"] if assigned_to == "me" else assigned_to, overdue=overdue,
     )
 
 
@@ -53,7 +59,7 @@ def get_user_complaint(
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminComplaintService.get_user_complaint(db, str(complaint_id))
+    return AdminComplaintService.get(db, "user", str(complaint_id))
 
 
 @router.get(
@@ -70,7 +76,7 @@ def get_provider_complaint(
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminComplaintService.get_provider_complaint(db, str(complaint_id))
+    return AdminComplaintService.get(db, "provider", str(complaint_id))
 
 
 @router.get(
@@ -87,7 +93,7 @@ def get_delivery_boy_complaint(
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminComplaintService.get_delivery_boy_complaint(db, str(complaint_id))
+    return AdminComplaintService.get(db, "delivery_boy", str(complaint_id))
 
 
 @router.put(
@@ -105,7 +111,7 @@ def resolve_delivery_boy_complaint(
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminComplaintService.resolve_delivery_boy_complaint(db, str(complaint_id), payload, current["admin_id"])
+    return AdminComplaintService.resolve(db, "delivery_boy", str(complaint_id), payload, current["admin_id"])
 
 
 @router.put(
@@ -124,7 +130,7 @@ def resolve_user_complaint(
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminComplaintService.resolve_user_complaint(db, str(complaint_id), payload, current["admin_id"])
+    return AdminComplaintService.resolve(db, "user", str(complaint_id), payload, current["admin_id"])
 
 
 @router.put(
@@ -142,4 +148,25 @@ def resolve_provider_complaint(
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminComplaintService.resolve_provider_complaint(db, str(complaint_id), payload, current["admin_id"])
+    return AdminComplaintService.resolve(db, "provider", str(complaint_id), payload, current["admin_id"])
+
+
+_PATH_KIND = {"user": "user", "provider": "provider", "delivery-boy": "delivery_boy"}
+
+
+@router.put(
+    "/{complainant}/{complaint_id}/assign",
+    summary="Assign a Complaint to an Admin",
+    description="`complainant`: user, provider or delivery-boy. Send `admin_id` null to unassign. Audited.",
+)
+def assign_complaint(
+    complainant: Literal["user", "provider", "delivery-boy"],
+    complaint_id: UUID,
+    payload: AdminAssignComplaintRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin)
+):
+    return AdminComplaintService.assign(
+        db, _PATH_KIND[complainant], str(complaint_id), payload.admin_id, current["admin_id"], client_ip(request)
+    )

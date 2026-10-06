@@ -21,21 +21,6 @@ class UserRepository:
         )
 
     @staticmethod
-    def get_by_email(
-        db: Session,
-        email: str
-    ):
-
-        return (
-            db.query(User)
-            .filter(
-                User.email == email,
-                User.deleted_at == None
-            )
-            .first()
-        )
-
-    @staticmethod
     def get_by_user_id(
         db: Session,
         user_id: str
@@ -59,7 +44,7 @@ class UserRepository:
 
         db.add(user)
 
-        db.commit()
+        db.flush()
 
         db.refresh(user)
 
@@ -80,7 +65,7 @@ class UserRepository:
                 value
             )
 
-        db.commit()
+        db.flush()
 
         db.refresh(user)
 
@@ -95,7 +80,7 @@ class UserRepository:
 
         user.avatar_url = avatar_url
 
-        db.commit()
+        db.flush()
 
         db.refresh(user)
 

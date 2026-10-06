@@ -7,20 +7,6 @@ from app.models.menu_package_image_model import (
 
 class PackageImageRepository:
 
-    @staticmethod
-    def create_package_image(
-        db: Session,
-        package_image: MenuPackageImage
-    ):
-
-        db.add(package_image)
-
-        db.commit()
-
-        db.refresh(package_image)
-
-        return package_image
-
 
     @staticmethod
     def get_image_by_image_id(
@@ -34,21 +20,6 @@ class PackageImageRepository:
 
 
     @staticmethod
-    def remove_primary_images(
-        db: Session,
-        package_id
-    ):
-
-        db.query(MenuPackageImage).filter(
-            MenuPackageImage.package_reference_id == package_id
-        ).update({
-            "is_primary": False
-        })
-
-        db.commit()
-
-
-    @staticmethod
     def delete_package_image(
         db: Session,
         package_image: MenuPackageImage
@@ -56,6 +27,6 @@ class PackageImageRepository:
 
         db.delete(package_image)
 
-        db.commit()
+        db.flush()
 
         return True

@@ -1,12 +1,2 @@
-from app.core.database import SessionLocal
-
-
-def get_db():
-
-    db = SessionLocal()
-
-    try:
-        yield db
-
-    finally:
-        db.close()
+# Kept for older imports: there is one session factory and one get_db.
+from app.core.database import get_db  # noqa: F401

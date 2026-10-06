@@ -3,6 +3,7 @@ from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import DateTime
 from sqlalchemy import Boolean
+from sqlalchemy import Text
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -42,7 +43,9 @@ class OTPLog(Base):
 
     attempts = Column(
         Integer,
-        nullable=True
+        nullable=False,
+        default=0,
+        server_default="0"
     )
 
     expires_at = Column(
@@ -67,4 +70,16 @@ class OTPLog(Base):
         nullable=False,
         server_default="registration",
         default="registration"
+    )
+
+    # Password reset: verifying a reset OTP issues a one-time token (stored
+    # hashed) that the final reset call must present.
+    reset_token_hash = Column(
+        Text,
+        nullable=True
+    )
+
+    reset_token_expires_at = Column(
+        DateTime(timezone=True),
+        nullable=True
     )

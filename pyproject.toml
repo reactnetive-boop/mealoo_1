@@ -1,0 +1,39 @@
+# Tooling config only (the app is installed from requirements.txt).
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["alembic/versions", "env", "uploads"]
+
+[tool.ruff.lint]
+# pyflakes, syntax errors and the bugbear rules that catch real bugs.
+# E711/E712 stay off: `Column == True` is the SQLAlchemy idiom. Tighten gradually.
+select = ["F", "E9", "B006", "B008", "B017", "B904"]
+ignore = [
+    "B008",  # FastAPI's Depends()/Query() in defaults is the intended pattern
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/models/__init__.py" = ["F401", "F403"]
+"tests/*" = ["B017"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/schedulers/order_generator.py", "app/schedulers/order_billing.py"]
+
+[tool.coverage.report]
+fail_under = 75
+show_missing = false
+skip_covered = true
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = false

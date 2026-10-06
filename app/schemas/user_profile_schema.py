@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Literal
 from uuid import UUID
 from datetime import date, datetime
 
@@ -45,19 +45,18 @@ class UpdateUserProfileRequest(BaseModel):
 
     full_name: Optional[str] = Field(
         None,
+        min_length=2,
         max_length=100
     )
 
-    gender: Optional[str] = Field(
-        None,
-        description="male | female | other | prefer_not_to_say"
-    )
+    gender: Optional[Literal["male", "female", "other", "prefer_not_to_say"]] = None
 
     date_of_birth: Optional[date] = None
 
-    avatar_url: Optional[str] = None
+    # The avatar is set only through PUT /user/profile/image (validated upload)
 
     email: Optional[str] = Field(
         None,
-        max_length=255
+        max_length=255,
+        pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
     )

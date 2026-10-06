@@ -1,20 +1,23 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class VerifyPincodeRequest(BaseModel):
-    provider_id: str | None = None
+    # Ignored: an unauthenticated caller cannot speak for a kitchen. Kept so
+    # older app versions that still send it are not rejected.
+    provider_id: str | None = Field(None, max_length=64)
 
-    pincode: int
+    pincode: int = Field(..., ge=100000, le=999999)
 
-    house_no: str | None = None
+    house_no: str | None = Field(None, max_length=100)
 
-    address: str | None = None
+    address: str | None = Field(None, max_length=500)
 
-    landmark: str | None = None
+    landmark: str | None = Field(None, max_length=256)
 
-    city: str | None = None
+    city: str | None = Field(None, max_length=128)
 
-    state: str | None = None
+    state: str | None = Field(None, max_length=128)
+
 
 class VerifyPincodeResponse(BaseModel):
     success: bool

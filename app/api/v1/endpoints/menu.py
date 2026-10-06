@@ -1,33 +1,19 @@
-from fastapi import (
-    APIRouter,
-    Depends,
-    Query
-)
+from uuid import UUID
 
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-
+from app.dependencies.auth_dependency import get_current_provider
 from app.schemas.menu_schema import (
     GetMenuCategoryListResponse,
     MenuCategoryResponse,
     CreateMenuPackageRequest,
     MenuPackageResponse,
-    GetMenuPackageResponse,
     UpdateMenuPackageRequest,
-    CommonResponse
 )
-
-from app.services.menu_service import (
-    MenuService
-)
-from app.services.menu_category_service import (
-    MenuCategoryService
-)
-from app.dependencies.auth_dependency import (
-    get_current_provider
-)
-from uuid import UUID
+from app.services.menu_service import MenuService
+from app.services.menu_category_service import MenuCategoryService
 
 router = APIRouter()
 
@@ -36,30 +22,13 @@ router = APIRouter()
     "/categories",
     response_model=GetMenuCategoryListResponse,
     summary="List All Menu Categories",
-    description=(
-        "**Fetch all available food categories (e.g. South Indian, North Indian, Biryani).**\n\n"
-        "Use this to populate the category picker when a provider is creating a new meal package. "
-        "Each category has a `category_id` required in `POST /menu/package`.\n\n"
-        "**No authentication required.** Can also be used on the user-facing filter/browse screen."
-    )
+    description="Active categories, in display order. Public (used by the kitchen and admin apps).",
 )
-async def get_menu_categories(
-    db: Session = Depends(get_db)
-):
-
-    categories = (
-        MenuCategoryService
-        .get_menu_categories(
-            db=db
-        )
-    )
-
+def get_menu_categories(db: Session = Depends(get_db)):
     return {
         "success": True,
-        "message": (
-            "Menu categories fetched successfully"
-        ),
-        "data": categories
+        "message": "Menu categories fetched successfully",
+        "data": MenuCategoryService.get_menu_categories(db=db),
     }
 
 
@@ -67,23 +36,9 @@ async def get_menu_categories(
     "/categories/{category_id}",
     response_model=MenuCategoryResponse,
     summary="Get Category Detail",
-    description=(
-        "**Fetch details of a single food category by its ID.**\n\n"
-        "Returns category name and description. Use `category_id` from `GET /menu/categories`."
-    )
 )
-async def get_menu_category(
-    category_id: UUID,
-    db: Session = Depends(get_db)
-):
-
-    return (
-        MenuCategoryService
-        .get_category(
-            db=db,
-            category_id=category_id
-        )
-    )
+def get_menu_category(category_id: UUID, db: Session = Depends(get_db)):
+    return MenuCategoryService.get_category(db=db, category_id=category_id)
 
 
 @router.post(
@@ -91,144 +46,82 @@ async def get_menu_category(
     response_model=MenuPackageResponse,
     summary="Create a Meal Package",
     description=(
-        "**Create a new meal package under the logged-in provider's account.**\n\n"
-        "Required: `category_id` (a real UUID from `GET /menu/categories`), `package_name`, "
-        "`price`, `food_type` (veg/non_veg/egg), `meal_type`, and at least one entry in `items`.\n\n"
-        "`meal_type` is the set of slots the package is served in — one, any two, or all three. "
-        "Send a list (`[\"lunch\", \"dinner\"]`), a comma separated string (`\"lunch, dinner\"`) "
-        "or `\"full_day\"` for all three; it is stored canonically as `\"breakfast,lunch,dinner\"` "
-        "order. An unknown slot is rejected with 422, an unknown `category_id` with 400.\n\n"
-        "**Pricing.** When `subscription_price` is sent, `price` is stored as that same amount — "
-        "a new package sells one-time for what it costs a subscriber. Omit `subscription_price` "
-        "and `price` is stored as sent. The two are linked **only at creation**: from then on "
-        "`PUT /menu/update/{package_id}` edits each independently.\n\n"
-        "**The package is created inactive** (`is_active = false`) and is not visible to users "
-        "until an admin approves it with `PUT /admin/packages/{package_id}` "
-        "(`is_active = true`).\n\n"
-        "After creation, add items via `POST /menu/items` and images via `POST /menu/images`. "
-        "Then make the package available to users with `POST /provider/packages/select`.\n\n"
-        "**Flow:** `GET /menu/categories` → `POST /menu/package` → add items → add images → "
-        "select package → admin activation"
-    )
+        "Creates a package for the logged-in kitchen. `price` is the base price (MRP), "
+        "`discounted_price` the selling price (<= price, optional), `subscription_price` the "
+        "per-meal subscription price (optional, defaults to the selling price). The package "
+        "is `pending` until an admin approves it."
+    ),
 )
-async def create_package(
+def create_package(
     request: CreateMenuPackageRequest,
     db: Session = Depends(get_db),
-    current_provider=Depends(
-        get_current_provider
-    )
+    current_provider=Depends(get_current_provider),
 ):
-    print(current_provider)
-    response = (
-        MenuService.create_package(
-            db,
-            str(
-                current_provider['provider_id']
-            ),
-            request
-        )
-    )
+    return MenuService.create_package(db, current_provider["provider_id"], request)
 
-    return response
+
+@router.get(
+    "/catalog",
+    summary="Orleeno Catalogue Packages",
+    description="Ready-made packages created by Orleeno that the kitchen can add to its menu.",
+)
+def list_catalog(db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
+    return MenuService.list_catalog(db, current_provider["provider_id"])
 
 
 @router.get(
     "/get/{package_id}",
-    response_model=GetMenuPackageResponse,
     summary="Get Package Detail (Provider View)",
-    description=(
-        "**Fetch full details of a meal package including items and images.**\n\n"
-        "Use this on the provider's package management screen to review or edit a package. "
-        "Use `package_id` from `GET /menu/list/{provider_id}`."
-    )
+    description="Own packages, catalogue packages and packages this kitchen offers only.",
 )
 def get_package(
     package_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_provider=Depends(get_current_provider),
 ):
-
-    return MenuService.get_package_details(
-        db,
-        package_id
-    )
+    return MenuService.get_package_details(db, current_provider["provider_id"], package_id)
 
 
 @router.get(
     "/list/{provider_id}",
     summary="List Provider's Packages",
     description=(
-        "**Fetch all meal packages created by a specific provider.**\n\n"
-        "Pass `is_predefined=true` to fetch only system-wide predefined packages "
-        "(templates the provider can adopt). Leave it `false` (default) for the provider's own packages.\n\n"
-        "**When to call:** On the provider's 'Manage Packages' screen or when selecting packages to offer."
-    )
+        "Own packages (with approval status and rejection reason) and catalogue packages the "
+        "kitchen offers. `provider_id` must be the logged-in kitchen."
+    ),
 )
 def list_packages(
-    provider_id: str,
-    is_predefined: bool = Query(default=False),
+    provider_id: UUID,
     db: Session = Depends(get_db),
-    current_provider=Depends(get_current_provider)
+    current_provider=Depends(get_current_provider),
 ):
-
-    return MenuService.list_provider_packages(
-        db,
-        provider_id,
-        is_predefined=is_predefined,
-        current_provider_id=str(current_provider['provider_id'])
-    )
+    if str(provider_id) != current_provider["provider_id"]:
+        raise HTTPException(status_code=403, detail="You can only list your own packages")
+    return MenuService.list_provider_packages(db, current_provider["provider_id"])
 
 
 @router.put(
     "/update/{package_id}",
-    response_model=CommonResponse,
     summary="Update a Meal Package",
-    description=(
-        "**Edit details of an existing meal package.**\n\n"
-        "Only the fields provided will be updated. Changes to price or availability take effect immediately "
-        "for new orders (existing subscriptions are not affected).\n\n"
-        "**`price` and `subscription_price` are independent here.** Updating `subscription_price` "
-        "leaves `price` exactly as it was, and vice versa — send both if both should change. "
-        "(They are only copied from each other at creation.)\n\n"
-        "**When to call:** On the 'Edit Package' screen. "
-        "Use `package_id` from `GET /menu/list/{provider_id}`."
-    )
+    description="Own packages only. Changes to what customers buy send the package back for approval.",
 )
 def update_package(
     package_id: UUID,
     request: UpdateMenuPackageRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_provider=Depends(get_current_provider),
 ):
-
-    MenuService.update_package(
-        db,
-        package_id,
-        request
-    )
-
-    return {
-        "success": True,
-        "message": "Package updated successfully"
-    }
+    return MenuService.update_package(db, current_provider["provider_id"], package_id, request)
 
 
 @router.delete(
     "/delete/{package_id}",
-    response_model=CommonResponse,
     summary="Delete a Meal Package",
-    description=(
-        "**Permanently delete a meal package.**\n\n"
-        "Cannot delete a package that has active subscriptions linked to it. "
-        "Consider marking it as unavailable (`is_available=false`) instead to hide it from users "
-        "without affecting existing subscribers.\n\n"
-        "**When to call:** On the provider's package management screen."
-    )
+    description="Soft delete. Refused while running subscriptions use the package.",
 )
 def delete_package(
     package_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_provider=Depends(get_current_provider),
 ):
-
-    return MenuService.delete_package(
-        db,
-        package_id
-    )
+    return MenuService.delete_package(db, current_provider["provider_id"], package_id)

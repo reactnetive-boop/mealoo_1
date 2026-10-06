@@ -1,9 +1,11 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 from uuid import UUID
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from enum import Enum
+
+from app.utils.validators import validate_evidence_urls
 
 
 class ProviderComplaintAgainst(str, Enum):
@@ -15,7 +17,7 @@ class RaiseProviderComplaintRequest(BaseModel):
 
     against: ProviderComplaintAgainst
 
-    subject: str = Field(..., max_length=255)
+    subject: str = Field(..., min_length=3, max_length=255)
 
     description: str = Field(..., min_length=10, max_length=2000)
 
@@ -26,12 +28,18 @@ class RaiseProviderComplaintRequest(BaseModel):
     order_id: Optional[UUID] = None
 
     # 'order' | 'extra_order'
-    order_type: Optional[str] = Field(None, description="order or extra_order")
+    order_type: Optional[Literal["order", "extra_order"]] = Field(None, description="order or extra_order")
 
     evidence_urls: Optional[List[str]] = Field(
         default=[],
-        description="Image/document URLs as evidence"
+        max_length=5,
+        description="Up to 5 https:// links to images or documents"
     )
+
+    @field_validator("evidence_urls")
+    @classmethod
+    def _safe_urls(cls, value):
+        return validate_evidence_urls(value)
 
     @model_validator(mode="after")
     def delivery_boy_required_when_against_delivery_boy(self):
@@ -46,7 +54,12 @@ class UpdateProviderComplaintRequest(BaseModel):
 
     description: Optional[str] = Field(None, min_length=10, max_length=2000)
 
-    evidence_urls: Optional[List[str]] = None
+    evidence_urls: Optional[List[str]] = Field(None, max_length=5)
+
+    @field_validator("evidence_urls")
+    @classmethod
+    def _safe_urls_update(cls, value):
+        return validate_evidence_urls(value)
 
 
 class ProviderComplaintResponse(BaseModel):

@@ -15,7 +15,7 @@ class ComplaintRepository:
 
         db.add(complaint)
 
-        db.commit()
+        db.flush()
 
         db.refresh(complaint)
 
@@ -38,7 +38,9 @@ class ComplaintRepository:
     @staticmethod
     def get_all_by_user(
         db: Session,
-        user_id
+        user_id,
+        offset: int = 0,
+        limit: int | None = None,
     ):
 
         return (
@@ -49,7 +51,19 @@ class ComplaintRepository:
             .order_by(
                 Complaint.created_at.desc()
             )
+            .offset(offset)
+            .limit(limit)
             .all()
+        )
+
+    @staticmethod
+    def count_by_user(db: Session, user_id) -> int:
+        return (
+            db.query(Complaint)
+            .filter(
+                Complaint.user_reference_id == user_id
+            )
+            .count()
         )
 
     @staticmethod
@@ -63,7 +77,7 @@ class ComplaintRepository:
 
             setattr(complaint, key, value)
 
-        db.commit()
+        db.flush()
 
         db.refresh(complaint)
 
@@ -77,7 +91,7 @@ class ComplaintRepository:
 
         complaint.status = "closed"
 
-        db.commit()
+        db.flush()
 
         db.refresh(complaint)
 

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from app.core.database import get_db
+from app.core.paging import Paging, paging
 from app.dependencies.auth_dependency import get_current_user
 from app.schemas.complaint_schema import (
     RaiseComplaintRequest,
@@ -53,14 +54,11 @@ def raise_complaint(
     )
 )
 def get_my_complaints(
+    page: Paging = Depends(paging),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-
-    return ComplaintService.get_my_complaints(
-        db,
-        current_user["user_id"]
-    )
+    return ComplaintService.get_my_complaints(db, current_user["user_id"], page)
 
 
 @router.get(

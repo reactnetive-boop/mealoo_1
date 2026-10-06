@@ -12,7 +12,7 @@ from sqlalchemy import (
     Index
 )
 
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from sqlalchemy.sql import func
 
@@ -46,10 +46,15 @@ class MenuPackage(Base):
         nullable=False
     )
 
+    # The kitchen that owns the package; NULL for Orleeno catalogue packages
+    # (is_predefined), which kitchens offer through provider_selected_packages.
     provider_id = Column(
         UUID(as_uuid=True),
-        nullable=False
+        nullable=True
     )
+
+    # Admin who created a catalogue package
+    created_by_admin_id = Column(UUID(as_uuid=True), nullable=True)
 
     category_reference_id = Column(
         UUID(as_uuid=True),
@@ -137,4 +142,41 @@ class MenuPackage(Base):
         back_populates="menu_package",
         cascade="all, delete-orphan"
     )
-    
+
+    # Admin review: pending | approved | rejected. is_active is the admin's
+    # on/off switch for an approved package; deleted_at is the kitchen's
+    # soft delete. A package is sellable only when approved, active,
+    # available and not deleted.
+    approval_status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending"
+    )
+
+    approval_note = Column(
+        Text,
+        nullable=True
+    )
+
+    approved_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=True
+    )
+
+    approved_by = Column(
+        UUID(as_uuid=True),
+        nullable=True
+    )
+
+    deleted_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=True
+    )
+
+    # A kitchen's edit of an approved (live) package waits here for review
+    # while the approved version stays on sale: {"fields": {...}, "items":
+    # [{item_id, item_name, quantity, item_order}] | absent}.
+    pending_changes = Column(JSONB, nullable=True)
+
+    pending_changes_at = Column(TIMESTAMP(timezone=True), nullable=True)

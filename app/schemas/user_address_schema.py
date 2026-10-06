@@ -16,20 +16,23 @@ class AddUserAddressRequest(BaseModel):
 
     address_line1: str = Field(
         ...,
+        min_length=3,
+        max_length=300,
         description="House/flat number, street"
     )
 
-    address_line2: Optional[str] = None
+    address_line2: Optional[str] = Field(None, max_length=300)
 
-    landmark: Optional[str] = None
+    landmark: Optional[str] = Field(None, max_length=200)
 
-    city: str
+    city: str = Field(..., min_length=2, max_length=100)
 
-    state: str
+    state: str = Field(..., min_length=2, max_length=100)
 
     pin_code: str = Field(
         ...,
-        max_length=10
+        pattern=r"^[1-9]\d{5}$",
+        description="6-digit Indian pincode"
     )
 
     country: Optional[str] = Field(
@@ -37,9 +40,9 @@ class AddUserAddressRequest(BaseModel):
         max_length=6
     )
 
-    latitude: Optional[Decimal] = None
+    latitude: Optional[Decimal] = Field(None, ge=-90, le=90)
 
-    longitude: Optional[Decimal] = None
+    longitude: Optional[Decimal] = Field(None, ge=-180, le=180)
 
     is_default: Optional[bool] = False
 
@@ -51,19 +54,19 @@ class UpdateUserAddressRequest(BaseModel):
         max_length=50
     )
 
-    address_line1: Optional[str] = None
+    address_line1: Optional[str] = Field(None, min_length=3, max_length=300)
 
-    address_line2: Optional[str] = None
+    address_line2: Optional[str] = Field(None, max_length=300)
 
-    landmark: Optional[str] = None
+    landmark: Optional[str] = Field(None, max_length=200)
 
-    city: Optional[str] = None
+    city: Optional[str] = Field(None, min_length=2, max_length=100)
 
-    state: Optional[str] = None
+    state: Optional[str] = Field(None, min_length=2, max_length=100)
 
     pin_code: Optional[str] = Field(
         None,
-        max_length=10
+        pattern=r"^[1-9]\d{5}$"
     )
 
     country: Optional[str] = Field(
@@ -71,9 +74,9 @@ class UpdateUserAddressRequest(BaseModel):
         max_length=6
     )
 
-    latitude: Optional[Decimal] = None
+    latitude: Optional[Decimal] = Field(None, ge=-90, le=90)
 
-    longitude: Optional[Decimal] = None
+    longitude: Optional[Decimal] = Field(None, ge=-180, le=180)
 
     is_default: Optional[bool] = None
 

@@ -10,6 +10,10 @@ class AddToCartRequest(BaseModel):
 
     package_id: UUID
 
+    # Kitchen selling the package (from the menu listing); required for
+    # Orleeno catalogue packages
+    provider_id: Optional[UUID] = None
+
     quantity: int = Field(
         ...,
         ge=1,
@@ -38,6 +42,7 @@ class CartItemResponse(BaseModel):
     price: Decimal
     discounted_price: Optional[Decimal]
     effective_price: Decimal
+    subscription_unit_price: Optional[Decimal] = None
     item_total: Decimal
     created_at: Optional[datetime]
     updated_at: Optional[datetime]

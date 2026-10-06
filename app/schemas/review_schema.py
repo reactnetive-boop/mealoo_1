@@ -7,7 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class AddReviewRequest(BaseModel):
 
-    vendor_id: UUID
+    # Optional: the kitchen is taken from the order / subscription
+    vendor_id: Optional[UUID] = None
 
     vendor_rating: int = Field(
         ...,
@@ -33,6 +34,9 @@ class AddReviewRequest(BaseModel):
     order_id: Optional[UUID] = None
 
     subscription_id: Optional[UUID] = None
+
+    # rate one delivered meal of a subscription
+    subscription_order_id: Optional[UUID] = None
 
     review_date: Optional[date] = None
 
@@ -71,6 +75,8 @@ class ReviewResponse(BaseModel):
 
     order_reference_id: Optional[UUID]
 
+    subscription_order_reference_id: Optional[UUID] = None
+
     subscription_reference_id: Optional[UUID]
 
     vendor_rating: int
@@ -94,4 +100,43 @@ class ReviewListResponse(BaseModel):
 
     total: int
 
+    page: int = 1
+
+    limit: int = 100
+
+    has_more: bool = False
+
     reviews: List[ReviewResponse]
+
+
+class PublicReviewResponse(BaseModel):
+    """A review as other customers see it (no customer identifiers)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    review_id: UUID
+
+    vendor_reference_id: UUID
+
+    package_reference_id: Optional[UUID]
+
+    vendor_rating: int
+
+    package_rating: Optional[int]
+
+    review_text: Optional[str]
+
+    review_date: Optional[date]
+
+    created_at: Optional[datetime]
+
+
+class PublicReviewListResponse(BaseModel):
+
+    success: bool
+
+    total: int
+
+    page: int = 1
+
+    reviews: List[PublicReviewResponse]

@@ -45,7 +45,7 @@ class ProviderRepository:
 
         db.add(provider)
 
-        db.commit()
+        db.flush()
 
         db.refresh(provider)
 
@@ -66,7 +66,7 @@ class ProviderRepository:
                 value
             )
 
-        db.commit()
+        db.flush()
 
         db.refresh(provider)
 
@@ -81,7 +81,7 @@ class ProviderRepository:
 
         provider.profile_image = profile_image
 
-        db.commit()
+        db.flush()
 
         db.refresh(provider)
 
@@ -102,7 +102,7 @@ class ProviderRepository:
         provider.pincode = request.pincode
         provider.is_profile_completed = True
 
-        db.commit()
+        db.flush()
         db.refresh(provider)
 
         return provider
