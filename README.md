@@ -580,3 +580,26 @@ hyperlocal ready
 subscription ready
 
 This README is intentionally detailed so future development can continue using only this documentation without requiring the complete source code initially.
+## Configuration (environment variables added in the October 2026 fixes)
+
+All are optional unless marked; defaults keep local development working.
+
+| Variable | Purpose |
+|---|---|
+| `DATA_ENCRYPTION_KEY` | **Required in production.** Fernet key(s), comma-separated (newest first), encrypting bank account numbers and KYC files. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `REDIS_URL` | Shared rate-limit store across instances (falls back to in-memory) |
+| `SENTRY_DSN`, `LOG_FORMAT=json` | Error monitoring; JSON logs with request id |
+| `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`, `DB_POOL_RECYCLE` | Connection pool |
+| `STORAGE_BACKEND=local\|s3`, `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT_URL`, `S3_PUBLIC_BASE_URL` | Uploads storage |
+| `MAX_IMAGE_DIMENSION` | Uploaded images are re-encoded and resized to this (default 1600) |
+| `SMS_PROVIDER=console\|msg91\|twilio` + `MSG91_*` / `TWILIO_*` | OTP delivery (console = logs only) |
+| `PUSH_PROVIDER=expo`, `EXPO_ACCESS_TOKEN` | Push notifications |
+| `ADMIN_2FA_REQUIRED` | Force TOTP for every admin |
+| `PAYMENT_GATEWAY=razorpay`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Online wallet top-up (off by default) |
+| `AUDIT_LOG_RETENTION_MONTHS` (0 = keep), OTP/notification retention vars | Nightly clean-up at 03:30 |
+| `COMPLAINT_SLA_HOURS` | Complaint overdue threshold |
+| `DELIVERY_FAILED_WAIT_MINUTES` | Wait at the door before a partner may report "could not deliver" |
+
+Test fixtures for the front-ends: `python scripts/dump_admin_fixtures.py` and
+`python scripts/dump_customer_fixtures.py` (test database only).
+CI: `bitbucket-pipelines.yml` in every repo.

@@ -20,7 +20,7 @@ class PayoutRequest(Base):
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="chk_payout_request_amount"),
-        CheckConstraint("owner_type IN ('provider', 'delivery_boy')", name="chk_payout_owner_type"),
+        CheckConstraint("owner_type IN ('provider', 'delivery_boy', 'customer')", name="chk_payout_owner_type"),
         CheckConstraint("status IN ('pending', 'paid', 'rejected')", name="chk_payout_status"),
         Index("idx_payout_requests_owner", "owner_type", "owner_id"),
         Index("idx_payout_requests_status", "status"),

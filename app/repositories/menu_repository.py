@@ -1,11 +1,15 @@
 from sqlalchemy import and_, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.menu_package_model import MenuPackage
 from app.models.menu_package_item_model import MenuPackageItem
 from app.models.provider_model import Provider
 from app.models.provider_selected_package_model import ProviderSelectedPackage
-from app.domain.eligibility import provider_sellable_filter, package_sellable_filter
+from app.domain.eligibility import provider_sellable_filter, package_sellable_filter, serves_pincode_filter
+
+# Package cards always show items and images: load them in two extra queries
+# for the whole list instead of two per package.
+WITH_CHILDREN = (selectinload(MenuPackage.items), selectinload(MenuPackage.images))
 
 
 class MenuRepository:
@@ -43,6 +47,7 @@ class MenuRepository:
 
         return (
             db.query(MenuPackage)
+            .options(*WITH_CHILDREN)
             .filter(
                 MenuPackage.deleted_at.is_(None),
                 or_(
@@ -59,6 +64,7 @@ class MenuRepository:
         """Live Orleeno catalogue packages a kitchen may offer."""
         return (
             db.query(MenuPackage)
+            .options(*WITH_CHILDREN)
             .filter(
                 MenuPackage.is_predefined == True,  # noqa: E712
                 MenuPackage.approval_status == "approved",
@@ -74,13 +80,14 @@ class MenuRepository:
         """(offering, package, provider) rows customers in `pin_code` may buy."""
         return (
             db.query(ProviderSelectedPackage, MenuPackage, Provider)
+            .options(*WITH_CHILDREN)
             .join(MenuPackage, ProviderSelectedPackage.package_id == MenuPackage.package_id)
             .join(Provider, ProviderSelectedPackage.provider_id == Provider.provider_id)
             .filter(
                 ProviderSelectedPackage.is_active == True,  # noqa: E712
                 package_sellable_filter(),
                 provider_sellable_filter(),
-                Provider.pincode == pin_code,
+                serves_pincode_filter(pin_code),
             )
             .order_by(MenuPackage.created_at.desc())
             .all()

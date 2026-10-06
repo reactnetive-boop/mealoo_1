@@ -14,6 +14,7 @@ from app.models.provider_model import Provider
 from app.models.user_address_model import UserAddress
 from app.models.menu_package_model import MenuPackage
 from app.models.extra_order_model import ExtraOrder
+from app.domain.orders import new_codes
 
 TODAY = date.today()
 
@@ -94,6 +95,7 @@ def seed():
                 delivery_date=delivery_date,
                 meal_slot=meal_slot,
                 status=status,
+                **new_codes(),  # seed of the customer's delivery code
             ))
             inserted += 1
             print(f"  + {user.full_name} → {pkg_name} ({meal_slot}, {delivery_date}, {status})")

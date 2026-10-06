@@ -7,10 +7,10 @@ service file) so change requests can be located quickly.
 
 | File | Role | Endpoints |
 |---|---|---|
-| [provider-apis.md](provider-apis.md) | Provider / vendor / kitchen app | 40 |
-| [user-apis.md](user-apis.md) | Customer app | 55 |
+| [provider-apis.md](provider-apis.md) | Provider / vendor / kitchen app | 44 |
+| [user-apis.md](user-apis.md) | Customer app | 58 |
 | [delivery-boy-apis.md](delivery-boy-apis.md) | Delivery partner app (`Mealoo_D`) — includes a verified screen → API map | 29 |
-| [admin-apis.md](admin-apis.md) | Admin panel | 59 |
+| [admin-apis.md](admin-apis.md) | Admin panel | 61 |
 
 ## Regenerating
 

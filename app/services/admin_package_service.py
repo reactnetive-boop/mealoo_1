@@ -1,38 +1,35 @@
-from fastapi import HTTPException
+"""Admin: Orleeno catalogue packages and review of kitchen packages (incl. revisions)."""
+
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.clock import now_utc
 from app.core.errors import DomainError
+from app.domain import notify
+from app.domain import package_revision as revision
 from app.domain.pricing import validate_package_prices
-from app.domain.slots import normalize_plan_slot
+from app.domain.status import EXTRA_OPEN_STATUSES
 from app.models.extra_order_model import ExtraOrder
 from app.models.menu_category_model import MenuCategory
 from app.models.menu_package_model import MenuPackage
 from app.models.provider_model import Provider
-from app.models.subscription_plan_model import SubscriptionPlan
-from app.models.subscription_model import Subscription
-from app.models.serviceable_pincode_model import ServiceablePincode
-from app.models.user_address_model import UserAddress
 from app.repositories.menu_repository import MenuRepository
 from app.services.admin_views import package_admin_view
 from app.services.menu_service import active_subscription_count, package_dict
-
-
 def _package(db: Session, package_id, lock: bool = False) -> MenuPackage:
     q = db.query(MenuPackage).filter(MenuPackage.package_id == package_id)
     if lock:
         q = q.with_for_update()
     pkg = q.first()
     if not pkg:
-        raise HTTPException(status_code=404, detail="Package not found")
+        raise DomainError("Package not found", 404)
     return pkg
 
 
 def _open_extra_orders(db: Session, package_id) -> int:
     return db.query(ExtraOrder).filter(
         ExtraOrder.package_reference_id == package_id,
-        ExtraOrder.status.in_(("pending", "confirmed", "preparing", "out_for_delivery")),
+        ExtraOrder.status.in_(EXTRA_OPEN_STATUSES),
     ).count()
 
 
@@ -57,8 +54,9 @@ class AdminPackageService:
         validate_package_prices(payload.price, payload.discounted_price, payload.subscription_price)
 
         package = MenuRepository.create_package(db, {
-            # Catalogue packages belong to Orleeno; provider_id records the creating admin
-            "provider_id": admin_id,
+            # Catalogue packages belong to Orleeno: no owning kitchen
+            "provider_id": None,
+            "created_by_admin_id": admin_id,
             "category_reference_id": payload.category_id,
             "package_name": payload.package_name,
             "short_description": payload.short_description,
@@ -96,7 +94,7 @@ class AdminPackageService:
     def list_packages(db: Session, is_predefined: bool = None, is_active: bool = None,
                       is_subscription_available: bool = None, approval_status: str = None,
                       provider_id: str = None, search: str = None, include_deleted: bool = False,
-                      page: int = 1, limit: int = 20):
+                      has_pending_changes: bool = None, page: int = 1, limit: int = 20):
         query = db.query(MenuPackage, Provider.business_name).outerjoin(
             Provider, Provider.provider_id == MenuPackage.provider_id
         )
@@ -114,6 +112,10 @@ class AdminPackageService:
             query = query.filter(MenuPackage.provider_id == provider_id)
         if search:
             query = query.filter(MenuPackage.package_name.ilike(f"%{search}%"))
+        if has_pending_changes is not None:
+            query = query.filter(
+                MenuPackage.pending_changes.isnot(None) if has_pending_changes else MenuPackage.pending_changes.is_(None)
+            )
 
         total = query.count()
         rows = query.order_by(MenuPackage.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
@@ -137,6 +139,8 @@ class AdminPackageService:
         pkg = _package(db, package_id, lock=True)
         if pkg.deleted_at is not None:
             raise DomainError("This package was deleted")
+        if pkg.approval_status == "approved" and pkg.pending_changes:
+            return AdminPackageService._review_revision(db, pkg, approve=approve, note=note, admin_id=admin_id, ip=ip)
         before = package_admin_view(pkg)
 
         if approve:
@@ -158,12 +162,50 @@ class AdminPackageService:
             pkg.is_active = False
 
         _audit_package(db, pkg, before, admin_id, ip)
+        if not pkg.is_predefined:
+            notify.kitchen(
+                db, pkg.provider_id, "package_update",
+                "Package approved" if approve else "Package needs changes",
+                f"'{pkg.package_name}' is approved and live." if approve
+                else f"'{pkg.package_name}' was not approved: {note}",
+                {"package_id": str(pkg.package_id)},
+            )
         db.commit()
         running = active_subscription_count(db, pkg.package_id)
         message = "Package approved and live" if approve else "Package rejected"
         if not approve and running:
             message += f"; {running} running subscription(s) continue at their booked price"
         return {"success": True, "message": message, "package": package_admin_view(pkg)}
+
+    @staticmethod
+    def _review_revision(db: Session, pkg, *, approve: bool, note: str | None, admin_id: str, ip: str | None):
+        """A kitchen's edit of a live package: swap it in, or discard it. The package stays on sale either way."""
+        before = package_admin_view(pkg)
+        if approve:
+            validate_package_prices(
+                revision.proposed(pkg, "price"),
+                revision.proposed(pkg, "discounted_price"),
+                revision.proposed(pkg, "subscription_price"),
+            )
+            revision.apply(db, pkg)
+            pkg.approval_note = note
+            pkg.approved_at = now_utc()
+            pkg.approved_by = admin_id
+            title, body = "Package changes approved", f"Your changes to '{pkg.package_name}' are now live."
+        else:
+            if not note:
+                raise DomainError("Give the kitchen a reason for the rejection")
+            revision.discard(pkg)
+            title = "Package changes not approved"
+            body = f"Your changes to '{pkg.package_name}' were not approved: {note} The current version stays on sale."
+        _audit_package(db, pkg, before, admin_id, ip)
+        notify.kitchen(db, pkg.provider_id, "package_update", title, body, {"package_id": str(pkg.package_id)})
+        db.commit()
+        return {
+            "success": True,
+            "message": "Package changes approved and live" if approve else "Package changes rejected; the live version is unchanged",
+            "package": package_admin_view(pkg),
+        }
 
     @staticmethod
     def update_package(db: Session, package_id: str, payload, admin_id: str, ip: str | None = None):
@@ -254,209 +296,3 @@ class AdminPackageService:
 
 # ── Subscription Plan Management ──────────────────────────
 
-def _plan_view(plan: SubscriptionPlan) -> dict:
-    return {
-        "subscription_plan_id": plan.subscription_plan_id,
-        "subscription_type": plan.subscription_type,
-        "meal_slot": plan.meal_slot,
-        "duration_days": plan.duration_days,
-        "is_custom": plan.subscription_type == "custom",
-        "free_skips": plan.free_skips,
-        "discount_percent": plan.discount_percent,
-        "is_active": bool(plan.is_active),
-        "created_at": plan.created_at,
-        "updated_at": plan.updated_at,
-    }
-
-
-class AdminPlanService:
-
-    @staticmethod
-    def create_plan(db: Session, payload, admin_id: str, ip: str | None = None):
-        try:
-            meal_slot = normalize_plan_slot(payload.meal_slot)
-        except ValueError as exc:
-            raise DomainError(str(exc))
-
-        is_custom = payload.subscription_type == "custom"
-        duration = 0 if is_custom else payload.duration_days
-        if not is_custom and duration <= 0:
-            raise DomainError("duration_days must be greater than 0 (only custom plans have no fixed length)")
-
-        existing = db.query(SubscriptionPlan).filter(
-            SubscriptionPlan.subscription_type == payload.subscription_type,
-            SubscriptionPlan.meal_slot == meal_slot,
-        ).first()
-        if existing:
-            raise HTTPException(
-                status_code=409,
-                detail=f"A plan for '{payload.subscription_type}' + '{meal_slot}' already exists."
-            )
-
-        plan = SubscriptionPlan(
-            subscription_type=payload.subscription_type,
-            meal_slot=meal_slot,
-            duration_days=duration,
-            free_skips=payload.free_skips,
-            discount_percent=payload.discount_percent,
-            is_active=True,
-        )
-        db.add(plan)
-        db.flush()
-        record_audit(
-            db, table="master.subscription_plans", record_id=plan.subscription_plan_id, operation="I",
-            new=_plan_view(plan), actor_id=admin_id, actor_type="admin", ip=ip,
-        )
-        db.commit()
-        db.refresh(plan)
-        return {"success": True, "message": "Subscription plan created", "plan": _plan_view(plan)}
-
-    @staticmethod
-    def list_plans(db: Session, is_active: bool = None):
-        query = db.query(SubscriptionPlan)
-        if is_active is not None:
-            query = query.filter(SubscriptionPlan.is_active == is_active)
-        plans = query.order_by(SubscriptionPlan.subscription_type, SubscriptionPlan.meal_slot).all()
-        return {"success": True, "total": len(plans), "plans": [_plan_view(p) for p in plans]}
-
-    @staticmethod
-    def get_plan(db: Session, plan_id: str):
-        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.subscription_plan_id == plan_id).first()
-        if not plan:
-            raise HTTPException(status_code=404, detail="Plan not found")
-        return _plan_view(plan)
-
-    @staticmethod
-    def update_plan(db: Session, plan_id: str, payload, admin_id: str, ip: str | None = None):
-        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.subscription_plan_id == plan_id).with_for_update().first()
-        if not plan:
-            raise HTTPException(status_code=404, detail="Plan not found")
-        before = _plan_view(plan)
-        update_data = payload.model_dump(exclude_unset=True)
-
-        if plan.subscription_type == "custom":
-            update_data.pop("duration_days", None)
-        for key in ("free_skips", "discount_percent", "duration_days", "is_active"):
-            if key in update_data and update_data[key] is None:
-                raise DomainError(f"{key} cannot be empty")
-
-        # Running subscriptions keep the terms they were bought with, so
-        # deactivating or editing a plan only affects new purchases.
-        for key, value in update_data.items():
-            setattr(plan, key, value)
-        record_audit(
-            db, table="master.subscription_plans", record_id=plan.subscription_plan_id,
-            old=before, new=_plan_view(plan), actor_id=admin_id, actor_type="admin", ip=ip,
-        )
-        db.commit()
-        db.refresh(plan)
-        running = db.query(Subscription).filter(
-            Subscription.plan_reference_id == plan.subscription_plan_id,
-            Subscription.status.in_(("active", "paused")),
-        ).count()
-        return {
-            "success": True,
-            "message": "Plan updated. Changes apply to new subscriptions only.",
-            "active_subscriptions_unaffected": running,
-            "plan": _plan_view(plan),
-        }
-
-
-# ── Serviceable Pincodes ──────────────────────────────────
-
-def _pin_view(p: ServiceablePincode) -> dict:
-    return {
-        "pincode_id": p.pincode_id,
-        "pincode": p.pincode,
-        "city": p.city,
-        "state": p.state,
-        "is_active": bool(p.is_active),
-        "created_at": p.created_at,
-    }
-
-
-def _pincode_usage(db: Session, pincode: int) -> dict:
-    providers = db.query(Provider).filter(Provider.pincode == pincode).count()
-    running_subs = (
-        db.query(Subscription)
-        .join(UserAddress, UserAddress.user_address_id == Subscription.user_address_reference_id)
-        .filter(UserAddress.pin_code == str(pincode), Subscription.status.in_(("active", "paused")))
-        .count()
-    )
-    return {"kitchens": providers, "running_subscriptions": running_subs}
-
-
-class AdminPincodeService:
-
-    @staticmethod
-    def list_pincodes(db: Session, is_active: bool = None, city: str = None):
-        query = db.query(ServiceablePincode)
-        if is_active is not None:
-            query = query.filter(ServiceablePincode.is_active == is_active)
-        if city:
-            query = query.filter(ServiceablePincode.city.ilike(f"%{city}%"))
-        pincodes = query.order_by(ServiceablePincode.pincode).all()
-        return {"success": True, "total": len(pincodes), "pincodes": [_pin_view(p) for p in pincodes]}
-
-    @staticmethod
-    def create_pincode(db: Session, payload, admin_id: str, ip: str | None = None):
-        existing = db.query(ServiceablePincode).filter(ServiceablePincode.pincode == payload.pincode).first()
-        if existing:
-            raise HTTPException(status_code=409, detail=f"Pincode {payload.pincode} already exists")
-        pincode = ServiceablePincode(pincode=payload.pincode, city=payload.city, state=payload.state, is_active=True)
-        db.add(pincode)
-        db.flush()
-        record_audit(
-            db, table="master.serviceable_pincodes", operation="I", new=_pin_view(pincode),
-            actor_id=admin_id, actor_type="admin", ip=ip,
-        )
-        db.commit()
-        db.refresh(pincode)
-        return {"success": True, "message": "Pincode added", "pincode": _pin_view(pincode)}
-
-    @staticmethod
-    def update_pincode(db: Session, pincode_id: int, payload, admin_id: str, ip: str | None = None):
-        pincode = db.query(ServiceablePincode).filter(ServiceablePincode.pincode_id == pincode_id).first()
-        if not pincode:
-            raise HTTPException(status_code=404, detail="Pincode not found")
-        before = _pin_view(pincode)
-        update_data = payload.model_dump(exclude_unset=True)
-        for key in ("city", "state", "is_active"):
-            if key in update_data and update_data[key] is None:
-                raise DomainError(f"{key} cannot be empty")
-        for key, value in update_data.items():
-            setattr(pincode, key, value)
-        record_audit(
-            db, table="master.serviceable_pincodes", old=before, new=_pin_view(pincode),
-            actor_id=admin_id, actor_type="admin", ip=ip,
-        )
-        db.commit()
-        db.refresh(pincode)
-        message = "Pincode updated"
-        if before["is_active"] and not pincode.is_active:
-            usage = _pincode_usage(db, pincode.pincode)
-            message = (
-                "Pincode deactivated: no new subscriptions or orders there. "
-                f"{usage['running_subscriptions']} running subscription(s) continue."
-            )
-        return {"success": True, "message": message, "pincode": _pin_view(pincode)}
-
-    @staticmethod
-    def delete_pincode(db: Session, pincode_id: int, admin_id: str, ip: str | None = None):
-        pincode = db.query(ServiceablePincode).filter(ServiceablePincode.pincode_id == pincode_id).first()
-        if not pincode:
-            raise HTTPException(status_code=404, detail="Pincode not found")
-        usage = _pincode_usage(db, pincode.pincode)
-        if usage["kitchens"] or usage["running_subscriptions"]:
-            raise DomainError(
-                f"Pincode is in use ({usage['kitchens']} kitchen(s), {usage['running_subscriptions']} running "
-                "subscription(s)). Deactivate it instead."
-            )
-        before = _pin_view(pincode)
-        db.delete(pincode)
-        record_audit(
-            db, table="master.serviceable_pincodes", operation="D", old=before,
-            actor_id=admin_id, actor_type="admin", ip=ip,
-        )
-        db.commit()
-        return {"success": True, "message": "Pincode deleted"}

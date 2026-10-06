@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Optional
 from uuid import UUID
 
@@ -7,8 +8,10 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.rate_limit import limit_by_ip
 from app.dependencies.auth_dependency import get_delivery_session, get_active_delivery_boy
+from app.domain import partner_leave
 from app.services.delivery_boy_account_service import DeliveryBoyAccountService
 from app.schemas.delivery_boy_schema import (
+    LeaveRequest,
     DeliveryBoyDocumentListResponse,
     DeliveryBoyDocumentUploadResponse,
     GetPayoutDetailsResponse,
@@ -170,3 +173,29 @@ def mark_all_notifications_read(db: Session = Depends(get_db), current=Depends(g
 @router.put("/notifications/{notification_id}/read", summary="Mark a Notification Read")
 def mark_notification_read(notification_id: UUID, db: Session = Depends(get_db), current=Depends(get_delivery_session)):
     return DeliveryBoyAccountService.mark_notification_read(db, current["delivery_boy_id"], notification_id)
+
+
+
+# ── Leave days ────────────────────────────────────────────────
+
+@router.get("/leaves", summary="My Leave Days", description="Upcoming days off.")
+def list_leaves(db: Session = Depends(get_db), current=Depends(get_active_delivery_boy)):
+    return partner_leave.list_leaves(db, current["delivery_boy_id"])
+
+
+@router.post(
+    "/leaves",
+    summary="Take a Day Off",
+    description="Your deliveries that day go back to the kitchen / Orleeno to give to someone else.",
+)
+def add_leave(payload: LeaveRequest, db: Session = Depends(get_db), current=Depends(get_active_delivery_boy)):
+    return partner_leave.add_leave(db, current["delivery_boy_id"], payload.leave_date, payload.reason, "delivery_boy")
+
+
+@router.delete(
+    "/leaves/{leave_date}",
+    summary="Cancel a Day Off",
+    description="Your subscription meals of that day that nobody else took come back to you.",
+)
+def cancel_leave(leave_date: date, db: Session = Depends(get_db), current=Depends(get_active_delivery_boy)):
+    return partner_leave.cancel_leave(db, current["delivery_boy_id"], leave_date)

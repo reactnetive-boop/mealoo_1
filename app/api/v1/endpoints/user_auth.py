@@ -30,7 +30,7 @@ router = APIRouter()
     dependencies=[Depends(limit_by_ip("user_otp", 10, 600))],
 )
 def generate_otp(request: UserGenerateOTPRequest, db: Session = Depends(get_db)):
-    return UserAuthService.generate_otp(db, request.phone, request.email, request.password)
+    return UserAuthService.generate_otp(db, request.phone, request.password)
 
 
 @router.post(
@@ -40,7 +40,7 @@ def generate_otp(request: UserGenerateOTPRequest, db: Session = Depends(get_db))
     dependencies=[Depends(limit_by_ip("user_verify", 20, 600))],
 )
 def verify_otp(request: UserVerifyOTPRequest, db: Session = Depends(get_db)):
-    return UserAuthService.verify_otp(db, request.phone, request.email, request.otp)
+    return UserAuthService.verify_otp(db, request.phone, request.otp, email=request.email)
 
 
 @router.post(
@@ -50,7 +50,7 @@ def verify_otp(request: UserVerifyOTPRequest, db: Session = Depends(get_db)):
     dependencies=[Depends(limit_by_ip("user_login", 20, 300))],
 )
 def login(request: UserLoginRequest, db: Session = Depends(get_db)):
-    return UserAuthService.login(db, request.phone, None, request.password)
+    return UserAuthService.login(db, request.phone, request.password)
 
 
 @router.post(
@@ -101,4 +101,4 @@ def change_password(
     description="Invalidates every token issued to this account so far.",
 )
 def logout_user(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return UserAuthService.logout_user(db, current_user["user_id"])
+    return UserAuthService.logout(db, current_user["user_id"])

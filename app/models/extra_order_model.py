@@ -87,7 +87,8 @@ class ExtraOrder(Base):
         index=True
     )
 
-    # 'pending' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled'
+    # pending -> confirmed -> preparing -> ready_for_pickup -> picked_up ->
+    # out_for_delivery -> delivered; or cancelled (see app/domain/status.py)
     status = Column(
         String(30),
         nullable=False,
@@ -105,9 +106,15 @@ class ExtraOrder(Base):
         onupdate=func.now()
     )
 
-    # Customer-facing 6-digit code the partner must enter at hand-over
+    # Legacy plaintext delivery code (rows created before delivery_code_seed)
     otp_for_delivery = Column(
         String(6),
+        nullable=True
+    )
+
+    # Seed of the customer's 6-digit delivery code (app/domain/verification.py)
+    delivery_code_seed = Column(
+        String(64),
         nullable=True
     )
 
@@ -144,17 +151,40 @@ class ExtraOrder(Base):
         server_default="0"
     )
 
-    # Shown to the kitchen only; the partner enters it at pickup to prove
-    # the hand-over happened at the kitchen.
+    # Retired per-order kitchen code; pickup now uses the kitchen's daily code
     pickup_code = Column(
         String(6),
         nullable=True
+    )
+
+    # Failed kitchen pickup-code attempts; pickup locks once the limit is hit
+    pickup_code_attempts = Column(
+        SmallInteger,
+        nullable=False,
+        default=0,
+        server_default="0"
     )
 
     picked_up_at = Column(
         DateTime(timezone=True),
         nullable=True
     )
+
+    out_for_delivery_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    arrived_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+
+    # The partner reached the address but could not hand over (customer away,
+    # wrong address, refused); see DeliveryBoyOrderService.fail_delivery
+    failed_at = Column(DateTime(timezone=True), nullable=True)
+    failure_reason = Column(String(40), nullable=True)
 
     # Why the order was cancelled: paused | subscription_cancelled |
     # switched | kitchen_holiday | rejected_by_kitchen | customer | admin

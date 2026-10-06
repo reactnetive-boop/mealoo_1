@@ -7,6 +7,7 @@ from uuid import UUID
 from datetime import date
 
 from app.core.database import get_db
+from app.core.paging import Paging, paging
 from app.core.rate_limit import limit_by_ip
 from app.dependencies.auth_dependency import get_current_user
 from app.schemas.subscription_schema import (
@@ -27,7 +28,6 @@ from app.schemas.subscription_schema import (
     UserSubscriptionOrderDetailResponse,
     SkipOrderResponse,
 )
-from app.schemas.user_menu_schema import UserPackageListResponse
 from app.services.subscription_service import SubscriptionService
 from app.services.package_switch_service import PackageSwitchService
 
@@ -176,14 +176,11 @@ def quote_subscription(
     )
 )
 def get_my_subscriptions(
+    page: Paging = Depends(paging),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-
-    return SubscriptionService.get_my_subscriptions(
-        db,
-        current_user["user_id"]
-    )
+    return SubscriptionService.get_my_subscriptions(db, current_user["user_id"], page)
 
 
 @router.get(
@@ -220,7 +217,7 @@ def get_subscription(
         "(e.g. a `lunch_dinner` plan yields two orders per day). Orders are returned in "
         "date → meal-slot order and include the delivery `status`, the `otp_for_delivery` "
         "the user must share with the delivery partner, and `delivery_boy_reference_id` once assigned.\n\n"
-        "Optional filters: `status` (`scheduled`, `preparing`, `out_for_delivery`, `delivered`, "
+        "Optional filters: `status` (`scheduled`, `preparing`, `ready_for_pickup`, `picked_up`, `out_for_delivery`, `delivered`, "
         "`skipped`, `cancelled`) and `order_date` (YYYY-MM-DD). "
         "`status_summary` gives a per-status count for progress indicators.\n\n"
         "**When to call:** On the 'Subscription Detail' → 'Meal Schedule' / 'Order History' screen, "
@@ -233,7 +230,7 @@ def list_subscription_orders(
     subscription_id: UUID,
     status: str = Query(
         default=None,
-        description="Filter by order status e.g. scheduled, preparing, out_for_delivery, delivered, skipped, cancelled"
+        description="Filter by order status e.g. scheduled, preparing, ready_for_pickup, picked_up, out_for_delivery, delivered, skipped, cancelled"
     ),
     order_date: date = Query(
         default=None,

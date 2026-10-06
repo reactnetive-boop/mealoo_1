@@ -30,8 +30,9 @@ class SubscriptionOrderResponse(BaseModel):
     delivered_at: Optional[datetime]
     delivery_notes: Optional[str]
     cancel_reason: Optional[str] = None
-    # Read out to the delivery partner at hand-over
-    pickup_code: Optional[str] = None
+    picked_up_at: Optional[datetime] = None
+    # Too many wrong pickup codes on this order; Orleeno support unlocks it
+    pickup_locked: bool = False
     delivery_boy_reference_id: Optional[UUID] = None
     delivery_boy_name: Optional[str] = None
     customer_name: Optional[str] = None
@@ -68,6 +69,12 @@ class ProviderSubscriptionResponse(BaseModel):
     cancelled_at: Optional[datetime]
     cancel_reason: Optional[str]
     created_at: Optional[datetime]
+    # names for the kitchen (first name only; no phone or full address)
+    customer_name: Optional[str] = None
+    delivery_area: Optional[str] = None
+    delivery_boy_reference_id: Optional[UUID] = None
+    delivery_boy_name: Optional[str] = None
+    packages: List[OrderPackageLine] = []
 
 
 class ProviderSubscriptionListResponse(BaseModel):
@@ -86,6 +93,8 @@ class SubscriptionOrderListResponse(BaseModel):
     success: bool
     date: Optional[Date] = None
     total: int
+    page: int = 1
+    has_more: bool = False
     orders: List[SubscriptionOrderResponse]
 
 
@@ -119,7 +128,8 @@ class ProviderExtraOrderResponse(BaseModel):
     meal_slot: str
     status: str
     cancel_reason: Optional[str] = None
-    pickup_code: Optional[str] = None
+    picked_up_at: Optional[datetime] = None
+    pickup_locked: bool = False
     delivery_boy_reference_id: Optional[UUID] = None
     delivery_boy_name: Optional[str] = None
     customer_name: Optional[str] = None

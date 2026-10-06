@@ -125,22 +125,49 @@ def test_full_platform_chain(client, db):
     customer_code = today["otp_for_delivery"]
     assert customer_code
 
-    # ── Kitchen prepares and assigns ───────────────────────────
-    k_orders = _ok(client.get(f"{API}/provider/orders/subscription-orders", headers=kitchen, params={"order_date": "2026-10-05"}))["orders"]
-    k_meal = [o for o in k_orders if str(o["order_id"]) == str(today["order_id"])][0]
-    assert "otp_for_delivery" not in k_meal
-    pickup_code = k_meal["pickup_code"]
-    _ok(client.put(f"{API}/provider/orders/subscription-orders/{today['order_id']}/status", headers=kitchen, json={"status": "preparing"}))
+    # ── Admin assigns the whole subscription to the partner ────
     partners = _ok(client.get(f"{API}/provider/delivery-partners", headers=kitchen))["delivery_partners"]
     assert rider_id in str(partners)
-    _ok(client.put(f"{API}/provider/orders/subscription-orders/{today['order_id']}/assign-delivery-boy", headers=kitchen,
-                   json={"delivery_boy_id": rider_id}))
+    assigned_sub = _ok(client.put(
+        f"{API}/admin/orders/subscriptions/{sub['subscription_id']}/assign-delivery-boy", headers=admin,
+        json={"delivery_boy_id": rider_id, "note": "regular route"},
+    ))
+    assert assigned_sub["assigned_orders"] == 7 and assigned_sub["action"] == "assigned"
+    detail = _ok(client.get(f"{API}/admin/orders/subscriptions/{sub['subscription_id']}", headers=admin))
+    assert detail["assignment_status"] == "assigned" and detail["stats"]["assigned_to_current"] == 7
+
+    # partner sees the subscription and its meals
+    my_subs = _ok(client.get(f"{API}/delivery/subscriptions", headers=rider))["subscriptions"]
+    assert len(my_subs) == 1 and my_subs[0]["today_orders"] == 1 and my_subs[0]["pending_orders"] == 7
+    my_sub = _ok(client.get(f"{API}/delivery/subscriptions/{sub['subscription_id']}", headers=rider))
+    assert [o["group"] for o in my_sub["orders"]].count("today") == 1
+
+    # ── Kitchen prepares and hands over with today's code ─────
+    k_orders = _ok(client.get(f"{API}/provider/orders/subscription-orders", headers=kitchen, params={"order_date": "2026-10-05"}))["orders"]
+    k_meal = [o for o in k_orders if str(o["order_id"]) == str(today["order_id"])][0]
+    assert "otp_for_delivery" not in k_meal and "pickup_code" not in k_meal
+    assert k_meal["delivery_boy_reference_id"] == rider_id
+    pickup_code = _ok(client.get(f"{API}/provider/pickup-code", headers=kitchen))["pickup_code"]
+    _ok(client.put(f"{API}/provider/orders/subscription-orders/{today['order_id']}/status", headers=kitchen, json={"status": "preparing"}))
+    _ok(client.put(f"{API}/provider/orders/subscription-orders/{today['order_id']}/status", headers=kitchen, json={"status": "ready_for_pickup"}))
 
     # ── Partner hand-over ──────────────────────────────────────
-    assigned = _ok(client.get(f"{API}/delivery/orders", headers=rider))["orders"]
-    assert len(assigned) == 1
+    board = _ok(client.get(f"{API}/delivery/dashboard", headers=rider))
+    assert board["counts"]["pending"] == 1 and board["next_delivery"]["order_id"] == today["order_id"]
+    assert pickup_code not in str(board) and customer_code not in str(board)
     _ok(client.put(f"{API}/delivery/orders/{today['order_id']}/pickup", headers=rider, json={"pickup_code": pickup_code}))
+    _ok(client.put(f"{API}/delivery/orders/{today['order_id']}/start-delivery", headers=rider))
+    _ok(client.put(f"{API}/delivery/orders/{today['order_id']}/arrived", headers=rider))
+    board = _ok(client.get(f"{API}/delivery/dashboard", headers=rider))
+    assert board["active_delivery"]["order_id"] == today["order_id"]
+    assert board["active_delivery"]["status"] == "out_for_delivery"
+
+    # the customer reads the code from Home (today's deliveries)
+    todays = _ok(client.get(f"{API}/user/order/today", headers=cust))["deliveries"]
+    assert todays[0]["delivery_code"] == customer_code and todays[0]["status"] == "out_for_delivery"
     _ok(client.put(f"{API}/delivery/orders/{today['order_id']}/deliver", headers=rider, json={"otp": customer_code}))
+    todays = _ok(client.get(f"{API}/user/order/today", headers=cust))["deliveries"]
+    assert todays[0]["status"] == "delivered" and todays[0]["delivery_code"] is None
 
     # ── Money ──────────────────────────────────────────────────
     k_wallet = _ok(client.get(f"{API}/provider/wallet", headers=kitchen))["wallet"]
@@ -150,8 +177,18 @@ def test_full_platform_chain(client, db):
     earnings = _ok(client.get(f"{API}/delivery/earnings", headers=rider))
     assert earnings["today"]["deliveries"] == 1
 
+    # a kitchen must say where its money goes before the first withdrawal
+    r = client.post(f"{API}/provider/wallet/withdraw", headers=kitchen, json={"amount": "100"})
+    assert r.status_code == 400 and r.json()["code"] == "PAYOUT_DETAILS_MISSING"
+    _ok(client.put(f"{API}/provider/wallet/payout-details", headers=kitchen, json={
+        "account_holder_name": "Asha Devi", "account_number": "123456789012", "ifsc_code": "sbin0001234",
+    }))
     _ok(client.post(f"{API}/provider/wallet/withdraw", headers=kitchen, json={"amount": "100"}))
     req = _ok(client.get(f"{API}/admin/payouts", headers=admin, params={"status": "pending"}))["requests"][0]
+    assert req["destination"]["account_number"] == "********9012" and req["destination_ready"]
+    full = _ok(client.get(f"{API}/admin/payouts/{req['payout_request_id']}/destination", headers=admin))
+    assert full["payout_details"]["account_number"] == "123456789012"
+    assert full["payout_details"]["ifsc_code"] == "SBIN0001234"
     _ok(client.put(f"{API}/admin/payouts/{req['payout_request_id']}", headers=admin,
                    json={"action": "paid", "payout_reference": "UTR0001"}))
     _ok(client.post(f"{API}/delivery/wallet/withdraw", headers=rider, json={"amount": "30"}))

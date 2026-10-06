@@ -5,8 +5,8 @@ from sqlalchemy import (
     ForeignKey, CheckConstraint, UniqueConstraint, Index
 )
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func
 
-from datetime import datetime, timezone
 
 from app.core.database import Base
 from app.models.mixins import AccountSecurityMixin
@@ -125,13 +125,13 @@ class User(AccountSecurityMixin, Base):
 
     created_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc)
+        server_default=func.now()
     )
 
     updated_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        server_default=func.now(),
+        onupdate=func.now()
     )
 
     deleted_at = Column(

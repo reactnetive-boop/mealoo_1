@@ -89,6 +89,8 @@ def clean_db():
         conn.execute(text("TRUNCATE " + ", ".join(_tables(conn)) + " RESTART IDENTITY CASCADE"))
         conn.execute(text(PRICING_DEFAULTS))
     reset_all()
+    from app.services import admin_dashboard_service
+    admin_dashboard_service._cache.clear()  # the 60 s dashboard cache must not leak between tests
     clock.freeze(DEFAULT_NOW)
     yield
     clock.freeze(None)

@@ -1,11 +1,15 @@
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit, business_event
 from app.core.clock import now_utc
 from app.core.errors import DomainError
 from app.domain import notify
+from app.domain.delivery_assignment import release_partner_subscriptions
+from app.domain.status import (
+    SUB_OPEN_STATUSES, EXTRA_OPEN_STATUSES, SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES, IN_HAND_STATUSES,
+)
 from app.models.delivery_boy_model import DeliveryBoy
+from app.models.delivery_boy_wallet_model import DeliveryBoyWallet
 from app.models.delivery_boy_document_model import DeliveryBoyDocument
 from app.models.delivery_boy_payout_model import DeliveryBoyPayoutDetails
 from app.models.order_model import Order
@@ -17,8 +21,8 @@ from app.services.auth_common import revoke_sessions
 from app.services.delivery_boy_account_service import document_file_response
 
 APPROVAL_STATUSES = ("pending", "approved", "rejected")
-ACTIVE_SUB_STATUSES = ("scheduled", "preparing", "out_for_delivery")
-ACTIVE_EXTRA_STATUSES = ("pending", "confirmed", "preparing", "out_for_delivery")
+ACTIVE_SUB_STATUSES = SUB_OPEN_STATUSES
+ACTIVE_EXTRA_STATUSES = EXTRA_OPEN_STATUSES
 
 
 def _boy(db: Session, delivery_boy_id, lock: bool = False) -> DeliveryBoy:
@@ -27,7 +31,7 @@ def _boy(db: Session, delivery_boy_id, lock: bool = False) -> DeliveryBoy:
         q = q.with_for_update()
     boy = q.first()
     if not boy:
-        raise HTTPException(status_code=404, detail="Delivery partner not found")
+        raise DomainError("Delivery partner not found", 404)
     return boy
 
 
@@ -44,32 +48,48 @@ def _doc_view(d: DeliveryBoyDocument) -> dict:
 
 
 def _out_for_delivery(db: Session, delivery_boy_id) -> int:
+    """Orders the partner is carrying right now (picked up, not yet delivered)."""
     return (
         db.query(Order).filter(
-            Order.delivery_boy_reference_id == delivery_boy_id, Order.status == "out_for_delivery"
+            Order.delivery_boy_reference_id == delivery_boy_id, Order.status.in_(IN_HAND_STATUSES)
         ).count()
         + db.query(ExtraOrder).filter(
-            ExtraOrder.delivery_boy_reference_id == delivery_boy_id, ExtraOrder.status == "out_for_delivery"
+            ExtraOrder.delivery_boy_reference_id == delivery_boy_id, ExtraOrder.status.in_(IN_HAND_STATUSES)
         ).count()
     )
 
 
-def _release_open_assignments(db: Session, delivery_boy_id) -> int:
-    """Unassign meals that have not been picked up so kitchens can reassign them."""
+def _release_open_assignments(db: Session, delivery_boy_id, *, reason: str, admin_id) -> int:
+    """
+    Unassign meals that have not been picked up, and end the partner's
+    subscription assignments, so new meals stop going to them and an admin
+    or kitchen can reassign.
+    """
+    release_partner_subscriptions(db, delivery_boy_id, reason=reason, actor_id=admin_id, actor_type="admin")
     n = (
         db.query(Order)
-        .filter(Order.delivery_boy_reference_id == delivery_boy_id, Order.status.in_(("scheduled", "preparing")))
+        .filter(Order.delivery_boy_reference_id == delivery_boy_id, Order.status.in_(SUB_UNPICKED_STATUSES))
         .update({Order.delivery_boy_reference_id: None}, synchronize_session=False)
     )
     n += (
         db.query(ExtraOrder)
         .filter(
             ExtraOrder.delivery_boy_reference_id == delivery_boy_id,
-            ExtraOrder.status.in_(("pending", "confirmed", "preparing")),
+            ExtraOrder.status.in_(EXTRA_UNPICKED_STATUSES),
         )
         .update({ExtraOrder.delivery_boy_reference_id: None}, synchronize_session=False)
     )
     return n
+
+
+def _wallet(db: Session, delivery_boy_id) -> dict:
+    w = db.query(DeliveryBoyWallet).filter(DeliveryBoyWallet.delivery_boy_reference_id == delivery_boy_id).first()
+    zero = "0.00"
+    return {
+        "balance": str(w.balance) if w else zero,
+        "total_earned": str(w.total_earned) if w else zero,
+        "total_withdrawn": str(w.total_withdrawn) if w else zero,
+    }
 
 
 class AdminDeliveryBoyService:
@@ -122,6 +142,7 @@ class AdminDeliveryBoyService:
             "delivery_boy": delivery_boy_view(boy),
             "documents": [_doc_view(d) for d in documents],
             "payout_details": payout_details_view(payout),
+            "wallet": _wallet(db, delivery_boy_id),
             "stats": {"active_orders": active_orders, "total_delivered": delivered_total},
         }
 
@@ -134,7 +155,7 @@ class AdminDeliveryBoyService:
             DeliveryBoyDocument.delivery_boy_reference_id == delivery_boy_id,
         ).first()
         if doc is None:
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise DomainError("Document not found", 404)
         # viewing identity documents is itself an audited action
         record_audit(
             db, table="delivery.delivery_boy_documents", record_id=doc.delivery_boy_document_id,
@@ -151,7 +172,7 @@ class AdminDeliveryBoyService:
             DeliveryBoyDocument.delivery_boy_reference_id == delivery_boy_id,
         ).with_for_update().first()
         if doc is None:
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise DomainError("Document not found", 404)
         if payload.status == "rejected" and not payload.remarks:
             raise DomainError("Tell the partner why the document was rejected")
 
@@ -212,7 +233,7 @@ class AdminDeliveryBoyService:
             boy.approved_at = None
             boy.approved_by = None
             boy.is_online = False
-            _release_open_assignments(db, delivery_boy_id)
+            _release_open_assignments(db, delivery_boy_id, reason="partner_rejected", admin_id=admin_id)
 
         record_audit(
             db, table="delivery.delivery_boys", record_id=boy.delivery_boy_id,
@@ -246,7 +267,7 @@ class AdminDeliveryBoyService:
                 raise DomainError(f"Cannot deactivate: {pending} order(s) currently out for delivery.")
             boy.is_online = False
             revoke_sessions(boy)
-            _release_open_assignments(db, delivery_boy_id)
+            _release_open_assignments(db, delivery_boy_id, reason="partner_deactivated", admin_id=admin_id)
         if "vehicle_number" in update_data and update_data["vehicle_number"]:
             update_data["vehicle_number"] = update_data["vehicle_number"].upper()
 
@@ -267,9 +288,16 @@ class AdminDeliveryBoyService:
         if provider_id is not None:
             provider = db.query(Provider).filter(Provider.provider_id == provider_id).first()
             if not provider:
-                raise HTTPException(status_code=404, detail="Provider not found")
+                raise DomainError("Provider not found", 404)
         before = delivery_boy_view(boy)
         boy.assigned_provider_reference_id = provider_id
+        released = 0
+        if provider_id is not None:
+            # a dedicated partner only serves that kitchen's subscriptions
+            released = release_partner_subscriptions(
+                db, delivery_boy_id, reason="partner_moved_kitchen", actor_id=admin_id,
+                actor_type="admin", keep_provider_id=provider_id,
+            )
         record_audit(
             db, table="delivery.delivery_boys", record_id=boy.delivery_boy_id,
             old=before, new=delivery_boy_view(boy), actor_id=admin_id, actor_type="admin", ip=ip,
@@ -277,9 +305,11 @@ class AdminDeliveryBoyService:
         db.commit()
         return {
             "success": True,
-            "message": "Kitchen assigned to delivery partner" if provider_id else "Partner moved to the shared pool",
+            "message": ("Kitchen assigned to delivery partner" if provider_id else "Partner moved to the shared pool")
+            + (f"; {released} subscription(s) of other kitchens were unassigned" if released else ""),
             "delivery_boy_id": delivery_boy_id,
             "assigned_provider_reference_id": provider_id,
+            "subscriptions_unassigned": released,
         }
 
     @staticmethod

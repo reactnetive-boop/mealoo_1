@@ -1,11 +1,11 @@
 from typing import Optional
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.domain import ledger
 from app.repositories.provider_wallet_repository import ProviderWalletRepository
 from app.services.payout_service import PayoutService
+from app.core.errors import DomainError
 
 
 class ProviderWalletService:
@@ -26,7 +26,7 @@ class ProviderWalletService:
     @staticmethod
     def get_transaction_history(db: Session, provider_id: str, txn_type: Optional[str] = None):
         if txn_type and txn_type not in ("credit", "debit"):
-            raise HTTPException(status_code=400, detail="type must be 'credit' or 'debit'")
+            raise DomainError("type must be 'credit' or 'debit'", 400)
         transactions = ProviderWalletRepository.get_transactions(db, provider_id, txn_type=txn_type, limit=200)
         return {"success": True, "total": len(transactions), "transactions": transactions}
 

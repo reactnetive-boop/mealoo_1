@@ -52,7 +52,8 @@ class WalletResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    wallet_id: UUID
+    # None until the first credit creates the wallet row
+    wallet_id: Optional[UUID] = None
 
     user_reference_id: UUID
 

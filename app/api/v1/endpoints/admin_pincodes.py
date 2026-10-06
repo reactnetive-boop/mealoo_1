@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.rate_limit import client_ip
 from app.dependencies.auth_dependency import get_current_admin, require_super_admin
-from app.services.admin_content_service import AdminPincodeService
+from app.services.admin_pincode_service import AdminPincodeService
 from app.schemas.admin_schema import AdminCreatePincodeRequest, AdminUpdatePincodeRequest
 
 router = APIRouter()

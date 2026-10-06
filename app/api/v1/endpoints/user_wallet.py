@@ -12,6 +12,15 @@ from app.schemas.wallet_schema import (
     WalletTransactionListResponse
 )
 from app.services.wallet_service import WalletService
+from app.schemas.payout_schema import (
+    CustomerWithdrawalRequest,
+    PayoutDetailsRequest,
+    TopupOrderRequest,
+    TopupVerifyRequest,
+)
+from app.services.razorpay_service import RazorpayService
+from app.services.payout_details_service import PayoutDetailsService
+from app.services.payout_service import PayoutService
 
 router = APIRouter()
 
@@ -85,3 +94,66 @@ def recharge_wallet(
         payload,
         idempotency_key,
     )
+
+
+
+# ── Withdrawing wallet money ──────────────────────────────────
+
+@router.get(
+    "/payout-details",
+    summary="My Bank / UPI for Withdrawals",
+    description="`ready` is false until a UPI ID or a full bank account is saved.",
+)
+def get_payout_details(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return PayoutDetailsService.get_own(db, "customer", current_user["user_id"])
+
+
+@router.put(
+    "/payout-details",
+    summary="Save Bank / UPI for Withdrawals",
+    description="The account number is stored encrypted.",
+)
+def save_payout_details(payload: PayoutDetailsRequest, db: Session = Depends(get_db),
+                        current_user=Depends(get_current_user)):
+    return PayoutDetailsService.save(db, "customer", current_user["user_id"], payload)
+
+
+@router.post(
+    "/withdraw",
+    summary="Withdraw Wallet Balance",
+    description=(
+        "Moves the amount out of the wallet into a pending request; Orleeno transfers it to the saved "
+        "bank / UPI and marks it paid, or rejects it and the money returns to the wallet."
+    ),
+    dependencies=[Depends(limit_by_ip("wallet_withdraw", 10, 3600))],
+)
+def withdraw(payload: CustomerWithdrawalRequest, db: Session = Depends(get_db),
+             current_user=Depends(get_current_user)):
+    return PayoutService.request(db, "customer", current_user["user_id"], payload.amount, payload.note)
+
+
+@router.get("/withdrawals", summary="My Withdrawal Requests")
+def withdrawals(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return PayoutService.list_for_owner(db, "customer", current_user["user_id"])
+
+
+
+# ── Online top-up (Razorpay; off unless PAYMENT_GATEWAY=razorpay) ──
+
+@router.post(
+    "/topup/order",
+    summary="Start an Online Top-Up",
+    description="Creates a Razorpay order; open Razorpay Checkout with `razorpay_order_id` and `razorpay_key_id`.",
+    dependencies=[Depends(limit_by_ip("wallet_gateway", 20, 3600))],
+)
+def topup_order(payload: TopupOrderRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return RazorpayService.create_order(db, current_user["user_id"], payload.amount)
+
+
+@router.post(
+    "/topup/verify",
+    summary="Finish an Online Top-Up",
+    description="Send what Razorpay Checkout returned. The wallet is credited once, even if the webhook also arrives.",
+)
+def topup_verify(payload: TopupVerifyRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return RazorpayService.verify(db, current_user["user_id"], payload)

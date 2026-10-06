@@ -19,7 +19,7 @@ class OTPRepository:
 
         db.add(otp)
 
-        db.commit()
+        db.flush()
 
         db.refresh(otp)
 

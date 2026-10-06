@@ -1,4 +1,3 @@
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.errors import DomainError
@@ -31,7 +30,7 @@ def _build_item_dict(item) -> dict:
 def _owned(db: Session, user_id: str, cart_item_id):
     item = CartRepository.get_by_id(db, cart_item_id)
     if not item or str(item.user_reference_id) != user_id:
-        raise HTTPException(status_code=404, detail="Cart item not found")
+        raise DomainError("Cart item not found", 404)
     return item
 
 

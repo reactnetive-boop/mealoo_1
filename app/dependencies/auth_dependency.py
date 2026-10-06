@@ -16,7 +16,7 @@ sends.
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError
+from jwt import PyJWTError
 from sqlalchemy.orm import Session
 
 from app.core.audit import security_event
@@ -51,8 +51,8 @@ def _decode(credentials: HTTPAuthorizationCredentials | None, role: str, request
         raise _INVALID
     try:
         payload = decode_access_token(credentials.credentials)
-    except JWTError:
-        raise _INVALID
+    except PyJWTError:
+        raise _INVALID from None
     if payload.get("role") != role:
         security_event(
             "auth.wrong_audience",

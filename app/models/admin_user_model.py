@@ -1,9 +1,10 @@
 import uuid
 
-from sqlalchemy import Column, String, Boolean, DateTime, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID, CITEXT
+from sqlalchemy import BigInteger, Column, String, Boolean, DateTime, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB, UUID, CITEXT
 from sqlalchemy.sql import func
 
+from app.core.crypto import EncryptedString
 from app.core.database import Base
 from app.models.mixins import AccountSecurityMixin
 
@@ -66,3 +67,13 @@ class AdminUser(AccountSecurityMixin, Base):
         onupdate=func.now(),
         nullable=False
     )
+
+    # Two-factor login (app.core.totp). The secret is encrypted at rest; it is
+    # set at enrolment and only counts once a code from it has been confirmed.
+    totp_secret = Column(EncryptedString, nullable=True)
+    totp_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    totp_confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    # last accepted time step: a code can never be used twice
+    totp_last_step = Column(BigInteger, nullable=True)
+    # sha256 hashes of unused one-time recovery codes
+    totp_recovery_hashes = Column(JSONB, nullable=True)

@@ -86,7 +86,7 @@ class UserAddressRepository:
 
         db.add(address)
 
-        db.commit()
+        db.flush()
 
         db.refresh(address)
 
@@ -107,7 +107,7 @@ class UserAddressRepository:
                 value
             )
 
-        db.commit()
+        db.flush()
 
         db.refresh(address)
 
@@ -121,7 +121,7 @@ class UserAddressRepository:
 
         address.is_active = False
 
-        db.commit()
+        db.flush()
 
         db.refresh(address)
 

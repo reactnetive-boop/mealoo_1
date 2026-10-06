@@ -15,7 +15,7 @@ class PackageItemRepository:
 
         db.add(package_item)
 
-        db.commit()
+        db.flush()
 
         db.refresh(package_item)
 
@@ -41,6 +41,6 @@ class PackageItemRepository:
 
         db.delete(package_item)
 
-        db.commit()
+        db.flush()
 
         return True

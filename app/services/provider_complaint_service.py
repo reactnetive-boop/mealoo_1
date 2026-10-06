@@ -1,4 +1,3 @@
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.errors import DomainError
@@ -29,6 +28,7 @@ class ProviderComplaintService:
         data["status"] = "open"
 
         complaint = ProviderComplaintRepository.create(db, data)
+        db.commit()
 
         return {
             "success": True,
@@ -58,7 +58,7 @@ class ProviderComplaintService:
             db, complaint_id, provider_id
         )
         if not complaint:
-            raise HTTPException(status_code=404, detail="Complaint not found")
+            raise DomainError("Complaint not found", 404)
         return complaint
 
     @staticmethod
@@ -67,16 +67,14 @@ class ProviderComplaintService:
             db, complaint_id, provider_id
         )
         if not complaint:
-            raise HTTPException(status_code=404, detail="Complaint not found")
+            raise DomainError("Complaint not found", 404)
 
         if complaint.status not in EDITABLE_STATUSES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Complaint cannot be edited in '{complaint.status}' status"
-            )
+            raise DomainError(f"Complaint cannot be edited in '{complaint.status}' status", 400)
 
         update_data = payload.model_dump(exclude_unset=True)
         ProviderComplaintRepository.update(db, complaint, update_data)
+        db.commit()
 
         return {
             "success": True,
@@ -90,15 +88,13 @@ class ProviderComplaintService:
             db, complaint_id, provider_id
         )
         if not complaint:
-            raise HTTPException(status_code=404, detail="Complaint not found")
+            raise DomainError("Complaint not found", 404)
 
         if complaint.status not in EDITABLE_STATUSES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Complaint cannot be withdrawn in '{complaint.status}' status"
-            )
+            raise DomainError(f"Complaint cannot be withdrawn in '{complaint.status}' status", 400)
 
         ProviderComplaintRepository.withdraw(db, complaint)
+        db.commit()
 
         return {
             "success": True,

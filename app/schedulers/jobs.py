@@ -14,9 +14,17 @@ keys.
                           holiday that were not moved, and one-time orders
                           the kitchen never confirmed
   stale_sweep             daily 00:10 + at startup: anything from earlier days
-                          still waiting (scheduled / pending / confirmed /
-                          preparing) is cancelled and refunded; meals stuck
-                          'out_for_delivery' are left for an admin
+                          still at the kitchen (scheduled / pending /
+                          confirmed / preparing / ready_for_pickup) is
+                          cancelled and refunded; a kitchen whose order was
+                          packed (ready_for_pickup) but never collected is
+                          still paid for it by Orleeno; orders already picked
+                          up are left for an admin
+  pickup_codes            daily 00:06 + at startup: today's pickup code for
+                          every kitchen with orders today (codes are also
+                          created on first use, so this only front-loads them)
+  maintenance             daily 03:30: money / pipeline reconciliation (logged
+                          at ERROR when anything is off) and data retention
 """
 
 import logging
@@ -29,9 +37,11 @@ from app.core.audit import business_event
 from app.core.clock import today_local
 from app.core.config import STALE_SWEEP_LOOKBACK_DAYS
 from app.core.database import SessionLocal
-from app.domain import notify
+from app.domain import maintenance, notify
 from app.domain import orders as meals
 from app.domain.slots import SLOTS, is_before_cutoff
+from app.domain.status import SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES, IN_HAND_STATUSES
+from app.domain.verification import pickup_code_row
 from app.models.extra_order_model import ExtraOrder
 from app.models.order_model import Order
 from app.models.provider_unavailability_model import ProviderUnavailability
@@ -44,6 +54,8 @@ LOCK_GENERATE = 7_301
 LOCK_EXPIRE = 7_302
 LOCK_CUTOFF = 7_303
 LOCK_STALE = 7_304
+LOCK_PICKUP_CODES = 7_305
+LOCK_MAINTENANCE = 7_306
 
 
 def _locked(db: Session, key: int) -> bool:
@@ -220,12 +232,14 @@ def _stale(db: Session) -> dict:
     # bounded look-back so a first run over old data cannot mass-refund history;
     # anything older is only reported for an admin to review
     since = today - timedelta(days=STALE_SWEEP_LOOKBACK_DAYS)
-    stale_meals = stale_extras = 0
+    stale_meals = stale_extras = compensated = 0
     for order in (
         db.query(Order)
-        .filter(Order.order_date < today, Order.order_date >= since, Order.status.in_(("scheduled", "preparing")))
+        .filter(Order.order_date < today, Order.order_date >= since, Order.status.in_(SUB_UNPICKED_STATUSES))
         .with_for_update(skip_locked=True)
     ):
+        if order.status == "ready_for_pickup":
+            compensated += meals.compensate_kitchen(db, order, "subscription") > 0
         _cancel_meal(db, order, "not_fulfilled", f"Your {order.meal_slot} on {order.order_date} was not delivered.")
         stale_meals += 1
 
@@ -234,21 +248,23 @@ def _stale(db: Session) -> dict:
         .filter(
             ExtraOrder.delivery_date < today,
             ExtraOrder.delivery_date >= since,
-            ExtraOrder.status.in_(("pending", "confirmed", "preparing")),
+            ExtraOrder.status.in_(EXTRA_UNPICKED_STATUSES),
         )
         .with_for_update(skip_locked=True)
     ):
+        if order.status == "ready_for_pickup":
+            compensated += meals.compensate_kitchen(db, order, "extra_order") > 0
         _cancel_extra(db, order, "not_fulfilled", f"Your order for {order.delivery_date} was not delivered.")
         stale_extras += 1
 
     stuck = (
-        db.query(Order).filter(Order.order_date < today, Order.status == "out_for_delivery").count()
-        + db.query(ExtraOrder).filter(ExtraOrder.delivery_date < today, ExtraOrder.status == "out_for_delivery").count()
+        db.query(Order).filter(Order.order_date < today, Order.status.in_(IN_HAND_STATUSES)).count()
+        + db.query(ExtraOrder).filter(ExtraOrder.delivery_date < today, ExtraOrder.status.in_(IN_HAND_STATUSES)).count()
     )
     older = (
-        db.query(Order).filter(Order.order_date < since, Order.status.in_(("scheduled", "preparing"))).count()
+        db.query(Order).filter(Order.order_date < since, Order.status.in_(SUB_UNPICKED_STATUSES)).count()
         + db.query(ExtraOrder).filter(
-            ExtraOrder.delivery_date < since, ExtraOrder.status.in_(("pending", "confirmed", "preparing"))
+            ExtraOrder.delivery_date < since, ExtraOrder.status.in_(EXTRA_UNPICKED_STATUSES)
         ).count()
     )
     if stuck or older:
@@ -259,6 +275,7 @@ def _stale(db: Session) -> dict:
     return {
         "cancelled_meals": stale_meals,
         "cancelled_extra_orders": stale_extras,
+        "kitchens_compensated": compensated,
         "stuck_out_for_delivery": stuck,
         "older_than_lookback": older,
     }
@@ -268,8 +285,49 @@ def stale_sweep_job() -> None:
     _run("stale_sweep", LOCK_STALE, _stale)
 
 
+# ── Kitchen pickup codes ──────────────────────────────────────
+
+def _pickup_codes(db: Session) -> dict:
+    today = today_local()
+    kitchens = {
+        r[0] for r in db.query(Order.vendor_reference_id).filter(
+            Order.order_date == today, Order.status.in_(SUB_UNPICKED_STATUSES)
+        ).distinct()
+    } | {
+        r[0] for r in db.query(ExtraOrder.vendor_reference_id).filter(
+            ExtraOrder.delivery_date == today, ExtraOrder.status.in_(EXTRA_UNPICKED_STATUSES)
+        ).distinct()
+    }
+    for provider_id in kitchens:
+        pickup_code_row(db, provider_id, today)
+    return {"kitchens": len(kitchens)}
+
+
+def pickup_codes_job() -> None:
+    _run("pickup_codes", LOCK_PICKUP_CODES, _pickup_codes)
+
+
+# ── Maintenance ───────────────────────────────────────────────
+
+def _maintenance(db: Session) -> dict:
+    report = maintenance.reconcile(db)
+    if not report["ok"]:
+        logger.error(
+            "[reconciliation] %s money issue(s), %s operational issue(s): %s",
+            report["money_issues"], report["operational_issues"],
+            {"wallets": report["wallets"], "settlement": report["settlement"], "pipeline": report["pipeline"]},
+        )
+    purged = maintenance.purge(db)
+    return {"reconciliation_ok": report["ok"], "purged": purged}
+
+
+def maintenance_job() -> None:
+    _run("maintenance", LOCK_MAINTENANCE, _maintenance)
+
+
 def startup_catch_up() -> None:
     expire_subscriptions_job()
     stale_sweep_job()
     generate_meals_job()
+    pickup_codes_job()
     cutoff_sweep_job()

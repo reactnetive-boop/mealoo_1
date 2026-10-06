@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -42,7 +42,7 @@ class DeliveryBoyRepository:
     def create(db: Session, data: dict) -> DeliveryBoy:
         obj = DeliveryBoy(**data)
         db.add(obj)
-        db.commit()
+        db.flush()
         db.refresh(obj)
         return obj
 
@@ -50,7 +50,7 @@ class DeliveryBoyRepository:
     def update(db: Session, delivery_boy: DeliveryBoy, data: dict) -> DeliveryBoy:
         for key, value in data.items():
             setattr(delivery_boy, key, value)
-        db.commit()
+        db.flush()
         db.refresh(delivery_boy)
         return delivery_boy
 
@@ -60,7 +60,7 @@ class DeliveryBoyRepository:
     def create_otp(db: Session, data: dict) -> DeliveryBoyOTPLog:
         otp_log = DeliveryBoyOTPLog(**data)
         db.add(otp_log)
-        db.commit()
+        db.flush()
         db.refresh(otp_log)
         return otp_log
 
@@ -79,23 +79,6 @@ class DeliveryBoyRepository:
     # ── Subscription Orders ───────────────────────────────
 
     @staticmethod
-    def get_subscription_orders(
-        db: Session,
-        delivery_boy_id,
-        order_date: date = None,
-        meal_slot: str = None,
-        status: str = None
-    ):
-        query = db.query(Order).filter(Order.delivery_boy_reference_id == delivery_boy_id)
-        if order_date:
-            query = query.filter(Order.order_date == order_date)
-        if meal_slot:
-            query = query.filter(Order.meal_slot == meal_slot)
-        if status:
-            query = query.filter(Order.status == status)
-        return query.order_by(Order.order_date.asc(), Order.meal_slot.asc()).all()
-
-    @staticmethod
     def get_subscription_order_detail(db: Session, order_id, delivery_boy_id):
         # Provider is outer-joined: a missing kitchen row shouldn't 404 the order.
         return (
@@ -104,17 +87,6 @@ class DeliveryBoyRepository:
             .join(UserAddress, Order.delivery_address_reference_id == UserAddress.user_address_id)
             .join(Subscription, Order.subscription_reference_id == Subscription.subscription_id)
             .outerjoin(Provider, Order.vendor_reference_id == Provider.provider_id)
-            .filter(
-                Order.order_id == order_id,
-                Order.delivery_boy_reference_id == delivery_boy_id
-            )
-            .first()
-        )
-
-    @staticmethod
-    def get_subscription_order_by_id(db: Session, order_id, delivery_boy_id):
-        return (
-            db.query(Order)
             .filter(
                 Order.order_id == order_id,
                 Order.delivery_boy_reference_id == delivery_boy_id
@@ -134,23 +106,6 @@ class DeliveryBoyRepository:
     # ── Extra Orders ──────────────────────────────────────
 
     @staticmethod
-    def get_extra_orders(
-        db: Session,
-        delivery_boy_id,
-        delivery_date: date = None,
-        meal_slot: str = None,
-        status: str = None
-    ):
-        query = db.query(ExtraOrder).filter(ExtraOrder.delivery_boy_reference_id == delivery_boy_id)
-        if delivery_date:
-            query = query.filter(ExtraOrder.delivery_date == delivery_date)
-        if meal_slot:
-            query = query.filter(ExtraOrder.meal_slot == meal_slot)
-        if status:
-            query = query.filter(ExtraOrder.status == status)
-        return query.order_by(ExtraOrder.delivery_date.asc(), ExtraOrder.meal_slot.asc()).all()
-
-    @staticmethod
     def get_extra_order_detail(db: Session, order_id, delivery_boy_id):
         return (
             db.query(ExtraOrder, User, UserAddress, MenuPackage, Provider)
@@ -158,17 +113,6 @@ class DeliveryBoyRepository:
             .join(UserAddress, ExtraOrder.address_reference_id == UserAddress.user_address_id)
             .join(MenuPackage, ExtraOrder.package_reference_id == MenuPackage.package_id)
             .outerjoin(Provider, ExtraOrder.vendor_reference_id == Provider.provider_id)
-            .filter(
-                ExtraOrder.extra_order_id == order_id,
-                ExtraOrder.delivery_boy_reference_id == delivery_boy_id
-            )
-            .first()
-        )
-
-    @staticmethod
-    def get_extra_order_by_id(db: Session, order_id, delivery_boy_id):
-        return (
-            db.query(ExtraOrder)
             .filter(
                 ExtraOrder.extra_order_id == order_id,
                 ExtraOrder.delivery_boy_reference_id == delivery_boy_id
@@ -211,7 +155,7 @@ class DeliveryBoyRepository:
                 file_url=file_url,
             )
             db.add(doc)
-        db.commit()
+        db.flush()
         db.refresh(doc)
         return doc
 
@@ -237,7 +181,7 @@ class DeliveryBoyRepository:
                 **data
             )
             db.add(payout)
-        db.commit()
+        db.flush()
         db.refresh(payout)
         return payout
 
@@ -262,7 +206,7 @@ class DeliveryBoyRepository:
         )
         db.add(notification)
         if commit:
-            db.commit()
+            db.flush()
             db.refresh(notification)
         else:
             db.flush()
@@ -304,7 +248,7 @@ class DeliveryBoyRepository:
     def mark_notification_read(db: Session, notification: DeliveryBoyNotification):
         notification.is_read = True
         notification.read_at = datetime.now(timezone.utc)
-        db.commit()
+        db.flush()
         db.refresh(notification)
         return notification
 
@@ -321,5 +265,5 @@ class DeliveryBoyRepository:
                 DeliveryBoyNotification.read_at: datetime.now(timezone.utc)
             })
         )
-        db.commit()
+        db.flush()
         return updated

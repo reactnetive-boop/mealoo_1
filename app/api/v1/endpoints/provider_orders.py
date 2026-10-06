@@ -58,7 +58,7 @@ def get_subscription_detail(
     description=(
         "Defaults to today's meals (business date). Pass `order_date`, or `from_date` / "
         "`to_date`, for other days. The customer's delivery code is never included; "
-        "`pickup_code` is what the kitchen gives the delivery partner at hand-over."
+        "the partner picks up with the kitchen's daily code (`GET /provider/pickup-code`)."
     ),
 )
 def list_subscription_orders(
@@ -67,6 +67,8 @@ def list_subscription_orders(
     to_date: Optional[date] = Query(None),
     status: Optional[str] = Query(None),
     meal_slot: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(500, ge=1, le=500),
     db: Session = Depends(get_db),
     current_provider=Depends(get_current_provider)
 ):
@@ -78,6 +80,8 @@ def list_subscription_orders(
         from_date=from_date,
         to_date=to_date,
         meal_slot=meal_slot,
+        page=page,
+        limit=limit,
     )
 
 

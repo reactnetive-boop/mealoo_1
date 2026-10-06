@@ -6,8 +6,9 @@ A package is sellable to a customer only when ALL of these hold:
   package approved + active + available + not deleted
   the kitchen offers the package (own package, or a catalogue package it
     selected)
-  the kitchen's pincode is an active serviceable pincode and equals the
-    customer's delivery pincode
+  the kitchen's pincode is an active serviceable pincode, and the
+    customer's delivery pincode is served by the kitchen: its own pincode or
+    one of its service areas (provider_service_areas, set by Orleeno)
   (subscriptions) the package allows subscription
   (a given date) the kitchen is not on holiday that day
 
@@ -17,15 +18,19 @@ functions, so the rules cannot drift between screens.
 
 from datetime import date
 
-from sqlalchemy import and_
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import DomainError
+from app.domain.status import EXTRA_OPEN_STATUSES
+from app.models.extra_order_model import ExtraOrder
 from app.models.menu_package_model import MenuPackage
 from app.models.provider_model import Provider
 from app.models.provider_selected_package_model import ProviderSelectedPackage
+from app.models.provider_service_area_model import ProviderServiceArea
 from app.models.provider_unavailability_model import ProviderUnavailability
 from app.models.serviceable_pincode_model import ServiceablePincode
+from app.models.subscription_model import Subscription
 
 
 def parse_pincode(value) -> int | None:
@@ -45,6 +50,58 @@ def serviceable_pincode(db: Session, pincode) -> ServiceablePincode | None:
         .filter(ServiceablePincode.pincode == pin, ServiceablePincode.is_active == True)  # noqa: E712
         .first()
     )
+
+
+def serves_pincode_filter(pin: int):
+    """SQL filter: kitchens that deliver to `pin` (own pincode or a service area)."""
+    return or_(
+        Provider.pincode == pin,
+        Provider.provider_id.in_(
+            select(ProviderServiceArea.provider_reference_id).where(ProviderServiceArea.pincode == pin)
+        ),
+    )
+
+
+def kitchen_serves(db: Session, provider: Provider, pin: int | None) -> bool:
+    if pin is None:
+        return False
+    if pin == provider.pincode:
+        return True
+    return db.query(ProviderServiceArea.provider_service_area_id).filter(
+        ProviderServiceArea.provider_reference_id == provider.provider_id,
+        ProviderServiceArea.pincode == pin,
+    ).first() is not None
+
+
+def open_commitments(db: Session, provider_id) -> tuple[int, int]:
+    """(running subscriptions, open one-time orders) a kitchen still has to serve."""
+    subscriptions = db.query(Subscription).filter(
+        Subscription.vendor_reference_id == provider_id,
+        Subscription.status.in_(("active", "paused")),
+    ).count()
+    one_time = db.query(ExtraOrder).filter(
+        ExtraOrder.vendor_reference_id == provider_id,
+        ExtraOrder.status.in_(EXTRA_OPEN_STATUSES),
+    ).count()
+    return subscriptions, one_time
+
+
+def assert_pincode_can_change(db: Session, provider, new_pincode: int) -> None:
+    """
+    A kitchen only serves its own pincode, so moving it would strand every
+    customer it already sold to. The move waits until nothing is running.
+    """
+    if new_pincode == provider.pincode:
+        return
+    subscriptions, one_time = open_commitments(db, provider.provider_id)
+    if subscriptions or one_time:
+        raise DomainError(
+            "The kitchen pincode cannot change while it has "
+            f"{subscriptions} running subscription(s) and {one_time} open one-time order(s). "
+            "Contact Orleeno support to move the kitchen.",
+            409,
+            code="KITCHEN_HAS_OPEN_ORDERS",
+        )
 
 
 def provider_block_reason(provider: Provider | None) -> str | None:
@@ -116,6 +173,21 @@ def is_on_holiday(db: Session, provider_id, on: date) -> bool:
     )
 
 
+def kitchens_on_holiday(db: Session, provider_ids, on: date) -> set:
+    """The subset of `provider_ids` closed on `on` (one query for a whole list)."""
+    if not provider_ids:
+        return set()
+    rows = (
+        db.query(ProviderUnavailability.provider_reference_id)
+        .filter(
+            ProviderUnavailability.provider_reference_id.in_(list(provider_ids)),
+            ProviderUnavailability.unavailable_date == on,
+        )
+        .all()
+    )
+    return {r[0] for r in rows}
+
+
 def assert_sellable(
     db: Session,
     *,
@@ -154,7 +226,7 @@ def assert_sellable(
         pin = parse_pincode(delivery_pincode)
         if pin is None or serviceable_pincode(db, pin) is None:
             raise DomainError("Your delivery pincode is not serviceable yet", code="PINCODE_NOT_SERVICEABLE")
-        if pin != provider.pincode:
+        if not kitchen_serves(db, provider, pin):
             raise DomainError(
                 "This kitchen does not deliver to your address pincode",
                 code="ADDRESS_NOT_SERVICEABLE",

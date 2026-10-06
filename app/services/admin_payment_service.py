@@ -5,7 +5,6 @@ send money anywhere; what an admin can do is reverse a top-up that should not
 have happened, which takes the amount back out of the wallet.
 """
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit, business_event
@@ -27,14 +26,14 @@ class AdminPaymentService:
     def get_payment(db: Session, payment_id):
         payment = PaymentRepository.get_by_id(db, payment_id)
         if not payment:
-            raise HTTPException(status_code=404, detail="Payment not found")
+            raise DomainError("Payment not found", 404)
         return payment
 
     @staticmethod
     def reverse_topup(db: Session, payment_id, payload, admin_id: str, ip: str | None = None):
         payment = PaymentRepository.get_by_id(db, payment_id)
         if not payment:
-            raise HTTPException(status_code=404, detail="Payment not found")
+            raise DomainError("Payment not found", 404)
         if payment.purpose != "wallet_topup" or payment.gateway is not None:
             raise DomainError("Only internal wallet top-ups can be reversed in this phase")
         if payment.status not in ("completed", "partially_refunded"):

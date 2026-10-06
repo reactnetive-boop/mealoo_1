@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.rate_limit import client_ip
 from app.dependencies.auth_dependency import get_current_admin, require_super_admin
-from app.services.admin_content_service import AdminPackageService
+from app.services.admin_package_service import AdminPackageService
 from app.schemas.admin_schema import (
     AdminCreatePackageRequest,
     AdminUpdatePackageRequest,
@@ -52,6 +52,9 @@ def list_packages(
     provider_id: Optional[UUID] = Query(None),
     search: Optional[str] = Query(None, max_length=100),
     include_deleted: bool = Query(False),
+    has_pending_changes: Optional[bool] = Query(
+        None, description="true: live packages with a kitchen edit waiting for review"
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -61,7 +64,8 @@ def list_packages(
         db, is_predefined=is_predefined, is_active=is_active,
         is_subscription_available=is_subscription_available, approval_status=approval_status,
         provider_id=str(provider_id) if provider_id else None,
-        search=search, include_deleted=include_deleted, page=page, limit=limit
+        search=search, include_deleted=include_deleted, has_pending_changes=has_pending_changes,
+        page=page, limit=limit
     )
 
 

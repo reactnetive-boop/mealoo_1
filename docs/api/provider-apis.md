@@ -64,6 +64,43 @@ No token is issued by step 3 - the app must send the provider back to the login 
 **Note.** OTPs are returned in the API response while SMS delivery is not wired up; drop
 the `otp` field from the response once an SMS provider is integrated.
 
+## Capacity: two limits, both enforced
+
+A kitchen can be capped at two levels, and an incoming order must fit inside **both**.
+Either one left as `null` means that level is not enforced.
+
+| Limit | Field | Scope | Set with |
+|---|---|---|---|
+| Per package | `daily_capacity` on `provider_selected_packages` | One package, per meal-slot, per day | `PUT /provider-package/capacity` |
+| Per provider | `daily_meal_quota` on `providers` | **All** packages together, per meal-slot, per day | `PUT /provider/daily-quota` |
+
+`daily_meal_quota = 15` means 15 breakfasts **and** 15 lunches **and** 15 dinners a day,
+whatever mix of packages those meals come from. A provider running three packages capped
+at 10 each, with a quota of 15, can still only serve 15 meals in a slot.
+
+**What counts against a slot.** Quantities from every `active` subscription whose
+`meal_slot` covers that slot (`all_slots` counts towards all three), plus quantities from
+non-cancelled one-time orders on the date being checked.
+
+**Where it is enforced.** `POST /user/subscription`, `POST /user/subscription/{id}/switch`
+(against the *new* provider) and `POST /user/order/extra`. All items in one request are
+summed before the check, so a single order cannot straddle the limit. Over the limit
+returns `400` naming the slot, the limit, what is already committed and what is left.
+
+**Changing the limit.** A new quota below the meals already committed to active
+subscriptions is rejected with `400`; the response carries that figure as
+`current_peak_demand`. Lowering the limit never cancels running subscriptions - it only
+stops new ones. Send `null` to remove the limit.
+
+**Reading it.** `GET /provider/daily-quota` (provider app) and
+`GET /admin/providers/{provider_id}/daily-quota` (admin panel) return, per slot,
+`subscription_committed`, `extra_orders`, `total_committed`, `available` and `is_full`,
+for today or any `?date=`.
+
+**Source files.** Model: `app/models/provider_model.py` (`daily_meal_quota`) - checks:
+`app/repositories/package_capacity_repository.py` - migration:
+`alembic/versions/d8e9f0a1b2c3_add_provider_quota_and_fssai.py`.
+
 
 ## Provider Auth
 
@@ -157,17 +194,19 @@ Call this when the provider logs out of the app. The client should discard the s
 | PUT | `/api/v1/provider/complete-profile` | Complete Provider Profile |
 | GET | `/api/v1/provider/profile` | Get Provider Profile |
 | PUT | `/api/v1/provider/profile/image` | Upload Provider Profile Image |
+| PUT | `/api/v1/provider/daily-quota` | Set Provider Daily Meal Limit |
+| GET | `/api/v1/provider/daily-quota` | Get Daily Meal Limit Usage |
 | PUT | `/api/v1/provider/address` | Update Provider Address |
 
 ### `PUT /api/v1/provider/complete-profile` — Complete Provider Profile
 
 **Fill in business details after the provider's first login.**
 
-Required fields: business name, FSSAI number, address, pincode, meal types offered. This must be completed before the provider can create packages or appear in user listings.
+Required fields: business name, address, pincode, meal types offered. Optional: `fssai_licence` (14 digits) and `daily_meal_quota` (meals servable per slot per day). This must be completed before the provider can create packages or appear in user listings.
 
 **When to call:** Immediately after the first `POST /provider/login`. Check `GET /provider/profile` to see if the profile is already complete.
 
-**Request body** (application/json): `full_name` (string, required); `business_name` (string, required); `city` (string, required); `area` (string, required); `address` (string, required); `kitchen_type` (string, required); `pincode` (integer, required); `house_no` (string (nullable), optional); `landmark` (string (nullable), optional); `state` (string, required); `meal_service_type` (MealServiceType (nullable), optional)
+**Request body** (application/json): `full_name` (string, required); `business_name` (string, required); `city` (string, required); `area` (string, required); `address` (string, required); `kitchen_type` (string, required); `pincode` (integer, required); `house_no` (string (nullable), optional); `landmark` (string (nullable), optional); `state` (string, required); `meal_service_type` (MealServiceType (nullable), optional); `fssai_licence` (string (nullable), optional); `daily_meal_quota` (integer (nullable), optional)
 
 
 ### `GET /api/v1/provider/profile` — Get Provider Profile
@@ -190,6 +229,42 @@ Send the image as `multipart/form-data` with field name `file`. Returns the new 
 **Request body** (multipart/form-data): `file` (string, required)
 
 **Response model:** `app__schemas__provider_schema__UpdateProfileImageResponse` (see `app/schemas/`)
+
+
+### `PUT /api/v1/provider/daily-quota` — Set Provider Daily Meal Limit
+
+**Cap how many meals this kitchen can serve per meal-slot per day, across all packages.**
+
+`daily_meal_quota = 15` means 15 breakfasts **and** 15 lunches **and** 15 dinners per day, whatever mix of packages those meals come from. Once a slot is full, new subscriptions, package switches and one-time orders for that slot are rejected with `400`.
+
+This sits on top of the per-package limit set by `PUT /provider-package/capacity` — an order must fit inside both.
+
+Send `daily_meal_quota=null` to remove the limit.
+
+**Validation:** the new limit cannot be lower than the meals already committed to active subscriptions (the response returns that figure as `current_peak_demand`).
+
+**When to call:** From kitchen settings, whenever capacity changes (staff shortage, festival rush).
+
+**Request body** (application/json): `daily_meal_quota` (integer (nullable), required)
+
+**Response model:** `UpdateDailyQuotaResponse` (see `app/schemas/`)
+
+
+### `GET /api/v1/provider/daily-quota` — Get Daily Meal Limit Usage
+
+**How much of the daily limit is used up for each meal-slot.**
+
+Per slot it returns meals committed by active subscriptions, meals from one-time orders on that date, the total, how many are still `available`, and `is_full`.
+
+`available` is `null` and `is_full` is `false` when the provider has no limit set.
+
+Defaults to today; pass `?date=YYYY-MM-DD` to look ahead.
+
+**When to call:** On the provider dashboard home screen, to show remaining slots for the day.
+
+**Parameters:** `date` (query, string (date) (nullable), optional)
+
+**Response model:** `DailyQuotaStatusResponse` (see `app/schemas/`)
 
 
 ### `PUT /api/v1/provider/address` — Update Provider Address
@@ -245,6 +320,8 @@ Required: `category_id` (a real UUID from `GET /menu/categories`), `package_name
 
 `meal_type` is the set of slots the package is served in — one, any two, or all three. Send a list (`["lunch", "dinner"]`), a comma separated string (`"lunch, dinner"`) or `"full_day"` for all three; it is stored canonically as `"breakfast,lunch,dinner"` order. An unknown slot is rejected with 422, an unknown `category_id` with 400.
 
+**Pricing.** When `subscription_price` is sent, `price` is stored as that same amount — a new package sells one-time for what it costs a subscriber. Omit `subscription_price` and `price` is stored as sent. The two are linked **only at creation**: from then on `PUT /menu/update/{package_id}` edits each independently.
+
 **The package is created inactive** (`is_active = false`) and is not visible to users until an admin approves it with `PUT /admin/packages/{package_id}` (`is_active = true`).
 
 After creation, add items via `POST /menu/items` and images via `POST /menu/images`. Then make the package available to users with `POST /provider/packages/select`.
@@ -283,6 +360,8 @@ Pass `is_predefined=true` to fetch only system-wide predefined packages (templat
 **Edit details of an existing meal package.**
 
 Only the fields provided will be updated. Changes to price or availability take effect immediately for new orders (existing subscriptions are not affected).
+
+**`price` and `subscription_price` are independent here.** Updating `subscription_price` leaves `price` exactly as it was, and vice versa — send both if both should change. (They are only copied from each other at creation.)
 
 **When to call:** On the 'Edit Package' screen. Use `package_id` from `GET /menu/list/{provider_id}`.
 

@@ -45,6 +45,27 @@ SLOT_CUTOFFS: dict[str, time] = {
 }
 
 
+# When each meal is promised at the door (business-local). Shown to customers
+# and partners; a meal delivered after the window's end counts as late.
+SLOT_WINDOWS: dict[str, tuple[time, time]] = {
+    "breakfast": (time(7, 0), time(9, 30)),
+    "lunch": (time(12, 0), time(14, 30)),
+    "dinner": (time(19, 0), time(21, 30)),
+}
+
+
+def delivery_window(slot: str) -> dict | None:
+    window = SLOT_WINDOWS.get(slot)
+    if window is None:
+        return None
+    return {"from": window[0].strftime("%H:%M"), "to": window[1].strftime("%H:%M")}
+
+
+def window_end(day: date, slot: str):
+    """Business-local moment a meal of `slot` on `day` becomes late."""
+    return local_datetime(day, SLOT_WINDOWS[slot][1])
+
+
 def normalize_plan_slot(value: str) -> str:
     v = (value or "").strip().lower().replace(" ", "_").replace("-", "_")
     v = _PLAN_SLOT_ALIASES.get(v, v)
@@ -101,3 +122,7 @@ def earliest_service_date(slots: list[str]) -> date:
 
 def cutoffs_public() -> dict:
     return {slot: SLOT_CUTOFFS[slot].strftime("%H:%M") for slot in SLOTS}
+
+
+def windows_public() -> dict:
+    return {slot: delivery_window(slot) for slot in SLOTS}

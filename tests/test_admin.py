@@ -28,13 +28,17 @@ def test_admin_responses_never_leak_secrets(client, db):
     w = f.world(db, balance="5000")
     _sub(client, w)
     f.delivery_boy(db)
+    sub_id = db.query(Order).first().subscription_reference_id
     for path in ("/providers", f"/providers/{w['kitchen'].provider_id}", "/users", f"/users/{w['user'].user_id}",
-                 "/delivery-boys", "/orders/subscription-orders", "/orders/subscriptions"):
+                 "/delivery-boys", "/orders/subscription-orders", "/orders/subscriptions", f"/orders/subscriptions/{sub_id}"):
         r = client.get(A + path, headers=hdr)
         assert r.status_code == 200, (path, r.text)
         body = r.text
-        for secret in ("hashed_password", "password_hash", "otp_for_delivery", "pickup_code", "token_version", "$2b$"):
+        for secret in ("hashed_password", "password_hash", '"otp_for_delivery"', '"pickup_code"', "code_seed",
+                       "token_version", "$2b$"):
             assert secret not in body, (path, secret)
+        for meal in db.query(Order).all():
+            assert f.delivery_code(meal) not in body, path
 
 
 def test_kitchen_approval_gates_selling(client, db):
@@ -224,3 +228,28 @@ def test_holiday_reassignment_moves_meal(client, db):
                        json={"date": str(meal.order_date), "reason": "closed"}).status_code == 200
     r = client.put(f"{A}/orders/subscription-orders/{meal.order_id}/reassign-provider", headers=hdr, json=body)
     assert r.status_code == 200, r.text
+
+
+def test_admin_order_lists_show_names_filters_and_lock_flags(client, db):
+    from app.models.order_model import Order
+
+    w = f.world(db)
+    _, hdr = f.admin(db)
+    r = client.post("/api/v1/user/subscription", headers=w["user_auth"], json={
+        "vendor_id": str(w["kitchen"].provider_id), "plan_id": str(w["plan"].subscription_plan_id),
+        "address_id": str(w["address"].user_address_id), "start_date": "2026-10-05",
+        "items": [{"package_id": str(w["package"].package_id), "quantity": 1}],
+    })
+    assert r.status_code == 200, r.text
+    meal = db.query(Order).filter(Order.order_date == "2026-10-05").one()
+    meal.pickup_code_attempts = 5
+    db.commit()
+
+    url = "/api/v1/admin/orders/subscription-orders"
+    rows = client.get(url, headers=hdr, params={"order_date": "2026-10-05", "assignment": "unassigned"}).json()["orders"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["customer_name"] == "Ravi Kumar" and row["vendor_name"].startswith("Asha Kitchen")
+    assert row["pickup_locked"] is True and row["delivery_locked"] is False
+    assert client.get(url, headers=hdr, params={"assignment": "assigned"}).json()["total"] == 0
+    assert client.get(url, headers=hdr, params={"assignment": "bogus"}).status_code == 422

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -23,7 +23,8 @@ router = APIRouter()
     )
 )
 def get_dashboard(
+    refresh: bool = Query(False),
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
-    return AdminDashboardService.get_stats(db)
+    return AdminDashboardService.get_stats(db, refresh=refresh)

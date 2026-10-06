@@ -7,9 +7,8 @@ from sqlalchemy import DateTime
 from sqlalchemy import SmallInteger
 
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func
 
-from datetime import datetime
-from datetime import timezone
 
 from app.core.database import Base
 
@@ -55,6 +54,6 @@ class ProviderSelectedPackage(Base):
     )
 
     created_at = Column(
-        DateTime,
-        default=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True),
+        server_default=func.now()
     )

@@ -26,12 +26,14 @@ from app.models.provider_model import Provider
 from app.models.provider_selected_package_model import ProviderSelectedPackage
 from app.models.subscription_package_model import SubscriptionPackage
 from app.domain.slots import SLOTS
+from app.domain.status import SUB_OPEN_STATUSES, EXTRA_OPEN_STATUSES
 
-_LIVE_SUB = ("scheduled", "preparing", "out_for_delivery", "delivered")
-_LIVE_EXTRA = ("pending", "confirmed", "preparing", "out_for_delivery", "delivered")
+_LIVE_SUB = SUB_OPEN_STATUSES + ("delivered", "delivery_failed")
+_LIVE_EXTRA = EXTRA_OPEN_STATUSES + ("delivered", "delivery_failed")
 
 
-def _subscription_demand(db: Session, provider_id, slot: str, start: date, end: date, package_id=None) -> dict:
+def _subscription_demand(db: Session, provider_id, slot: str, start: date, end: date, package_id=None,
+                         exclude_subscription_id=None) -> dict:
     q = (
         db.query(Order.order_date, func.coalesce(func.sum(SubscriptionPackage.quantity), 0))
         .join(SubscriptionPackage, SubscriptionPackage.subscription_reference_id == Order.subscription_reference_id)
@@ -45,6 +47,8 @@ def _subscription_demand(db: Session, provider_id, slot: str, start: date, end: 
     )
     if package_id is not None:
         q = q.filter(SubscriptionPackage.package_reference_id == package_id)
+    if exclude_subscription_id is not None:
+        q = q.filter(Order.subscription_reference_id != exclude_subscription_id)
     return {d: int(n) for d, n in q.group_by(Order.order_date).all()}
 
 
@@ -64,11 +68,17 @@ def _extra_demand(db: Session, provider_id, slot: str, start: date, end: date, p
     return {d: int(n) for d, n in q.group_by(ExtraOrder.delivery_date).all()}
 
 
-def committed(db: Session, provider_id, slot: str, start: date, end: date, package_id=None) -> dict:
-    """date -> meals already committed for this kitchen (and package)."""
+def committed(db: Session, provider_id, slot: str, start: date, end: date, package_id=None,
+              exclude_subscription_id=None) -> dict:
+    """
+    date -> meals already committed for this kitchen (and package).
+    `exclude_subscription_id` leaves out a subscription that is being replaced
+    (package switch), so its own meals do not block the switch.
+    """
     total: dict = defaultdict(int)
-    for source in (_subscription_demand, _extra_demand):
-        for d, n in source(db, provider_id, slot, start, end, package_id).items():
+    subs = _subscription_demand(db, provider_id, slot, start, end, package_id, exclude_subscription_id)
+    for source in (subs, _extra_demand(db, provider_id, slot, start, end, package_id)):
+        for d, n in source.items():
             total[d] += n
     return total
 
@@ -101,22 +111,27 @@ def assert_room(
     start: date,
     end: date,
     quantity: int,
+    exclude_subscription_id=None,
 ) -> None:
     """Raise if adding `quantity` meals per slot on every date in [start, end] overflows a limit."""
 
     assert_package_room(
         db, provider_id=provider_id, package_id=package_id, package_name=package_name,
-        slots=slots, start=start, end=end, quantity=quantity,
+        slots=slots, start=start, end=end, quantity=quantity, exclude_subscription_id=exclude_subscription_id,
     )
-    assert_kitchen_room(db, provider_id=provider_id, slots=slots, start=start, end=end, quantity=quantity)
+    assert_kitchen_room(
+        db, provider_id=provider_id, slots=slots, start=start, end=end, quantity=quantity,
+        exclude_subscription_id=exclude_subscription_id,
+    )
 
 
-def assert_package_room(db: Session, *, provider_id, package_id, package_name: str, slots, start: date, end: date, quantity: int) -> None:
+def assert_package_room(db: Session, *, provider_id, package_id, package_name: str, slots, start: date, end: date,
+                        quantity: int, exclude_subscription_id=None) -> None:
     cap = package_capacity(db, provider_id, package_id)
     if cap is None:
         return
     for slot in slots:
-        used = committed(db, provider_id, slot, start, end, package_id)
+        used = committed(db, provider_id, slot, start, end, package_id, exclude_subscription_id)
         peak_day, peak = max(used.items(), key=lambda kv: kv[1], default=(start, 0))
         if peak + quantity > cap:
             raise DomainError(
@@ -126,12 +141,13 @@ def assert_package_room(db: Session, *, provider_id, package_id, package_name: s
             )
 
 
-def assert_kitchen_room(db: Session, *, provider_id, slots, start: date, end: date, quantity: int) -> None:
+def assert_kitchen_room(db: Session, *, provider_id, slots, start: date, end: date, quantity: int,
+                        exclude_subscription_id=None) -> None:
     quota = kitchen_quota(db, provider_id)
     if quota is None:
         return
     for slot in slots:
-        used = committed(db, provider_id, slot, start, end)
+        used = committed(db, provider_id, slot, start, end, exclude_subscription_id=exclude_subscription_id)
         peak_day, peak = max(used.items(), key=lambda kv: kv[1], default=(start, 0))
         if peak + quantity > quota:
             raise DomainError(

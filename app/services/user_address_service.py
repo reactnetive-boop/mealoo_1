@@ -1,8 +1,8 @@
-from fastapi import HTTPException
 
 from sqlalchemy.orm import Session
 
 from app.core.errors import DomainError
+from app.domain.status import EXTRA_OPEN_STATUSES
 from app.models.extra_order_model import ExtraOrder
 from app.models.subscription_model import Subscription
 from app.repositories.user_address_repository import UserAddressRepository
@@ -17,7 +17,7 @@ def _address_in_use(db: Session, address_id) -> bool:
         return True
     return db.query(ExtraOrder).filter(
         ExtraOrder.address_reference_id == address_id,
-        ExtraOrder.status.in_(("pending", "confirmed", "preparing", "out_for_delivery")),
+        ExtraOrder.status.in_(EXTRA_OPEN_STATUSES),
     ).first() is not None
 
 
@@ -54,6 +54,8 @@ class UserAddressService:
                     user,
                     {"is_profile_completed": True}
                 )
+        # address and profile flag commit together
+        db.commit()
 
         return {
             "success": True,
@@ -75,17 +77,11 @@ class UserAddressService:
 
         if not address:
 
-            raise HTTPException(
-                status_code=404,
-                detail="Address not found"
-            )
+            raise DomainError("Address not found", 404)
 
         if str(address.user_reference_id) != user_id:
 
-            raise HTTPException(
-                status_code=404,
-                detail="Address not found"
-            )
+            raise DomainError("Address not found", 404)
 
         return address
 
@@ -121,17 +117,11 @@ class UserAddressService:
 
         if not address:
 
-            raise HTTPException(
-                status_code=404,
-                detail="Address not found"
-            )
+            raise DomainError("Address not found", 404)
 
         if str(address.user_reference_id) != user_id:
 
-            raise HTTPException(
-                status_code=404,
-                detail="Address not found"
-            )
+            raise DomainError("Address not found", 404)
 
         update_data = payload.model_dump(
             exclude_unset=True
@@ -162,6 +152,7 @@ class UserAddressService:
             address,
             update_data
         )
+        db.commit()
 
         return {
             "success": True,
@@ -183,17 +174,11 @@ class UserAddressService:
 
         if not address:
 
-            raise HTTPException(
-                status_code=404,
-                detail="Address not found"
-            )
+            raise DomainError("Address not found", 404)
 
         if str(address.user_reference_id) != user_id:
 
-            raise HTTPException(
-                status_code=404,
-                detail="Address not found"
-            )
+            raise DomainError("Address not found", 404)
 
         if _address_in_use(db, address.user_address_id):
             raise DomainError("This address has running subscriptions or orders and cannot be deleted yet")
@@ -202,6 +187,7 @@ class UserAddressService:
             db,
             address
         )
+        db.commit()
 
         # Keep exactly one default address
         if address.is_default:

@@ -2,8 +2,8 @@ import uuid
 
 from sqlalchemy import Column, String, Boolean, DateTime, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func
 
-from datetime import datetime, timezone
 
 from app.core.database import Base
 
@@ -73,7 +73,7 @@ class UserOTPLog(Base):
 
     created_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc)
+        server_default=func.now()
     )
 
     # Password reset: verifying a reset OTP issues a one-time token (stored

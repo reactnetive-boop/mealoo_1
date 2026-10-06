@@ -89,6 +89,7 @@ class ExtraOrderResponse(BaseModel):
 
     # Shown to the customer on the delivery day only; never to the kitchen
     otp_for_delivery: Optional[str] = None
+    delivery_window: Optional[dict] = None
 
     can_cancel: bool = False
 
@@ -115,5 +116,11 @@ class ExtraOrderListResponse(BaseModel):
     success: bool
 
     total: int
+
+    page: int = 1
+
+    limit: int = 100
+
+    has_more: bool = False
 
     orders: List[ExtraOrderResponse]

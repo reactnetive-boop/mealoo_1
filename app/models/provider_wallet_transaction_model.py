@@ -45,7 +45,7 @@ class ProviderWalletTransaction(Base):
         nullable=False
     )
 
-    # credit: 'order_delivered' | 'adjustment' | 'manual_credit'
+    # credit: 'order_delivered' | 'no_pickup_compensation' | 'adjustment' | 'manual_credit'
     # debit : 'withdrawal' | 'refund_issued' | 'penalty'
     reason = Column(
         String(50),

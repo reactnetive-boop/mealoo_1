@@ -9,7 +9,14 @@ from app.core.database import get_db
 from app.core.rate_limit import client_ip
 from app.dependencies.auth_dependency import get_current_admin, require_super_admin
 from app.services.admin_order_service import AdminOrderService
-from app.schemas.admin_schema import AdminForceStatusRequest, AdminAssignDeliveryBoyRequest, AdminReassignProviderRequest
+from app.schemas.admin_schema import (
+    AdminForceStatusRequest,
+    AdminAssignDeliveryBoyRequest,
+    AdminReassignProviderRequest,
+    AdminAssignSubscriptionRequest,
+    AdminUnassignSubscriptionRequest,
+    AdminResetVerificationRequest,
+)
 
 router = APIRouter()
 
@@ -19,8 +26,9 @@ router = APIRouter()
     summary="List All Subscriptions (Admin)",
     description=(
         "**Fetch a paginated list of all subscriptions across the platform.**\n\n"
-        "Filter by `vendor_id`, `user_id`, and/or `status`. "
-        "Use to monitor subscription health, spot cancelled subscriptions, and resolve disputes.\n\n"
+        "Filter by `vendor_id`, `user_id`, `status`, `delivery_boy_id`, `assignment` "
+        "(`assigned` / `unassigned`) and `search` (customer name or phone, kitchen name, subscription id prefix). "
+        "Rows include customer, kitchen and delivery partner names.\n\n"
         "**When to call:** On the admin orders / subscriptions overview screen."
     )
 )
@@ -28,6 +36,9 @@ def list_subscriptions(
     vendor_id: Optional[UUID] = Query(None),
     user_id: Optional[UUID] = Query(None),
     status: Optional[str] = Query(None),
+    delivery_boy_id: Optional[UUID] = Query(None),
+    assignment: Optional[str] = Query(None, description="assigned | unassigned"),
+    search: Optional[str] = Query(None, max_length=80),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -37,7 +48,63 @@ def list_subscriptions(
         db,
         vendor_id=str(vendor_id) if vendor_id else None,
         user_id=str(user_id) if user_id else None,
-        status=status, page=page, limit=limit
+        status=status, page=page, limit=limit,
+        delivery_boy_id=str(delivery_boy_id) if delivery_boy_id else None,
+        assignment=assignment, search=search,
+    )
+
+
+@router.get(
+    "/subscriptions/{subscription_id}",
+    summary="Subscription Detail with Delivery Assignment (Admin)",
+    description=(
+        "Customer, kitchen, plan, address, packages, order counts (completed / pending / in progress / "
+        "cancelled / skipped / missed / failed / assigned), the current delivery partner, the "
+        "assignment status and history, and every meal of the subscription."
+    ),
+)
+def get_subscription_detail(subscription_id: UUID, db: Session = Depends(get_db), current=Depends(get_current_admin)):
+    return AdminOrderService.get_subscription_detail(db, str(subscription_id))
+
+
+@router.put(
+    "/subscriptions/{subscription_id}/assign-delivery-boy",
+    summary="Admin: Assign a Delivery Partner to a Whole Subscription",
+    description=(
+        "Gives every meal of the subscription that is still at the kitchen (today onwards: scheduled, "
+        "preparing, ready for pickup) to `delivery_boy_id`, and every meal generated later. Meals already "
+        "picked up stay with whoever carries them; delivered, skipped and cancelled meals are not touched. "
+        "Also used to reassign. Atomic; the response says what was assigned and skipped. The partner must be "
+        "active, approved and in the shared pool or dedicated to this kitchen; the subscription must be "
+        "active or paused."
+    ),
+)
+def assign_subscription_delivery_boy(
+    subscription_id: UUID,
+    payload: AdminAssignSubscriptionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin),
+):
+    return AdminOrderService.assign_subscription_delivery_boy(
+        db, str(subscription_id), payload, current["admin_id"], client_ip(request)
+    )
+
+
+@router.put(
+    "/subscriptions/{subscription_id}/unassign-delivery-boy",
+    summary="Admin: Remove the Subscription's Delivery Partner",
+    description="Open meals at the kitchen become unassigned; meals already picked up stay with the partner.",
+)
+def unassign_subscription_delivery_boy(
+    subscription_id: UUID,
+    payload: AdminUnassignSubscriptionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin),
+):
+    return AdminOrderService.unassign_subscription_delivery_boy(
+        db, str(subscription_id), payload, current["admin_id"], client_ip(request)
     )
 
 
@@ -58,6 +125,8 @@ def list_subscription_orders(
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
+    delivery_boy_id: Optional[UUID] = Query(None),
+    assignment: Optional[str] = Query(None, pattern="^(assigned|unassigned)$"),
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
@@ -65,7 +134,8 @@ def list_subscription_orders(
         db,
         vendor_id=str(vendor_id) if vendor_id else None,
         user_id=str(user_id) if user_id else None,
-        order_date=order_date, status=status, page=page, limit=limit
+        order_date=order_date, status=status, page=page, limit=limit,
+        delivery_boy_id=str(delivery_boy_id) if delivery_boy_id else None, assignment=assignment
     )
 
 
@@ -86,6 +156,21 @@ def assign_delivery_boy_to_order(
     current=Depends(get_current_admin)
 ):
     return AdminOrderService.assign_delivery_boy(db, str(order_id), payload, current["admin_id"], client_ip(request))
+
+
+@router.put(
+    "/subscription-orders/{order_id}/reset-verification",
+    summary="Admin: Unlock Pickup / Delivery Code Attempts",
+    description="Clears the wrong-code counters of a locked meal after support has checked with the partner. Audited.",
+)
+def reset_order_verification(
+    order_id: UUID,
+    payload: AdminResetVerificationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin),
+):
+    return AdminOrderService.reset_verification(db, "subscription", str(order_id), payload, current["admin_id"], client_ip(request))
 
 
 @router.put(
@@ -145,6 +230,8 @@ def list_extra_orders(
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
+    delivery_boy_id: Optional[UUID] = Query(None),
+    assignment: Optional[str] = Query(None, pattern="^(assigned|unassigned)$"),
     db: Session = Depends(get_db),
     current=Depends(get_current_admin)
 ):
@@ -152,7 +239,8 @@ def list_extra_orders(
         db,
         vendor_id=str(vendor_id) if vendor_id else None,
         user_id=str(user_id) if user_id else None,
-        delivery_date=delivery_date, status=status, page=page, limit=limit
+        delivery_date=delivery_date, status=status, page=page, limit=limit,
+        delivery_boy_id=str(delivery_boy_id) if delivery_boy_id else None, assignment=assignment
     )
 
 
@@ -173,6 +261,20 @@ def assign_delivery_boy_to_extra_order(
     current=Depends(get_current_admin)
 ):
     return AdminOrderService.assign_extra_delivery_boy(db, str(order_id), payload, current["admin_id"], client_ip(request))
+
+
+@router.put(
+    "/extra-orders/{order_id}/reset-verification",
+    summary="Admin: Unlock Pickup / Delivery Code Attempts (One-Time Order)",
+)
+def reset_extra_order_verification(
+    order_id: UUID,
+    payload: AdminResetVerificationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin),
+):
+    return AdminOrderService.reset_verification(db, "extra", str(order_id), payload, current["admin_id"], client_ip(request))
 
 
 @router.put(

@@ -1,4 +1,4 @@
-from fastapi import HTTPException, UploadFile
+from fastapi import UploadFile
 
 from sqlalchemy.orm import Session
 
@@ -24,10 +24,7 @@ class UserProfileService:
 
         if not user:
 
-            raise HTTPException(
-                status_code=404,
-                detail="User not found"
-            )
+            raise DomainError("User not found", 404)
 
         return user
 
@@ -45,10 +42,7 @@ class UserProfileService:
 
         if not user:
 
-            raise HTTPException(
-                status_code=404,
-                detail="User not found"
-            )
+            raise DomainError("User not found", 404)
 
         update_data = payload.model_dump(
             exclude_unset=True
@@ -75,6 +69,7 @@ class UserProfileService:
             user,
             update_data
         )
+        db.commit()
 
         return {
             "success": True,
@@ -99,10 +94,7 @@ class UserProfileService:
 
         if not user:
 
-            raise HTTPException(
-                status_code=404,
-                detail="User not found"
-            )
+            raise DomainError("User not found", 404)
 
         old_path = user.avatar_url
         image_path = save_user_profile_image(file)
@@ -112,6 +104,7 @@ class UserProfileService:
             user,
             image_path
         )
+        db.commit()
 
         delete_upload(old_path)
 

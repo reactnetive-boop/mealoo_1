@@ -1,4 +1,4 @@
-from typing import List, Optional, Any, Union, Literal
+from typing import List, Optional, Union, Literal
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
@@ -14,6 +14,8 @@ from app.schemas.menu_schema import _zero_is_none
 class AdminLoginRequest(BaseModel):
     email: str = Field(..., max_length=255)
     password: str = Field(..., max_length=128)
+    # authenticator code (or a recovery code) when two-factor login is on
+    totp_code: Optional[str] = Field(None, max_length=20)
 
 
 class AdminLoginResponse(BaseModel):
@@ -23,6 +25,17 @@ class AdminLoginResponse(BaseModel):
     role: Optional[str]
     access_token: str
     token_type: str
+    two_factor_enabled: bool = False
+    must_enroll_2fa: bool = False
+
+
+class AdminTotpCodeRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=20)
+
+
+class AdminDisableTotpRequest(BaseModel):
+    password: str = Field(..., max_length=128)
+    code: str = Field(..., min_length=6, max_length=20)
 
 
 class AdminProfileResponse(BaseModel):
@@ -61,12 +74,6 @@ class AdminUserResponse(BaseModel):
     last_login_at: Optional[datetime]
 
 
-class AdminUserListResponse(BaseModel):
-    success: bool
-    total: int
-    users: List[AdminUserResponse]
-
-
 class AdminUpdateUserStatusRequest(BaseModel):
     status: Literal["active", "inactive", "suspended"]
     reason: Optional[str] = Field(None, max_length=500)
@@ -96,12 +103,6 @@ class AdminProviderResponse(BaseModel):
     fssai_licence: Optional[str]
     daily_meal_quota: Optional[int]
     created_at: Optional[datetime]
-
-
-class AdminProviderListResponse(BaseModel):
-    success: bool
-    total: int
-    providers: List[AdminProviderResponse]
 
 
 class AdminUpdateProviderRequest(BaseModel):
@@ -142,12 +143,6 @@ class AdminDeliveryBoyResponse(BaseModel):
     vehicle_number: Optional[str]
     assigned_provider_reference_id: Optional[UUID]
     created_at: Optional[datetime]
-
-
-class AdminDeliveryBoyListResponse(BaseModel):
-    success: bool
-    total: int
-    delivery_boys: List[AdminDeliveryBoyResponse]
 
 
 class AdminUpdateDeliveryBoyRequest(BaseModel):
@@ -224,12 +219,6 @@ class AdminPackageResponse(BaseModel):
     created_at: Optional[datetime]
 
 
-class AdminPackageListResponse(BaseModel):
-    success: bool
-    total: int
-    packages: List[AdminPackageResponse]
-
-
 class AdminUpdatePackageRequest(BaseModel):
     package_name: Optional[str] = Field(None, min_length=2, max_length=255)
     short_description: Optional[str] = Field(None, max_length=500)
@@ -297,12 +286,6 @@ class AdminPlanResponse(BaseModel):
     created_at: Optional[datetime]
 
 
-class AdminPlanListResponse(BaseModel):
-    success: bool
-    total: int
-    plans: List[AdminPlanResponse]
-
-
 class AdminUpdatePlanRequest(BaseModel):
     free_skips: Optional[int] = Field(None, ge=0, le=60)
     discount_percent: Optional[Decimal] = Field(None, ge=0, le=90, max_digits=5, decimal_places=2)
@@ -311,20 +294,6 @@ class AdminUpdatePlanRequest(BaseModel):
 
 
 # ── Complaint Management ──────────────────────────────────
-
-class AdminComplaintResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    complaint_id: UUID
-    against: str
-    status: str
-    subject: str
-    description: str
-    evidence_urls: Optional[List[str]]
-    admin_notes: Optional[str]
-    resolution: Optional[str]
-    resolved_at: Optional[datetime]
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
 
 
 class AdminComplaintListItem(BaseModel):
@@ -335,12 +304,6 @@ class AdminComplaintListItem(BaseModel):
     status: str
     subject: str
     created_at: Optional[datetime]
-
-
-class AdminComplaintListResponse(BaseModel):
-    success: bool
-    total: int
-    complaints: List[AdminComplaintListItem]
 
 
 class AdminResolveComplaintRequest(BaseModel):
@@ -364,18 +327,7 @@ class AdminReviewResponse(BaseModel):
     created_at: Optional[datetime]
 
 
-class AdminReviewListResponse(BaseModel):
-    success: bool
-    total: int
-    reviews: List[AdminReviewResponse]
-
-
 # ── Order Management ──────────────────────────────────────
-
-class AdminOrderListResponse(BaseModel):
-    success: bool
-    total: int
-    orders: List[Any]
 
 
 class AdminForceStatusRequest(BaseModel):
@@ -389,6 +341,22 @@ class AdminAssignDeliveryBoyRequest(BaseModel):
     reason: Optional[str] = Field(None, max_length=500)
 
 
+class AdminAssignSubscriptionRequest(BaseModel):
+    delivery_boy_id: UUID
+    note: Optional[str] = Field(None, max_length=500, description="Why / instructions; stored with the assignment")
+
+
+class AdminUnassignSubscriptionRequest(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+class AdminResetVerificationRequest(BaseModel):
+    # which attempt counters to clear
+    pickup: bool = True
+    delivery: bool = True
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
 class AdminReassignProviderRequest(BaseModel):
     new_provider_id: UUID
     reason: Optional[str] = Field(None, max_length=500)
@@ -397,15 +365,6 @@ class AdminReassignProviderRequest(BaseModel):
 class AdminMarkUnavailabilityRequest(BaseModel):
     date: date
     reason: Optional[str] = Field(None, max_length=500)
-
-
-class AdminProviderUnavailabilityResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    provider_unavailability_id: int
-    provider_reference_id: UUID
-    unavailable_date: date
-    reason: Optional[str]
-    created_at: Optional[datetime]
 
 
 # ── Serviceable Pincodes ──────────────────────────────────
@@ -418,12 +377,6 @@ class AdminPincodeResponse(BaseModel):
     state: str
     is_active: bool
     created_at: Optional[datetime]
-
-
-class AdminPincodeListResponse(BaseModel):
-    success: bool
-    total: int
-    pincodes: List[AdminPincodeResponse]
 
 
 class AdminCreatePincodeRequest(BaseModel):
@@ -439,16 +392,6 @@ class AdminUpdatePincodeRequest(BaseModel):
 
 
 # ── Dashboard ─────────────────────────────────────────────
-
-class AdminDashboardResponse(BaseModel):
-    success: bool
-    users: dict
-    providers: dict
-    delivery_boys: dict
-    subscriptions: dict
-    orders: dict
-    complaints: dict
-    revenue: dict
 
 
 # ── Pricing configuration ─────────────────────────────────
@@ -491,3 +434,54 @@ class AdminProcessPayoutRequest(BaseModel):
 class AdminReverseTopupRequest(BaseModel):
     amount: Optional[Decimal] = Field(None, gt=0, le=100000, max_digits=12, decimal_places=2)
     reason: str = Field(..., min_length=5, max_length=255)
+
+
+class AdminServiceAreaRequest(BaseModel):
+    pincode: int = Field(..., ge=100000, le=999999)
+
+
+class AdminCategoryCreateRequest(BaseModel):
+    category_name: str = Field(..., min_length=2, max_length=150)
+    description: Optional[str] = Field(None, max_length=1000)
+    display_order: Optional[int] = Field(None, ge=0, le=10000)
+
+
+class AdminCategoryUpdateRequest(BaseModel):
+    category_name: Optional[str] = Field(None, min_length=2, max_length=150)
+    description: Optional[str] = Field(None, max_length=1000)
+    display_order: Optional[int] = Field(None, ge=0, le=10000)
+    is_active: Optional[bool] = None
+
+
+class AdminAccountCreateRequest(BaseModel):
+    full_name: str = Field(..., min_length=2, max_length=128)
+    email: str = Field(..., pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=255)
+    password: str = Field(..., min_length=10, max_length=128)
+    role: Literal["super_admin", "moderator"] = "moderator"
+
+
+class AdminAccountUpdateRequest(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=2, max_length=128)
+    role: Optional[Literal["super_admin", "moderator"]] = None
+    is_active: Optional[bool] = None
+
+
+class AdminBroadcastRequest(BaseModel):
+    audience: Literal["customers", "kitchens", "partners", "everyone"]
+    title: str = Field(..., min_length=3, max_length=150)
+    body: str = Field(..., min_length=3, max_length=1000)
+
+
+class AdminTransferSubscriptionsRequest(BaseModel):
+    target_provider_id: UUID
+    # empty = every running subscription of the kitchen
+    subscription_ids: Optional[List[UUID]] = Field(None, max_length=500)
+    reason: str = Field(..., min_length=3, max_length=255)
+    # true: only report what would move / be blocked
+    preview: bool = True
+    # cancel (and refund) the subscriptions that cannot move
+    cancel_untransferable: bool = False
+
+
+class AdminAssignComplaintRequest(BaseModel):
+    admin_id: Optional[UUID] = None

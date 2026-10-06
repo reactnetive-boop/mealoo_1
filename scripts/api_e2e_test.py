@@ -232,7 +232,16 @@ call("provider complete profile", "PUT", "/provider/complete-profile", token=P1,
      json={"full_name": "E2E Provider One", "business_name": "E2E Kitchen One",
            "city": "Testville", "area": "Sector 1", "address": "12 Test Street",
            "kitchen_type": "veg", "pincode": int(TEST_PIN), "house_no": "12",
-           "landmark": "Near Test Park", "state": "TestState"})
+           "landmark": "Near Test Park", "state": "TestState",
+           "fssai_licence": "12345678901234"})
+call("provider complete profile bad fssai", "PUT", "/provider/complete-profile", token=P1,
+     json={"full_name": "E2E Provider One", "business_name": "E2E Kitchen One",
+           "city": "Testville", "area": "Sector 1", "address": "12 Test Street",
+           "kitchen_type": "veg", "pincode": int(TEST_PIN), "state": "TestState",
+           "fssai_licence": "123"}, expect=422)
+call("provider profile has fssai", "GET", "/provider/profile", token=P1,
+     check=lambda b: None if b.get("fssai_licence") == "12345678901234"
+     else f"fssai_licence={b.get('fssai_licence')!r}")
 call("provider address update", "PUT", "/provider/address", token=P1,
      json={"provider_id": P1_ID, "house_no": "12A", "address": "12A Test Street",
            "landmark": "Near Test Park", "city": "Testville", "state": "TestState",
@@ -258,6 +267,47 @@ body = call("provider create package", "POST", "/menu/package", token=P1,
 PKG1 = None
 if body:
     PKG1 = body.get("package_id") or (body.get("package") or {}).get("package_id")
+
+# pricing rule: subscription_price is copied into price at creation, and the
+# two are independent from then on
+body = call("create package copies subscription_price into price", "POST", "/menu/package",
+            token=P1,
+            json={"category_id": CATEGORY_ID, "package_name": f"E2E Price Link {RUN}",
+                  "meal_type": "lunch", "food_type": "veg", "price": 100,
+                  "is_subscription_available": True, "subscription_price": 250,
+                  "items": [{"item_name": "Roti", "quantity": "2"}]})
+PKG_PRICE = (body or {}).get("package_id") or ((body or {}).get("package") or {}).get("package_id")
+if PKG_PRICE:
+    call("created package price == subscription_price", "GET", "/menu/get/{pid}", token=P1,
+         path={"pid": PKG_PRICE},
+         check=lambda b: None if b.get("price") == 250 and b.get("subscription_price") == 250
+         else f"price={b.get('price')}, subscription_price={b.get('subscription_price')}, expected both 250")
+    # editing the subscription price must leave the one-time price alone
+    call("update subscription_price only", "PUT", "/menu/update/{pid}", token=P1,
+         path={"pid": PKG_PRICE}, json={"subscription_price": 175})
+    call("price untouched by subscription_price edit", "GET", "/menu/get/{pid}", token=P1,
+         path={"pid": PKG_PRICE},
+         check=lambda b: None if b.get("price") == 250 and b.get("subscription_price") == 175
+         else f"price={b.get('price')}, subscription_price={b.get('subscription_price')}, expected 250/175")
+    # and the reverse: editing price must not move subscription_price
+    call("update price only", "PUT", "/menu/update/{pid}", token=P1,
+         path={"pid": PKG_PRICE}, json={"price": 300})
+    call("subscription_price untouched by price edit", "GET", "/menu/get/{pid}", token=P1,
+         path={"pid": PKG_PRICE},
+         check=lambda b: None if b.get("price") == 300 and b.get("subscription_price") == 175
+         else f"price={b.get('price')}, subscription_price={b.get('subscription_price')}, expected 300/175")
+
+# without a subscription_price, price is stored exactly as sent
+body = call("create package without subscription_price", "POST", "/menu/package", token=P1,
+            json={"category_id": CATEGORY_ID, "package_name": f"E2E Plain Price {RUN}",
+                  "meal_type": "lunch", "food_type": "veg", "price": 140,
+                  "items": [{"item_name": "Roti", "quantity": "2"}]})
+PKG_PLAIN = (body or {}).get("package_id") or ((body or {}).get("package") or {}).get("package_id")
+if PKG_PLAIN:
+    call("plain package keeps its price", "GET", "/menu/get/{pid}", token=P1,
+         path={"pid": PKG_PLAIN},
+         check=lambda b: None if b.get("price") == 140 and b.get("subscription_price") is None
+         else f"price={b.get('price')}, subscription_price={b.get('subscription_price')}, expected 140/None")
 
 # meal_type accepts one slot, any two, all three, or the "full_day" alias;
 # category_id must be a real UUID that exists.
@@ -536,6 +586,62 @@ call("user extra orders list", "GET", "/user/order/extra", token=U1)
 if EXTRA_ORDER:
     call("user extra order detail", "GET", "/user/order/extra/{oid}", token=U1,
          path={"oid": EXTRA_ORDER})
+
+# ════════════════════════════════════════════════════════════
+# PROVIDER — daily meal quota (one limit across all packages)
+# ════════════════════════════════════════════════════════════
+section("PROVIDER: daily meal quota")
+
+body = call("provider quota status (no limit)", "GET", "/provider/daily-quota", token=P1,
+            check=lambda b: None if b.get("daily_meal_quota") is None
+            else f"expected no limit, got {b.get('daily_meal_quota')}")
+_slots = (body or {}).get("slots") or {}
+LUNCH_SUB = _slots.get("lunch", {}).get("subscription_committed", 0)
+DINNER_USED = _slots.get("dinner", {}).get("total_committed", 0)
+QUOTA = max(LUNCH_SUB, DINNER_USED, 1)
+
+call("provider quota rejects zero", "PUT", "/provider/daily-quota", token=P1,
+     json={"daily_meal_quota": 0}, expect=422)
+if LUNCH_SUB > 1:
+    call("provider quota below committed demand rejected", "PUT", "/provider/daily-quota",
+         token=P1, json={"daily_meal_quota": LUNCH_SUB - 1}, expect=400)
+
+call("provider set daily quota", "PUT", "/provider/daily-quota", token=P1,
+     json={"daily_meal_quota": QUOTA}, check=ok)
+call("provider quota status reflects limit", "GET", "/provider/daily-quota", token=P1,
+     check=lambda b: None if b.get("daily_meal_quota") == QUOTA
+     else f"daily_meal_quota={b.get('daily_meal_quota')}, expected {QUOTA}")
+
+# the per-package capacity (60) is untouched — these are rejected by the
+# provider-wide limit, which every package of the provider shares
+call("extra order over provider quota rejected", "POST", "/user/order/extra", token=U1,
+     json={"vendor_id": P1_ID, "address_id": ADDR, "delivery_date": str(TODAY),
+           "meal_slot": "dinner",
+           "items": [{"package_id": PKG1, "quantity": QUOTA - DINNER_USED + 1}]},
+     expect=400)
+call("subscription over provider quota rejected", "POST", "/user/subscription", token=U1,
+     json={"vendor_id": P1_ID, "plan_id": PLAN_ID, "address_id": ADDR,
+           "start_date": str(TODAY),
+           "items": [{"package_id": PKG1, "quantity": QUOTA - LUNCH_SUB + 1}]},
+     expect=400)
+
+call("admin provider quota status", "GET", "/admin/providers/{pid}/daily-quota", token=ADMIN,
+     path={"pid": P1_ID},
+     check=lambda b: None if b.get("daily_meal_quota") == QUOTA
+     else f"admin sees daily_meal_quota={b.get('daily_meal_quota')}")
+call("admin raises provider quota", "PUT", "/admin/providers/{pid}", token=ADMIN,
+     path={"pid": P1_ID}, json={"daily_meal_quota": QUOTA + 100}, check=ok)
+call("admin bad fssai rejected", "PUT", "/admin/providers/{pid}", token=ADMIN,
+     path={"pid": P1_ID}, json={"fssai_licence": "12"}, expect=422)
+if LUNCH_SUB > 1:
+    call("admin quota below committed demand rejected", "PUT", "/admin/providers/{pid}",
+         token=ADMIN, path={"pid": P1_ID}, json={"daily_meal_quota": LUNCH_SUB - 1},
+         expect=400)
+
+# clear it again so the remaining flows are not capacity-bound
+call("provider quota removed", "PUT", "/provider/daily-quota", token=P1,
+     json={"daily_meal_quota": None}, check=ok)
+
 
 # ════════════════════════════════════════════════════════════
 # DELIVERY BOY — onboarding

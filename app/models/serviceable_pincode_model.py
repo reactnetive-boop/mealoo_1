@@ -13,4 +13,4 @@ class ServiceablePincode(Base):
     city = Column(String(100), nullable=False)
     state = Column(String(100), nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(TIMESTAMP, server_default=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())

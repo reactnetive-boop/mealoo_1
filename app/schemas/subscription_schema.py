@@ -4,14 +4,6 @@ from decimal import Decimal
 from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
-from enum import Enum
-
-
-class SubscriptionType(str, Enum):
-    WEEKLY = "weekly"
-    MONTHLY = "monthly"
-    HALF_YEARLY = "half_yearly"
-    YEARLY = "yearly"
 
 
 # ── Plan Options ─────────────────────────────────────────
@@ -243,6 +235,12 @@ class SubscriptionListResponse(BaseModel):
 
     total: int
 
+    page: int = 1
+
+    limit: int = 100
+
+    has_more: bool = False
+
     subscriptions: List[SubscriptionResponse]
 
 
@@ -299,7 +297,8 @@ class UserSubscriptionOrderResponse(BaseModel):
 
     meal_slot: str
 
-    # 'scheduled' | 'preparing' | 'out_for_delivery' | 'delivered' | 'skipped' | 'cancelled'
+    # scheduled | preparing | ready_for_pickup | picked_up | out_for_delivery |
+    # delivered | skipped | cancelled
     status: str
 
     is_free_skip: bool
@@ -318,10 +317,15 @@ class UserSubscriptionOrderResponse(BaseModel):
     refund_amount: Optional[Decimal] = None
 
     # The code the customer gives the delivery partner. Only returned on the
-    # day of the meal, and never to the kitchen.
+    # day of the meal until it is delivered, and never to the kitchen or partner.
     otp_for_delivery: Optional[str]
 
+    picked_up_at: Optional[datetime] = None
+
+    out_for_delivery_at: Optional[datetime] = None
+
     can_skip: bool = False
+    delivery_window: Optional[dict] = None
 
     skip_will_refund: bool = False
 

@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.database import SessionLocal
 from app.models.subscription_model import Subscription
 from app.models.order_model import Order
+from app.domain.orders import new_codes
 
 TODAY = date.today()
 DATES = [TODAY - timedelta(days=2), TODAY - timedelta(days=1), TODAY, TODAY + timedelta(days=1)]
@@ -64,6 +65,7 @@ def seed():
                     meal_slot=sub.meal_slot,
                     status=status,
                     is_free_skip=False,
+                    **new_codes(),  # seed of the customer's delivery code
                 ))
                 inserted += 1
 

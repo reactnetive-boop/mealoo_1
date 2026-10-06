@@ -9,6 +9,9 @@ from app.core.rate_limit import client_ip
 from app.dependencies.auth_dependency import get_current_admin, require_super_admin
 from app.schemas.admin_schema import AdminProcessPayoutRequest
 from app.services.payout_service import PayoutService
+from app.services.payout_details_service import PayoutDetailsService
+from app.core.errors import DomainError
+from app.models.payout_request_model import PayoutRequest
 
 router = APIRouter()
 
@@ -20,7 +23,7 @@ router = APIRouter()
 )
 def list_requests(
     status: Optional[str] = Query(None, pattern="^(pending|paid|rejected)$"),
-    owner_type: Optional[str] = Query(None, pattern="^(provider|delivery_boy)$"),
+    owner_type: Optional[str] = Query(None, pattern="^(provider|delivery_boy|customer)$"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -52,3 +55,20 @@ def process_request(
         payout_reference=payload.payout_reference,
         ip=client_ip(request),
     )
+
+
+@router.get(
+    "/{request_id}/destination",
+    summary="Where to Send a Withdrawal (full, audited)",
+    description="The requester's bank account / UPI, unmasked, for making the transfer. Audited. **super_admin**.",
+)
+def payout_destination(
+    request_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(require_super_admin)
+):
+    row = db.query(PayoutRequest).filter(PayoutRequest.payout_request_id == request_id).first()
+    if row is None:
+        raise DomainError("Withdrawal request not found", 404)
+    return PayoutDetailsService.reveal_for_admin(db, row.owner_type, row.owner_id, current["admin_id"], client_ip(request))

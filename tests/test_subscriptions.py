@@ -54,8 +54,10 @@ def test_quote_matches_charge_and_today_meal_is_created(client, db):
     meals = _meals(db, r.json()["subscription_id"])
     assert len(meals) == 7
     assert meals[0].order_date == date(2026, 10, 5)  # today's lunch exists (before 09:00 cut-off)
-    assert all(m.otp_for_delivery and len(m.otp_for_delivery) == 6 for m in meals)
-    assert all(m.pickup_code and len(m.pickup_code) == 4 for m in meals)
+    # every meal has its own delivery code, derived from a seed; no plaintext codes at rest
+    assert all(m.delivery_code_seed and len(f.delivery_code(m)) == 6 for m in meals)
+    assert all(m.otp_for_delivery is None and m.pickup_code is None for m in meals)
+    assert len({f.delivery_code(m) for m in meals}) > 1
 
 
 def test_selling_price_is_discounted_price_not_discount_amount(client, db):
@@ -275,3 +277,24 @@ def test_wallet_ledger_is_consistent(client, db):
     txns = db.query(WalletTransaction).filter(WalletTransaction.user_reference_id == w["user"].user_id).all()
     net = sum((t.amount if t.type == "credit" else -t.amount) for t in txns)
     assert net == _balance(db, w["user"])
+
+
+def test_customer_lists_are_paged(client, db):
+    w = f.world(db, balance="20000")
+    for start in ("2026-10-05", "2026-10-12", "2026-10-19"):
+        r = client.post("/api/v1/user/subscription", headers=w["user_auth"], json={
+            "vendor_id": str(w["kitchen"].provider_id), "plan_id": str(w["plan"].subscription_plan_id),
+            "address_id": str(w["address"].user_address_id), "start_date": start,
+            "items": [{"package_id": str(w["package"].package_id), "quantity": 1}],
+        })
+        assert r.status_code == 200, r.text
+    page1 = client.get("/api/v1/user/subscription", headers=w["user_auth"], params={"limit": 2}).json()
+    assert page1["total"] == 3 and len(page1["subscriptions"]) == 2 and page1["has_more"] is True
+    page2 = client.get("/api/v1/user/subscription", headers=w["user_auth"], params={"limit": 2, "page": 2}).json()
+    assert len(page2["subscriptions"]) == 1 and page2["has_more"] is False
+    for path in ("/api/v1/user/order/extra", "/api/v1/user/complaint", "/api/v1/user/review"):
+        body = client.get(path, headers=w["user_auth"], params={"limit": 5}).json()
+        assert body["page"] == 1 and "has_more" in body, path
+    meals = client.get("/api/v1/provider/orders/subscription-orders", headers=w["kitchen_auth"],
+                       params={"from_date": "2026-10-05", "to_date": "2026-10-25", "limit": 4}).json()
+    assert meals["total"] == 21 and len(meals["orders"]) == 4 and meals["has_more"] is True

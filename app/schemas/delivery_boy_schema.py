@@ -5,6 +5,8 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.payout_schema import PayoutDetailsRequest
+
 
 # ── Auth ──────────────────────────────────────────────────
 
@@ -151,6 +153,22 @@ class DeliverySubscriptionOrderResponse(BaseModel):
     delivery_notes: Optional[str]
     # True after too many wrong customer codes; admin must resolve
     delivery_locked: bool = False
+    # Names and progress for list cards (pickup_status: not_started | preparing |
+    # ready | locked | picked_up | cancelled; delivery_status: pending | picked_up |
+    # on_the_way | delivered | failed | cancelled | skipped)
+    vendor_name: Optional[str] = None
+    vendor_address: Optional[str] = None
+    customer_name: Optional[str] = None
+    delivery_area: Optional[str] = None
+    delivery_address_short: Optional[str] = None
+    pickup_status: Optional[str] = None
+    delivery_status: Optional[str] = None
+    # True after too many wrong kitchen codes; admin must resolve
+    pickup_locked: bool = False
+    out_for_delivery_at: Optional[datetime] = None
+    arrived_at: Optional[datetime] = None
+    # promised delivery time, e.g. {"from": "12:00", "to": "14:30"}
+    delivery_window: Optional[dict] = None
     created_at: Optional[datetime]
 
 
@@ -170,8 +188,8 @@ class DeliverySubscriptionOrderDetailResponse(BaseModel):
 
 
 class PickupRequest(BaseModel):
-    # 4-digit code shown to the kitchen on the order; proves the hand-over
-    pickup_code: str = Field(..., pattern=r"^\d{4}$")
+    # The kitchen's 6-digit code for today; proves the hand-over at that kitchen
+    pickup_code: str = Field(..., pattern=r"^\d{6}$", description="Today's pickup code from the kitchen")
     delivery_notes: Optional[str] = Field(None, max_length=500)
 
 
@@ -186,6 +204,10 @@ class OrderActionResponse(BaseModel):
     message: str
     order_id: UUID
     status: str
+    # True when the action had already happened (retried request); nothing changed
+    already_done: bool = False
+    # other packages of the same one-time checkout that moved with this one (one trip)
+    also_updated: List[UUID] = []
 
 
 # ── Extra Orders ──────────────────────────────────────────
@@ -206,6 +228,23 @@ class DeliveryExtraOrderResponse(BaseModel):
     delivered_at: Optional[datetime] = None
     picked_up_at: Optional[datetime] = None
     delivery_locked: bool = False
+    package_name: Optional[str] = None
+    # Names and progress for list cards (pickup_status: not_started | preparing |
+    # ready | locked | picked_up | cancelled; delivery_status: pending | picked_up |
+    # on_the_way | delivered | failed | cancelled | skipped)
+    vendor_name: Optional[str] = None
+    vendor_address: Optional[str] = None
+    customer_name: Optional[str] = None
+    delivery_area: Optional[str] = None
+    delivery_address_short: Optional[str] = None
+    pickup_status: Optional[str] = None
+    delivery_status: Optional[str] = None
+    # True after too many wrong kitchen codes; admin must resolve
+    pickup_locked: bool = False
+    out_for_delivery_at: Optional[datetime] = None
+    arrived_at: Optional[datetime] = None
+    # promised delivery time, e.g. {"from": "12:00", "to": "14:30"}
+    delivery_window: Optional[dict] = None
     created_at: Optional[datetime]
 
 
@@ -279,12 +318,7 @@ class GetPayoutDetailsResponse(BaseModel):
     payout_details: Optional[DeliveryBoyPayoutDetailsResponse] = None
 
 
-class UpdatePayoutDetailsRequest(BaseModel):
-    account_holder_name: Optional[str] = Field(None, min_length=2, max_length=128)
-    account_number: Optional[str] = Field(None, pattern=r"^\d{6,18}$")
-    ifsc_code: Optional[str] = Field(None, pattern=r"^[A-Za-z]{4}0[A-Za-z0-9]{6}$")
-    bank_name: Optional[str] = Field(None, min_length=2, max_length=128)
-    upi_id: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9._-]{2,64}@[A-Za-z0-9.-]{2,64}$")
+UpdatePayoutDetailsRequest = PayoutDetailsRequest
 
 
 class UpdatePayoutDetailsResponse(BaseModel):
@@ -366,3 +400,18 @@ class NotificationListResponse(BaseModel):
 class DeliveryWithdrawalRequest(BaseModel):
     amount: Decimal = Field(..., gt=0, le=1000000, max_digits=12, decimal_places=2)
     note: Optional[str] = Field(None, max_length=255)
+
+
+class LeaveRequest(BaseModel):
+    leave_date: date
+    reason: Optional[str] = Field(None, max_length=255)
+
+
+class BulkPickupRequest(BaseModel):
+    provider_id: UUID
+    pickup_code: str = Field(..., min_length=4, max_length=10)
+
+
+class DeliveryFailedRequest(BaseModel):
+    reason: Literal["customer_unavailable", "wrong_address", "customer_refused", "other"]
+    note: Optional[str] = Field(None, max_length=300)

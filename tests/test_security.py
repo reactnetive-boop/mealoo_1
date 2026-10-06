@@ -62,7 +62,9 @@ def test_kitchen_edit_cannot_self_approve(client, db):
     assert r.status_code in (200, 422), r.text
     db.expire_all()
     row = db.query(MenuPackage).filter(MenuPackage.package_id == pkg.package_id).one()
-    assert row.approval_status == "pending"  # price change needs re-approval
+    # the price change waits for review; the live price and ownership are untouched
+    assert row.pending_changes["fields"] == {"price": "200"}
+    assert row.price == 180 and row.approval_status == "approved"
     assert row.provider_id == kitchen.provider_id
 
 

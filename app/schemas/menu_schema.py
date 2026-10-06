@@ -3,6 +3,7 @@ from typing import Optional
 from typing import Union
 
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import field_validator
 from uuid import UUID
@@ -132,9 +133,7 @@ class PackageItemResponse(
 
     quantity: Optional[str] = None
 
-    class Config:
-
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PackageImageResponse(
     BaseModel
@@ -146,41 +145,7 @@ class PackageImageResponse(
 
     is_primary: bool
 
-    class Config:
-
-        from_attributes = True
-
-class GetMenuPackageResponse(
-    BaseModel
-):
-
-    package_id: UUID
-
-    package_name: str
-
-    short_description: Optional[str]
-
-    description: Optional[str]
-
-    meal_type: str
-
-    food_type: str
-
-    price: float
-
-    discounted_price: Optional[float]
-
-    is_subscription_available: bool = False
-
-    subscription_price: Optional[float] = None
-
-    items: List[PackageItemResponse] = []
-
-    images: List[PackageImageResponse] = []
-
-    class Config:
-
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class UpdateMenuPackageRequest(
     BaseModel

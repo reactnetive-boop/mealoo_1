@@ -14,17 +14,19 @@ import uuid
 from datetime import timedelta
 from decimal import Decimal
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.audit import business_event
 from app.core.clock import today_local
 from app.core.config import EXTRA_ORDER_MAX_DAYS_AHEAD
 from app.core.errors import DomainError
-from app.domain import capacity, ledger, notify, orders as meals
+from app.core.paging import FIRST_PAGE, Paging
+from app.domain import capacity, checkout, ledger, notify, orders as meals
 from app.domain.eligibility import assert_sellable, is_on_holiday
 from app.domain.pricing import build_quote, current_components, quote_view, selling_price, money, ZERO
-from app.domain.slots import package_serves, is_before_cutoff, SLOT_CUTOFFS
+from app.domain.slots import package_serves, is_before_cutoff, SLOT_CUTOFFS, delivery_window
+from app.domain.status import EXTRA_OPEN_STATUSES
+from app.domain.verification import delivery_code, delivery_code_expired
 from app.models.extra_order_model import ExtraOrder
 from app.models.menu_package_model import MenuPackage
 from app.models.provider_model import Provider
@@ -60,7 +62,8 @@ def _validate_date(delivery_date, slot: str) -> None:
 def order_view(order: ExtraOrder, package: MenuPackage | None = None, provider: Provider | None = None) -> dict:
     show_code = (
         order.delivery_date == today_local()
-        and order.status in ("pending", "confirmed", "preparing", "out_for_delivery")
+        and order.status in EXTRA_OPEN_STATUSES
+        and not delivery_code_expired(order)
     )
     return {
         "extra_order_id": order.extra_order_id,
@@ -81,7 +84,8 @@ def order_view(order: ExtraOrder, package: MenuPackage | None = None, provider: 
         "status": order.status,
         "cancel_reason": order.cancel_reason,
         "refund_amount": order.refund_amount,
-        "otp_for_delivery": order.otp_for_delivery if show_code else None,
+        "otp_for_delivery": delivery_code(order) if show_code else None,
+        "delivery_window": delivery_window(order.meal_slot),
         "can_cancel": order.status == "pending" and is_before_cutoff(order.delivery_date, order.meal_slot),
         "delivered_at": order.delivered_at,
         "created_at": order.created_at,
@@ -116,7 +120,9 @@ class ExtraOrderService:
                 base_unit_price=selling_price(package),
                 quantity=qty,
                 deliveries=1,
+                # one checkout = one trip: trip charges and partner payout on the first line only
                 include_per_order=(index == 0),
+                include_per_delivery=(index == 0),
             )
             priced.append((package, qty, snapshot))
 
@@ -129,9 +135,7 @@ class ExtraOrderService:
     def quote(db: Session, user_id: str, payload):
         _, slot, provider, priced = ExtraOrderService._price(db, user_id, payload, lock=False)
         total = sum((Decimal(s["total_payable"]) for _, _, s in priced), ZERO)
-        wallet = ledger.lock_customer_wallet(db, user_id)
-        balance = money(wallet.balance)
-        db.rollback()
+        balance = ledger.customer_balance(db, user_id)
         return {
             "success": True,
             "kind": "extra_order",
@@ -197,6 +201,7 @@ class ExtraOrderService:
             raise ledger.InsufficientBalance(total, money(wallet.balance))
 
         checkout_id = uuid.uuid4()
+        codes = meals.new_codes(shared=True)  # one delivery, one code for every line
         created = []
         for package, qty, snapshot in priced:
             order = ExtraOrder(
@@ -214,7 +219,7 @@ class ExtraOrderService:
                 delivery_date=payload.delivery_date,
                 meal_slot=slot,
                 status="pending",
-                **meals.new_codes(),
+                **codes,
             )
             db.add(order)
             created.append((order, package))
@@ -238,6 +243,13 @@ class ExtraOrderService:
             f"Your {slot} order for {payload.delivery_date} is waiting for the kitchen to confirm.",
             {"checkout_id": str(checkout_id)},
         )
+        cutoff = SLOT_CUTOFFS[slot].strftime("%I:%M %p").lstrip("0")
+        notify.kitchen(
+            db, provider.provider_id, "new_order", "New one-time order - please confirm",
+            ", ".join(f"{p.package_name} x {q}" for p, q, _ in priced)
+            + f" for {slot} on {payload.delivery_date}. Confirm it before {cutoff} that day or it is cancelled.",
+            {"checkout_id": str(checkout_id), "kind": "extra", "delivery_date": str(payload.delivery_date)},
+        )
         db.commit()
         business_event("extra_order.placed", checkout_id=checkout_id, user_id=user_id, amount=total)
 
@@ -256,19 +268,19 @@ class ExtraOrderService:
             q = q.with_for_update()
         order = q.first()
         if order is None:
-            raise HTTPException(status_code=404, detail="Order not found")
+            raise DomainError("Order not found", 404)
         return order
 
     @staticmethod
-    def get_order_list(db: Session, user_id: str):
-        orders = ExtraOrderRepository.get_all_by_user(db, user_id)
+    def get_order_list(db: Session, user_id: str, paging: Paging = FIRST_PAGE):
+        orders = ExtraOrderRepository.get_all_by_user(db, user_id, paging.offset, paging.limit)
         package_ids = {o.package_reference_id for o in orders}
         provider_ids = {o.vendor_reference_id for o in orders}
         packages = {p.package_id: p for p in db.query(MenuPackage).filter(MenuPackage.package_id.in_(package_ids)).all()} if package_ids else {}
         providers = {p.provider_id: p for p in db.query(Provider).filter(Provider.provider_id.in_(provider_ids)).all()} if provider_ids else {}
         return {
             "success": True,
-            "total": len(orders),
+            **paging.meta(ExtraOrderRepository.count_by_user(db, user_id)),
             "orders": [order_view(o, packages.get(o.package_reference_id), providers.get(o.vendor_reference_id)) for o in orders],
         }
 
@@ -281,13 +293,33 @@ class ExtraOrderService:
 
     @staticmethod
     def cancel_order(db: Session, user_id: str, order_id):
+        """Cancels the whole checkout (one delivery): every line the kitchen has not accepted yet."""
         order = ExtraOrderService._owned(db, user_id, order_id, lock=True)
         if order.status != "pending":
             raise DomainError("This order is already being prepared and can no longer be cancelled")
         if not is_before_cutoff(order.delivery_date, order.meal_slot):
             raise DomainError("The cut-off for this meal has passed")
-        order.status = "cancelled"
-        order.cancel_reason = "customer"
-        refund = meals.refund_extra_order(db, order, reason="order_cancel_refund", description="Refund for cancelled one-time order")
+        others = checkout.siblings(db, order)
+        if any(o.status not in ("pending", "cancelled") for o in others):
+            raise DomainError("The kitchen has already accepted part of this order, so it can no longer be cancelled")
+        refund = ZERO
+        for line in [order, *others]:
+            if line.status != "pending":
+                continue
+            line.status = "cancelled"
+            line.cancel_reason = "customer"
+            refund += meals.refund_extra_order(
+                db, line, reason="order_cancel_refund", description="Refund for cancelled one-time order"
+            )
+        notify.kitchen(
+            db, order.vendor_reference_id, "order_cancelled", "One-time order cancelled",
+            f"The customer cancelled their {order.meal_slot} order for {order.delivery_date}. No need to prepare it.",
+            {"extra_order_id": str(order.extra_order_id), "kind": "extra_order"},
+        )
+        notify.delivery_partner(
+            db, order.delivery_boy_reference_id, "schedule_update", "Delivery cancelled",
+            f"The one-time {order.meal_slot} delivery on {order.delivery_date} was cancelled by the customer.",
+            {"order_id": str(order.extra_order_id), "kind": "extra_order"},
+        )
         db.commit()
         return {"success": True, "message": f"Order cancelled. Rs {refund} refunded to your wallet.", "refund_amount": refund}

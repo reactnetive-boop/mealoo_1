@@ -37,6 +37,9 @@ class RaiseComplaintRequest(BaseModel):
 
     subscription_id: Optional[UUID] = None
 
+    # one meal of a subscription (e.g. late, missing or wrong food that day)
+    subscription_order_id: Optional[UUID] = None
+
     evidence_urls: Optional[List[str]] = Field(
         default=[],
         max_length=5,
@@ -82,6 +85,8 @@ class ComplaintResponse(BaseModel):
 
     order_reference_id: Optional[UUID]
 
+    subscription_order_reference_id: Optional[UUID] = None
+
     subscription_reference_id: Optional[UUID]
 
     against: str
@@ -110,5 +115,11 @@ class ComplaintListResponse(BaseModel):
     success: bool
 
     total: int
+
+    page: int = 1
+
+    limit: int = 100
+
+    has_more: bool = False
 
     complaints: List[ComplaintResponse]

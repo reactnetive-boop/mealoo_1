@@ -1,24 +1,34 @@
 """
-Upload storage.
+Uploads.
 
-Files are stored under UPLOAD_DIR (a persistent volume in production) and
-referenced in the database by a relative path "uploads/<area>/<uuid>.<ext>".
+Files go to the configured storage backend (app.core.storage: a local
+directory or an S3-compatible bucket) and are referenced in the database by
+"uploads/<area>/<random>.<ext>".
 
-Public areas (package photos, profile photos) are served as static files at
+Public areas (package photos, profile photos) are served at
 /uploads/<area>/...; private areas (delivery partner KYC documents) are never
-mounted and are streamed only through authenticated endpoints.
+public and are streamed only through authenticated endpoints.
 
 Every upload is size-limited and its type is taken from the file's magic
-bytes, not from the client's filename or Content-Type. The stored name is a
-random UUID, so filenames can never carry paths or script extensions.
+bytes, not from the client's filename or Content-Type. Images are decoded and
+re-encoded: that drops EXIF / GPS and any other metadata, applies the camera
+rotation, scales large photos down and guarantees the stored file really is
+an image. The stored name is random, so filenames can never carry paths or
+script extensions. Private files (KYC) are encrypted before they are stored.
 """
 
+import io
 import os
+import re
 import uuid
+import warnings
 
 from fastapi import UploadFile
+from PIL import Image, ImageOps, UnidentifiedImageError
 
-from app.core.config import UPLOAD_DIR, MAX_UPLOAD_BYTES
+from app.core import storage as _storage
+from app.core.crypto import open_bytes, seal_bytes
+from app.core.config import MAX_IMAGE_DIMENSION, MAX_UPLOAD_BYTES, UPLOAD_DIR
 from app.core.errors import DomainError
 
 URL_PREFIX = "uploads"
@@ -41,10 +51,15 @@ CONTENT_TYPES = {
     "pdf": "application/pdf",
 }
 
+# A 40 MP photo is plenty; anything bigger is refused before it is decoded
+Image.MAX_IMAGE_PIXELS = 40_000_000
+
 BASE_DIR = os.path.realpath(UPLOAD_DIR)
+# one path segment, no dots before the extension: nothing can climb out of its area
+_NAME = re.compile(r"[A-Za-z0-9_-]{1,100}\.(jpg|jpeg|png|webp|pdf)")
 
 for _area in PUBLIC_AREAS + PRIVATE_AREAS:
-    os.makedirs(os.path.join(BASE_DIR, _area), exist_ok=True)
+    _storage.storage.ensure_area(_area)
 
 
 def sniff(head: bytes) -> str | None:
@@ -68,6 +83,31 @@ def _read_limited(file: UploadFile) -> bytes:
     return data
 
 
+def clean_image(data: bytes, kind: str) -> bytes:
+    """Decode and re-encode an image: no metadata, upright, at most MAX_IMAGE_DIMENSION px."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(data)) as source:
+                source.load()
+                img = ImageOps.exif_transpose(source)
+        if max(img.size) > MAX_IMAGE_DIMENSION:
+            img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
+        out = io.BytesIO()
+        if kind == "jpg":
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            img.save(out, "JPEG", quality=85, optimize=True, progressive=True)
+        elif kind == "png":
+            img.save(out, "PNG", optimize=True)
+        else:
+            img.save(out, "WEBP", quality=85)
+        return out.getvalue()
+    except (UnidentifiedImageError, Image.DecompressionBombError, Image.DecompressionBombWarning,
+            OSError, SyntaxError, ValueError):
+        raise DomainError("The image could not be read. Please upload a JPG, PNG or WEBP photo.") from None
+
+
 def save_upload(file: UploadFile, area: str, allowed: set[str]) -> str:
     if area not in PUBLIC_AREAS + PRIVATE_AREAS:
         raise ValueError("unknown upload area")
@@ -78,32 +118,61 @@ def save_upload(file: UploadFile, area: str, allowed: set[str]) -> str:
         raise DomainError(
             "Unsupported file type. Allowed: " + ", ".join(sorted(t.upper() for t in allowed))
         )
+    if kind in IMAGE_TYPES:
+        data = clean_image(data, kind)
 
-    name = f"{uuid.uuid4().hex}.{kind}"
-    physical = os.path.join(BASE_DIR, area, name)
-    with open(physical, "xb") as out:
-        out.write(data)
+    key = f"{area}/{uuid.uuid4().hex}.{kind}"
+    public = area in PUBLIC_AREAS
+    if not public:
+        data = seal_bytes(data)  # KYC documents are encrypted at rest on any backend
+    _storage.storage.put(key, data, CONTENT_TYPES[kind], public=public)
+    return f"{URL_PREFIX}/{key}"
 
-    return f"{URL_PREFIX}/{area}/{name}"
 
-
-def resolve(stored_path: str | None) -> str | None:
-    """Physical path of a stored file, or None if it would escape UPLOAD_DIR."""
+def storage_key(stored_path: str | None) -> str | None:
+    """The storage key of a stored path, or None unless it is exactly <known area>/<random name>."""
     if not stored_path:
         return None
     rel = stored_path.replace("\\", "/")
     if rel.startswith(URL_PREFIX + "/"):
         rel = rel[len(URL_PREFIX) + 1:]
-    candidate = os.path.realpath(os.path.join(BASE_DIR, rel))
+    area, _, name = rel.rpartition("/")
+    if area not in PUBLIC_AREAS + PRIVATE_AREAS or not _NAME.fullmatch(name):
+        return None
+    return rel
+
+
+def resolve(stored_path: str | None) -> str | None:
+    """Physical path of a locally stored file, or None if it would escape UPLOAD_DIR."""
+    key = storage_key(stored_path)
+    if key is None:
+        return None
+    candidate = os.path.realpath(os.path.join(BASE_DIR, key))
     if os.path.commonpath([candidate, BASE_DIR]) != BASE_DIR or candidate == BASE_DIR:
         return None
     return candidate
 
 
+def read_upload(stored_path: str | None) -> bytes | None:
+    key = storage_key(stored_path)
+    if key is None:
+        return None
+    data = _storage.storage.get(key)
+    return data if key.rpartition("/")[0] in PUBLIC_AREAS else open_bytes(data)
+
+
 def delete_upload(stored_path: str | None) -> None:
-    physical = resolve(stored_path)
-    if physical and os.path.isfile(physical):
-        os.remove(physical)
+    key = storage_key(stored_path)
+    if key:
+        _storage.storage.delete(key)
+
+
+def public_url(stored_path: str | None) -> str | None:
+    """Where a public image can be fetched from (None for the local backend: same path on this API)."""
+    key = storage_key(stored_path)
+    if key is None or key.rpartition("/")[0] not in PUBLIC_AREAS:
+        return None
+    return _storage.storage.public_url(key)
 
 
 def content_type_of(stored_path: str) -> str:
@@ -111,7 +180,7 @@ def content_type_of(stored_path: str) -> str:
     return CONTENT_TYPES.get("jpg" if ext == "jpeg" else ext, "application/octet-stream")
 
 
-# Backwards-compatible helpers used by the services
+# Helpers used by the services
 
 def save_profile_image(file: UploadFile) -> str:
     return save_upload(file, PROVIDER_PROFILE_AREA, IMAGE_TYPES)

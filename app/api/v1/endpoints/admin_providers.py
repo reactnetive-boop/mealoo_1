@@ -9,11 +9,16 @@ from app.core.database import get_db
 from app.core.rate_limit import client_ip
 from app.dependencies.auth_dependency import get_current_admin, require_super_admin
 from app.services.admin_provider_service import AdminProviderService
+from app.services.payout_details_service import PayoutDetailsService
+from app.services.service_area_service import ServiceAreaService
+from app.services.subscription_transfer_service import SubscriptionTransferService
 from app.schemas.admin_schema import (
     AdminUpdateProviderRequest,
     AdminWalletAdjustRequest,
     AdminMarkUnavailabilityRequest,
     AdminApprovalRequest,
+    AdminServiceAreaRequest,
+    AdminTransferSubscriptionsRequest,
 )
 
 router = APIRouter()
@@ -205,3 +210,78 @@ def remove_unavailability(
     current=Depends(get_current_admin)
 ):
     return AdminProviderService.remove_unavailability(db, str(provider_id), unavailable_date, current["admin_id"], client_ip(request))
+
+
+@router.get(
+    "/{provider_id}/payout-details",
+    summary="Kitchen Payout Details (full, audited)",
+    description="Bank account / UPI the kitchen's withdrawals go to, unmasked for making the transfer. "
+                "Every view is written to the audit log. **super_admin**.",
+)
+def get_payout_details(
+    provider_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(require_super_admin)
+):
+    return PayoutDetailsService.reveal_for_admin(db, "provider", provider_id, current["admin_id"], client_ip(request))
+
+
+@router.get(
+    "/{provider_id}/service-areas",
+    summary="Kitchen Delivery Areas",
+    description="The kitchen's own pincode plus the extra pincodes it delivers to.",
+)
+def list_service_areas(provider_id: UUID, db: Session = Depends(get_db), current=Depends(get_current_admin)):
+    return ServiceAreaService.list(db, provider_id)
+
+
+@router.post(
+    "/{provider_id}/service-areas",
+    summary="Add a Delivery Area",
+    description="Customers in this pincode can then order from the kitchen. The pincode must be an active "
+                "Orleeno service area. Audited.",
+)
+def add_service_area(
+    provider_id: UUID,
+    payload: AdminServiceAreaRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin),
+):
+    return ServiceAreaService.add(db, provider_id, payload.pincode, current["admin_id"], client_ip(request))
+
+
+@router.delete(
+    "/{provider_id}/service-areas/{pincode}",
+    summary="Remove a Delivery Area",
+    description="Refused while running subscriptions or open orders are delivered there. Audited.",
+)
+def remove_service_area(
+    provider_id: UUID,
+    pincode: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin),
+):
+    return ServiceAreaService.remove(db, provider_id, pincode, current["admin_id"], client_ip(request))
+
+
+@router.post(
+    "/{provider_id}/transfer-subscriptions",
+    summary="Move Running Subscriptions to Another Kitchen",
+    description=(
+        "For a kitchen that is closing. `preview=true` (default) only lists what can move and why the rest "
+        "cannot. A subscription moves when the target kitchen sells the same package, delivers to the "
+        "customer's pincode and has room; price and payout stay the same. `cancel_untransferable=true` "
+        "cancels and refunds the rest. Audited. **super_admin**."
+    ),
+)
+def transfer_subscriptions(
+    provider_id: UUID,
+    payload: AdminTransferSubscriptionsRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(require_super_admin),
+):
+    return SubscriptionTransferService.transfer(db, provider_id, payload, current["admin_id"], client_ip(request))

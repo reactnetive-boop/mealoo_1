@@ -67,7 +67,8 @@ class Order(Base):
         nullable=False
     )
 
-    # 'scheduled' | 'preparing' | 'out_for_delivery' | 'delivered' | 'skipped' | 'cancelled'
+    # scheduled -> preparing -> ready_for_pickup -> picked_up -> out_for_delivery
+    # -> delivered; or skipped | cancelled (see app/domain/status.py)
     status = Column(
         String(30),
         nullable=False,
@@ -107,8 +108,17 @@ class Order(Base):
         index=True
     )
 
+    # Legacy plaintext delivery code (rows created before delivery_code_seed).
+    # New rows leave it empty: the code is derived from delivery_code_seed.
     otp_for_delivery = Column(
         String(6),
+        nullable=True
+    )
+
+    # Random seed the customer's 6-digit delivery code is derived from with a
+    # server-side key (app/domain/verification.py); the code is never stored.
+    delivery_code_seed = Column(
+        String(64),
         nullable=True
     )
 
@@ -133,17 +143,43 @@ class Order(Base):
         server_default="0"
     )
 
-    # Shown to the kitchen only; the partner enters it at pickup to prove
-    # the hand-over happened at the kitchen.
+    # Retired per-order kitchen code; pickup now uses the kitchen's daily code
+    # (provider.provider_pickup_codes). Kept for history / downgrade only.
     pickup_code = Column(
         String(6),
         nullable=True
+    )
+
+    # Failed kitchen pickup-code attempts; pickup locks once the limit is hit
+    pickup_code_attempts = Column(
+        SmallInteger,
+        nullable=False,
+        default=0,
+        server_default="0"
     )
 
     picked_up_at = Column(
         DateTime(timezone=True),
         nullable=True
     )
+
+    # Partner left the kitchen for the customer ("Start delivery")
+    out_for_delivery_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    # Partner reported reaching the customer (customer is notified once)
+    arrived_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+
+    # The partner reached the address but could not hand over (customer away,
+    # wrong address, refused); see DeliveryBoyOrderService.fail_delivery
+    failed_at = Column(DateTime(timezone=True), nullable=True)
+    failure_reason = Column(String(40), nullable=True)
 
     # Why the order was cancelled: paused | subscription_cancelled |
     # switched | kitchen_holiday | rejected_by_kitchen | customer | admin

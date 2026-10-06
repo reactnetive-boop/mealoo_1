@@ -18,7 +18,6 @@ import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.audit import business_event
@@ -29,7 +28,11 @@ from app.core.config import (
     CUSTOM_PLAN_MAX_DAYS,
 )
 from app.core.errors import DomainError
-from app.domain import capacity, ledger, notify, orders as meals
+from app.core.paging import FIRST_PAGE, Paging
+from app.domain import capacity, ledger, notify, orders as meals, partner_leave
+from app.domain.delivery_assignment import inherited_partner
+from app.domain.status import SUB_OPEN_STATUSES
+from app.domain.verification import delivery_code, delivery_code_expired
 from app.domain.eligibility import assert_sellable
 from app.domain.pricing import (
     build_quote,
@@ -40,6 +43,7 @@ from app.domain.pricing import (
     ZERO,
 )
 from app.domain.slots import (
+    delivery_window,
     expand_plan_slot,
     package_serves,
     earliest_service_date,
@@ -59,11 +63,6 @@ from app.repositories.subscription_plan_repository import SubscriptionPlanReposi
 from app.repositories.subscription_repository import SubscriptionRepository
 
 # Kept for importers (switch service, admin)
-MEAL_SLOT_EXPANSION = {
-    k: expand_plan_slot(k)
-    for k in ("breakfast", "lunch", "dinner", "breakfast_lunch", "lunch_dinner", "breakfast_dinner", "all_slots")
-}
-MEAL_SLOT_MULTIPLIER = {k: len(v) for k, v in MEAL_SLOT_EXPANSION.items()}
 
 
 def is_custom_plan(plan: SubscriptionPlan) -> bool:
@@ -95,7 +94,7 @@ def owned_subscription(db: Session, user_id: str, subscription_id, lock: bool = 
     subscription = q.first()
     if subscription is None:
         # Same answer for "not yours" and "does not exist": no ID probing
-        raise HTTPException(status_code=404, detail="Subscription not found")
+        raise DomainError("Subscription not found", 404)
     return subscription
 
 
@@ -142,7 +141,7 @@ def subscription_view(db: Session, sub: Subscription) -> dict:
         .filter(
             Order.subscription_reference_id == sub.subscription_id,
             Order.order_date >= today,
-            Order.status.in_(("scheduled", "preparing", "out_for_delivery")),
+            Order.status.in_(SUB_OPEN_STATUSES),
         )
         .order_by(Order.order_date.asc(), Order.meal_slot.asc())
         .first()
@@ -311,10 +310,8 @@ class SubscriptionService:
             discount_percent=plan.discount_percent,
         )
 
-        wallet = ledger.lock_customer_wallet(db, user_id)
-        balance = money(wallet.balance)
+        balance = ledger.customer_balance(db, user_id)
         total = Decimal(snapshot["total_payable"])
-        db.rollback()
 
         return {
             "success": True,
@@ -470,6 +467,12 @@ class SubscriptionService:
             f"{package.package_name} from {provider.business_name} starts on {payload.start_date}.",
             {"subscription_id": str(subscription.subscription_id)},
         )
+        notify.kitchen(
+            db, provider.provider_id, "new_subscription", "New subscription",
+            f"{package.package_name} x {item.quantity}, {plan.meal_slot.replace('_', ' ')}, "
+            f"from {subscription.start_date} ({days} days).",
+            {"subscription_id": str(subscription.subscription_id)},
+        )
         db.commit()
         db.refresh(subscription)
         business_event(
@@ -500,11 +503,11 @@ class SubscriptionService:
     # ── Read ──────────────────────────────────────────────────
 
     @staticmethod
-    def get_my_subscriptions(db: Session, user_id: str):
-        subscriptions = SubscriptionRepository.get_all_by_user(db, user_id)
+    def get_my_subscriptions(db: Session, user_id: str, paging: Paging = FIRST_PAGE):
+        subscriptions = SubscriptionRepository.get_all_by_user(db, user_id, paging.offset, paging.limit)
         return {
             "success": True,
-            "total": len(subscriptions),
+            **paging.meta(SubscriptionRepository.count_by_user(db, user_id)),
             "subscriptions": [subscription_view(db, s) for s in subscriptions],
         }
 
@@ -515,8 +518,12 @@ class SubscriptionService:
     @staticmethod
     def _meal_view(order: Order, sub: Subscription) -> dict:
         today = today_local()
-        # The hand-over code is shown only on the day of the meal
-        show_code = order.order_date == today and order.status in ("scheduled", "preparing", "out_for_delivery")
+        # The hand-over code is shown only on the day of the meal, until it is delivered
+        show_code = (
+            order.order_date == today
+            and order.status in SUB_OPEN_STATUSES
+            and not delivery_code_expired(order)
+        )
         free_skips_left = (sub.free_skips_total or 0) - (sub.free_skips_used or 0)
         can_skip = sub.status == "active" and order.status == "scheduled" and order.order_date >= today
         return {
@@ -535,8 +542,11 @@ class SubscriptionService:
             "delivery_notes": order.delivery_notes,
             "cancel_reason": order.cancel_reason,
             "refund_amount": order.refund_amount,
-            "otp_for_delivery": order.otp_for_delivery if show_code else None,
+            "otp_for_delivery": delivery_code(order) if show_code else None,
+            "picked_up_at": order.picked_up_at,
+            "out_for_delivery_at": order.out_for_delivery_at,
             "can_skip": can_skip,
+            "delivery_window": delivery_window(order.meal_slot),
             "skip_will_refund": can_skip and free_skips_left > 0 and is_before_cutoff(order.order_date, order.meal_slot),
             "created_at": order.created_at,
             "updated_at": order.updated_at,
@@ -563,7 +573,7 @@ class SubscriptionService:
         sub = owned_subscription(db, user_id, subscription_id)
         row = SubscriptionRepository.get_order_detail_by_id_and_subscription(db, order_id, sub.subscription_id)
         if not row:
-            raise HTTPException(status_code=404, detail="Order not found")
+            raise DomainError("Order not found", 404)
         order, address, vendor, delivery_boy = row
         packages = []
         for sub_pkg, pkg in SubscriptionRepository.get_packages_with_menu_by_subscription(db, sub.subscription_id):
@@ -601,7 +611,7 @@ class SubscriptionService:
             .first()
         )
         if not order:
-            raise HTTPException(status_code=404, detail="Order not found")
+            raise DomainError("Order not found", 404)
         if order.status != "scheduled":
             raise DomainError(f"Only scheduled meals can be skipped. This meal is {order.status.replace('_', ' ')}")
         if order.order_date < today_local():
@@ -635,11 +645,16 @@ class SubscriptionService:
             f"The {order.meal_slot} delivery on {order.order_date} was skipped by the customer.",
             {"order_id": str(order.order_id), "kind": "subscription"},
         )
+        if order.order_date == today_local():
+            # later days show up in the kitchen's schedule; today's prep may already be planned
+            notify.kitchen(
+                db, sub.vendor_reference_id, "meal_skipped", "Today's meal skipped",
+                f"A customer skipped today's {order.meal_slot}. Prepare one less.",
+                {"subscription_id": str(sub.subscription_id), "order_id": str(order.order_id)},
+            )
         db.commit()
 
-        wallet = ledger.lock_customer_wallet(db, user_id)
-        balance = money(wallet.balance)
-        db.rollback()
+        balance = ledger.customer_balance(db, user_id)
 
         cutoff_label = SLOT_CUTOFFS[order.meal_slot].strftime("%I:%M %p").lstrip("0")
         if is_free:
@@ -709,6 +724,11 @@ class SubscriptionService:
             f"{count} upcoming meal(s) cancelled. Rs {refunded} refunded to your wallet.",
             {"subscription_id": str(sub.subscription_id)},
         )
+        notify.kitchen(
+            db, sub.vendor_reference_id, "subscription_update", "Subscription cancelled",
+            f"A subscription was cancelled; {count} upcoming meal(s) are off your schedule.",
+            {"subscription_id": str(sub.subscription_id)},
+        )
         business_event("subscription.cancelled", subscription_id=sub.subscription_id, by=actor, refunded=refunded)
         return {"cancelled_meals": count, "refund_amount": refunded}
 
@@ -738,6 +758,11 @@ class SubscriptionService:
         meals.cancel_future_meals(db, sub, from_date=pause_start, reason="paused", refund=False)
         sub.status = "paused"
         sub.pause_start_date = pause_start
+        notify.kitchen(
+            db, sub.vendor_reference_id, "subscription_update", "Subscription paused",
+            f"A customer paused their subscription. No meals from {pause_start} until they resume.",
+            {"subscription_id": str(sub.subscription_id)},
+        )
         db.commit()
         return {
             "success": True,
@@ -785,9 +810,16 @@ class SubscriptionService:
             .with_for_update()
             .all()
         )
+        partner_id = inherited_partner(db, sub)
+        off_days = (
+            partner_leave.leave_dates(db, partner_id, resume_date, new_end) if partner_id is not None else set()
+        )
         for meal in restored:
             meal.status = "scheduled"
             meal.cancel_reason = None
+            # the subscription may have been (re)assigned while paused
+            if partner_id is not None:
+                meal.delivery_boy_reference_id = None if meal.order_date in off_days else partner_id
 
         # Meals missed while paused are made up by extending the end date, so
         # they are no longer owed as a refund if the plan is cancelled later.
@@ -805,6 +837,11 @@ class SubscriptionService:
         sub.total_days_paused = (sub.total_days_paused or 0) + days_paused
         sub.pause_start_date = None
         created = meals.generate_meals(db, sub, from_date=resume_date)
+        notify.kitchen(
+            db, sub.vendor_reference_id, "subscription_update", "Subscription resumed",
+            f"A paused subscription restarts on {resume_date} and now runs until {new_end}.",
+            {"subscription_id": str(sub.subscription_id)},
+        )
         db.commit()
 
         return {

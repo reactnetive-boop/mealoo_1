@@ -133,6 +133,24 @@ def test_stale_sweep_refunds_past_unfulfilled(client, db):
     assert _balance(db, w["user"]) == Decimal("1000.00")
 
 
+def test_packed_but_uncollected_order_still_pays_the_kitchen(client, db):
+    from app.models.provider_wallet_model import ProviderWallet
+
+    w = f.world(db, price="180", balance="1000")
+    client.post(E, headers=w["user_auth"], json=_body(w))
+    oid = db.query(ExtraOrder).one().extra_order_id
+    for status in ("confirmed", "preparing", "ready_for_pickup"):
+        assert client.put(f"{K}/extra/{oid}/status", headers=w["kitchen_auth"], json={"status": status}).status_code == 200
+    clock.freeze(datetime(2026, 10, 6, 0, 30))
+    jobs.stale_sweep_job()
+    jobs.stale_sweep_job()  # a second run pays nothing more
+    db.expire_all()
+    assert db.query(ExtraOrder).one().status == "cancelled"
+    assert _balance(db, w["user"]) == Decimal("1000.00")          # customer refunded
+    kitchen = db.query(ProviderWallet).filter(ProviderWallet.provider_reference_id == w["kitchen"].provider_id).one()
+    assert kitchen.balance == Decimal("180.00")                   # kitchen paid once, by Orleeno
+
+
 def test_other_customer_cannot_see_order(client, db):
     w = f.world(db, balance="1000")
     oid = client.post(E, headers=w["user_auth"], json=_body(w)).json()["orders"][0]["extra_order_id"]

@@ -1,4 +1,3 @@
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit, business_event
@@ -23,7 +22,7 @@ def _user(db: Session, user_id, lock: bool = False) -> User:
         q = q.with_for_update()
     user = q.first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise DomainError("User not found", 404)
     return user
 
 
@@ -166,7 +165,7 @@ class AdminUserService:
             .first()
         )
         if not sub:
-            raise HTTPException(status_code=404, detail="Subscription not found")
+            raise DomainError("Subscription not found", 404)
         before = subscription_admin_view(sub)
         result = SubscriptionService.cancel(db, sub, reason=reason or "Cancelled by Orleeno support", actor="admin")
         record_audit(

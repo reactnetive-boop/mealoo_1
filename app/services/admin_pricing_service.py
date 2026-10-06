@@ -6,13 +6,13 @@ current version and inserts the next one. Orders keep the snapshot they were
 priced with, so a change only affects checkouts after it.
 """
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit, business_event
 from app.core.clock import now_utc
 from app.domain.pricing import build_quote, current_components, PARTNER_PAYOUT_KEY
 from app.models.pricing_component_model import PricingComponent
+from app.core.errors import DomainError
 
 
 def _view(c: PricingComponent) -> dict:
@@ -68,7 +68,7 @@ class AdminPricingService:
             .first()
         )
         if current is None:
-            raise HTTPException(status_code=404, detail="Unknown pricing component")
+            raise DomainError("Unknown pricing component", 404)
 
         now = now_utc()
         current.superseded_at = now

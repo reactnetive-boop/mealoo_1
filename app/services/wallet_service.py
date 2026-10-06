@@ -12,7 +12,6 @@ same ledger credit, so balances, history and admin refunds work unchanged.
 """
 
 
-from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -21,8 +20,9 @@ from app.core.clock import now_utc, now_local
 from app.core.config import WALLET_TOPUP_MAX_AMOUNT, WALLET_TOPUP_DAILY_LIMIT, WALLET_SELF_TOPUP_ENABLED
 from app.core.errors import DomainError
 from app.domain import ledger
-from app.domain.pricing import money
+from app.domain.pricing import ZERO, money
 from app.models.payment_model import Payment
+from app.models.wallet_model import Wallet
 from app.models.wallet_transaction_model import WalletTransaction
 from app.repositories.wallet_repository import WalletRepository
 
@@ -47,8 +47,14 @@ class WalletService:
 
     @staticmethod
     def get_wallet_details(db: Session, user_id: str):
-        wallet = ledger.lock_customer_wallet(db, user_id)
-        db.commit()
+        # Read only: the wallet row is created on the first credit, not by viewing it
+        wallet = db.query(Wallet).filter(Wallet.user_reference_id == user_id).first() or {
+            "wallet_id": None,
+            "user_reference_id": user_id,
+            "balance": money(ZERO),
+            "created_at": None,
+            "updated_at": None,
+        }
         transactions = WalletRepository.get_transactions_by_user(db, user_id)
         return {"success": True, "wallet": wallet, "transactions": transactions}
 
@@ -61,7 +67,7 @@ class WalletService:
     def recharge(db: Session, user_id: str, payload, idempotency_key: str | None = None):
 
         if not WALLET_SELF_TOPUP_ENABLED:
-            raise HTTPException(status_code=403, detail="Wallet top-up is not available right now")
+            raise DomainError("Wallet top-up is not available right now", 403)
 
         amount = money(payload.amount)
         if amount > money(WALLET_TOPUP_MAX_AMOUNT):

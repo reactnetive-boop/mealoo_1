@@ -7,6 +7,7 @@ response now goes through one of these allow-listed views.
 """
 
 from app.domain.pricing import package_price_view
+from app.core.config import DELIVERY_CODE_MAX_ATTEMPTS, PICKUP_CODE_MAX_ATTEMPTS
 
 
 def mask(value: str | None, keep: int = 4) -> str | None:
@@ -128,6 +129,7 @@ def subscription_admin_view(s) -> dict:
         "pricing_snapshot": s.pricing_snapshot,
         "pause_start_date": s.pause_start_date,
         "total_days_paused": s.total_days_paused,
+        "delivery_boy_reference_id": s.delivery_boy_reference_id,
         "cancelled_at": s.cancelled_at,
         "cancel_reason": s.cancel_reason,
         "created_at": s.created_at,
@@ -144,7 +146,15 @@ def _order_common(o) -> dict:
         "delivery_boy_reference_id": o.delivery_boy_reference_id,
         "delivered_at": o.delivered_at,
         "picked_up_at": o.picked_up_at,
+        "out_for_delivery_at": o.out_for_delivery_at,
+        "arrived_at": o.arrived_at,
         "delivery_code_attempts": o.delivery_code_attempts or 0,
+        "pickup_code_attempts": o.pickup_code_attempts or 0,
+        # locked by wrong codes: needs Orleeno to step in (thresholds live on the server)
+        "pickup_locked": (o.pickup_code_attempts or 0) >= PICKUP_CODE_MAX_ATTEMPTS,
+        "delivery_locked": (o.delivery_code_attempts or 0) >= DELIVERY_CODE_MAX_ATTEMPTS,
+        "failed_at": o.failed_at,
+        "failure_reason": o.failure_reason,
         "cancel_reason": o.cancel_reason,
         "refund_amount": o.refund_amount,
         "refunded_at": o.refunded_at,
@@ -206,6 +216,8 @@ def package_admin_view(pkg, provider_name: str | None = None) -> dict:
         "is_predefined": bool(pkg.is_predefined),
         "approval_status": pkg.approval_status,
         "approval_note": pkg.approval_note,
+        "pending_changes": pkg.pending_changes,
+        "pending_changes_at": pkg.pending_changes_at,
         "approved_at": pkg.approved_at,
         "deleted_at": pkg.deleted_at,
         "created_at": pkg.created_at,

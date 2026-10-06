@@ -128,7 +128,8 @@ def _applies(component: PricingComponent, kind: str) -> bool:
     return component.is_active and component.applies_to in ("all", kind)
 
 
-def _component_amount(component, *, food_amount: Decimal, units: int, deliveries: int, include_per_order: bool) -> Decimal:
+def _component_amount(component, *, food_amount: Decimal, units: int, deliveries: int, include_per_order: bool,
+                      include_per_delivery: bool = True) -> Decimal:
     value = Decimal(str(component.value))
     if component.calc_type == "percentage":
         return money(food_amount * value / Decimal(100))
@@ -136,7 +137,7 @@ def _component_amount(component, *, food_amount: Decimal, units: int, deliveries
     if basis == "per_unit":
         return money(value * units)
     if basis == "per_delivery":
-        return money(value * deliveries)
+        return money(value * deliveries) if include_per_delivery else ZERO
     # per_order: once per checkout
     return money(value) if include_per_order else ZERO
 
@@ -150,12 +151,18 @@ def build_quote(
     deliveries: int,
     discount_percent=0,
     include_per_order: bool = True,
+    include_per_delivery: bool = True,
 ) -> dict:
     """
     Price `quantity` units delivered `deliveries` times.
 
     kind: 'subscription' or 'extra_order'. Returns a JSON-serialisable dict
     (decimals as strings) that is stored as the pricing snapshot.
+
+    A one-time checkout with several packages is ONE trip: its first line
+    carries the per-order and per-delivery charges (delivery charge, partner
+    payout) and the other lines pass include_per_order / include_per_delivery
+    = False.
     """
 
     if quantity < 1 or deliveries < 1:
@@ -181,6 +188,7 @@ def build_quote(
             units=units,
             deliveries=deliveries,
             include_per_order=include_per_order,
+            include_per_delivery=include_per_delivery,
         )
         if component.component_key == PARTNER_PAYOUT_KEY:
             partner_payout_total = amount

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import business_event
 from app.core.clock import today_local
 from app.core.errors import DomainError
+from app.domain.delivery_assignment import carry_over as carry_over_delivery_partner
 from app.domain import capacity, ledger, notify, orders as meals
 from app.domain.eligibility import assert_sellable
 from app.domain.pricing import build_quote, current_components, subscription_unit_price, money, floor_money, ZERO
@@ -171,9 +172,7 @@ class PackageSwitchService:
         calc = PackageSwitchService._resolve(db, user_id, subscription_id, payload, lock=False)
         sub = calc["subscription"]
         old_package = db.query(MenuPackage).filter(MenuPackage.package_id == calc["old_sub_pkg"].package_reference_id).first()
-        wallet = ledger.lock_customer_wallet(db, user_id)
-        balance = money(wallet.balance)
-        db.rollback()
+        balance = ledger.customer_balance(db, user_id)
         return {
             "success": True,
             "old_package_id": calc["old_sub_pkg"].package_reference_id,
@@ -204,6 +203,8 @@ class PackageSwitchService:
             start=effective,
             end=new_end - timedelta(days=1),
             quantity=calc["old_sub_pkg"].quantity,
+            # the old plan's own future meals are cancelled by this switch
+            exclude_subscription_id=sub.subscription_id,
         )
 
         wallet = ledger.lock_customer_wallet(db, user_id)
@@ -286,6 +287,8 @@ class PackageSwitchService:
         else:
             payment_status = "not_required"
 
+        # the delivery partner follows the customer if they can serve the new kitchen
+        carry_over_delivery_partner(db, sub, new_sub)
         created = meals.generate_meals(db, new_sub)
 
         db.add(PackageSwitchLog(

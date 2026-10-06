@@ -1,8 +1,8 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from fastapi import HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.clock import today_local, local_datetime
@@ -12,20 +12,18 @@ from app.repositories.delivery_boy_repository import DeliveryBoyRepository as Re
 from app.repositories.delivery_boy_wallet_repository import DeliveryBoyWalletRepository
 from app.schemas.delivery_boy_schema import DOCUMENT_TYPES
 from app.services.payout_service import PayoutService
-from app.utils.file_helper import save_delivery_document, delete_upload, resolve, content_type_of
+from app.utils.file_helper import save_delivery_document, delete_upload, read_upload, content_type_of
 
 from datetime import time
+from app.core.errors import DomainError
 
 
-def document_file_response(doc: DeliveryBoyDocument) -> FileResponse:
-    path = resolve(doc.file_url)
-    if path is None:
-        raise HTTPException(status_code=404, detail="File not found")
-    import os
-    if not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(
-        path,
+def document_file_response(doc: DeliveryBoyDocument) -> Response:
+    data = read_upload(doc.file_url)
+    if data is None:
+        raise DomainError("File not found", 404)
+    return Response(
+        content=data,
         media_type=content_type_of(doc.file_url),
         headers={"Cache-Control": "private, no-store", "Content-Disposition": "inline"},
     )
@@ -108,13 +106,10 @@ class DeliveryBoyAccountService:
     @staticmethod
     def upload_document(db: Session, delivery_boy_id: str, document_type: str, file: UploadFile):
         if document_type not in DOCUMENT_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid document_type. Allowed: {', '.join(DOCUMENT_TYPES)}"
-            )
+            raise DomainError(f"Invalid document_type. Allowed: {', '.join(DOCUMENT_TYPES)}", 400)
         existing = Repo.get_document_by_type(db, delivery_boy_id, document_type)
         if existing and existing.status == "verified":
-            raise HTTPException(status_code=400, detail="This document is already verified")
+            raise DomainError("This document is already verified", 400)
 
         old_path = existing.file_url if existing else None
         file_url = save_delivery_document(file)
@@ -145,7 +140,7 @@ class DeliveryBoyAccountService:
             DeliveryBoyDocument.delivery_boy_reference_id == delivery_boy_id,
         ).first()
         if doc is None:
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise DomainError("Document not found", 404)
         return document_file_response(doc)
 
     # ── Payout details ────────────────────────────────────
@@ -158,10 +153,11 @@ class DeliveryBoyAccountService:
     def update_payout_details(db: Session, delivery_boy_id: str, payload):
         data = {k: v for k, v in payload.model_dump().items() if v is not None}
         if not data:
-            raise HTTPException(status_code=400, detail="Nothing to update")
+            raise DomainError("Nothing to update", 400)
         if "ifsc_code" in data:
             data["ifsc_code"] = data["ifsc_code"].upper()
         payout = Repo.upsert_payout_details(db, delivery_boy_id, data)
+        db.commit()
         return {"success": True, "message": "Payout details saved", "payout_details": payout}
 
     # ── Wallet & earnings ─────────────────────────────────
@@ -175,7 +171,7 @@ class DeliveryBoyAccountService:
     @staticmethod
     def get_transactions(db: Session, delivery_boy_id: str, txn_type: str = None, limit: int = 50):
         if txn_type and txn_type not in ("credit", "debit"):
-            raise HTTPException(status_code=400, detail="type must be 'credit' or 'debit'")
+            raise DomainError("type must be 'credit' or 'debit'", 400)
         transactions = DeliveryBoyWalletRepository.get_transactions(db, delivery_boy_id, txn_type=txn_type, limit=limit)
         return {"success": True, "total": len(transactions), "transactions": transactions}
 
@@ -229,11 +225,13 @@ class DeliveryBoyAccountService:
     def mark_notification_read(db: Session, delivery_boy_id: str, notification_id):
         notification = Repo.get_notification_by_id(db, delivery_boy_id, notification_id)
         if not notification:
-            raise HTTPException(status_code=404, detail="Notification not found")
+            raise DomainError("Notification not found", 404)
         Repo.mark_notification_read(db, notification)
+        db.commit()
         return {"success": True, "message": "Notification marked as read"}
 
     @staticmethod
     def mark_all_notifications_read(db: Session, delivery_boy_id: str):
         updated = Repo.mark_all_notifications_read(db, delivery_boy_id)
+        db.commit()
         return {"success": True, "message": f"{updated} notifications marked as read"}

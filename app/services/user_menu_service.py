@@ -9,6 +9,7 @@ from app.domain.eligibility import (
     package_block_reason,
     offering,
     is_on_holiday,
+    kitchens_on_holiday,
 )
 from app.domain.pricing import package_price_view
 from app.domain.slots import package_slots
@@ -91,14 +92,12 @@ class UserMenuService:
         if serviceable_pincode(db, pin) is None:
             return {"success": True, "total": 0, "serviceable": False, "packages": []}
 
-        today = today_local()
-        holiday_cache: dict = {}
-        result = []
-        for _, package, provider in MenuRepository.sellable_offerings(db, pin):
-            key = str(provider.provider_id)
-            if key not in holiday_cache:
-                holiday_cache[key] = is_on_holiday(db, provider.provider_id, today)
-            result.append(_offer_view(package, provider, not holiday_cache[key]))
+        offerings = MenuRepository.sellable_offerings(db, pin)
+        closed_today = kitchens_on_holiday(db, {provider.provider_id for _, _, provider in offerings}, today_local())
+        result = [
+            _offer_view(package, provider, provider.provider_id not in closed_today)
+            for _, package, provider in offerings
+        ]
 
         return {"success": True, "total": len(result), "serviceable": True, "packages": result}
 

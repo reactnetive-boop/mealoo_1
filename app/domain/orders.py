@@ -10,26 +10,25 @@ from decimal import Decimal
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.core.audit import business_event
 from app.core.clock import now_utc, today_local
 from app.core.config import DELIVERY_BOY_FEE_PER_DELIVERY
-from app.core.security import generate_numeric_code
-from app.domain import ledger, notify
+from app.domain import checkout, ledger, notify, partner_leave
+from app.domain.delivery_assignment import inherited_partner
+from app.domain.verification import new_seed
 from app.domain.pricing import money, ZERO, customer_payable_per_delivery
 from app.domain.slots import expand_plan_slot, is_before_cutoff
 from app.models.extra_order_model import ExtraOrder
 from app.models.order_model import Order
+from app.models.provider_model import Provider
 from app.models.subscription_model import Subscription
 from app.models.subscription_package_model import SubscriptionPackage
 
-PICKUP_CODE_LENGTH = 4
-DELIVERY_CODE_LENGTH = 6
-
-
-def new_codes() -> dict:
-    return {
-        "otp_for_delivery": generate_numeric_code(DELIVERY_CODE_LENGTH),
-        "pickup_code": generate_numeric_code(PICKUP_CODE_LENGTH),
-    }
+def new_codes(shared: bool = False) -> dict:
+    # Seed of the customer's delivery code; the code itself is derived on
+    # demand (app/domain/verification.py) and never stored. `shared`: one
+    # code for every line of a one-time checkout (see domain/checkout.py).
+    return {"delivery_code_seed": (checkout.SHARED_SEED_PREFIX if shared else "") + new_seed()}
 
 
 # ── Generation ────────────────────────────────────────────────
@@ -42,9 +41,27 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
     CONFLICT DO NOTHING, so running it any number of times - midnight job,
     restart, subscription creation - never duplicates a meal. Dates in the
     past, and today's slots whose cut-off has passed, are never created.
+    New meals go to the subscription's assigned delivery partner, if any.
+
+    Nothing is generated for a kitchen that is inactive or no longer approved
+    (admins cannot get there while subscriptions run, so this only guards
+    against drift; it is logged). A kitchen that merely stopped accepting NEW
+    orders still serves the subscriptions it already sold.
     """
 
     if subscription.status != "active":
+        return 0
+
+    kitchen = (
+        db.query(Provider.is_active, Provider.approval_status)
+        .filter(Provider.provider_id == subscription.vendor_reference_id)
+        .first()
+    )
+    if kitchen is None or not kitchen.is_active or kitchen.approval_status != "approved":
+        business_event(
+            "meals.generation_skipped", subscription_id=subscription.subscription_id,
+            provider_id=subscription.vendor_reference_id, reason="kitchen_not_serving",
+        )
         return 0
 
     slots = expand_plan_slot(subscription.meal_slot)
@@ -55,6 +72,9 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
     start = max(subscription.start_date, from_date or subscription.start_date, today)
     end = subscription.end_date if to_date is None else min(subscription.end_date, to_date)
 
+    partner_id = inherited_partner(db, subscription)
+    # days the partner is on leave are generated without a partner
+    off_days = partner_leave.leave_dates(db, partner_id, start, end) if partner_id else set()
     rows = []
     current = start
     while current < end:
@@ -70,6 +90,7 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
                 "meal_slot": slot,
                 "status": "scheduled",
                 "is_free_skip": False,
+                "delivery_boy_reference_id": None if current in off_days else partner_id,
                 **new_codes(),
             })
         current += timedelta(days=1)
@@ -87,7 +108,14 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
     )
     result = db.execute(stmt)
     db.flush()
-    return result.rowcount or 0
+    created = result.rowcount or 0
+    if created:
+        # never the codes themselves: only that they exist
+        business_event(
+            "delivery_codes.generated", subscription_id=subscription.subscription_id,
+            meals=created, delivery_boy_id=partner_id,
+        )
+    return created
 
 
 def total_deliveries(subscription: Subscription) -> int:
@@ -209,6 +237,51 @@ def cancel_future_meals(
     return cancelled, refunded
 
 
+# ── Kitchen compensation (food packed, never collected) ───────
+
+def compensate_kitchen(db: Session, order, kind: str) -> Decimal:
+    """
+    The kitchen marked the order ready for pickup but it was never collected
+    (no partner came). The customer is refunded; the kitchen still earns what
+    delivery would have paid it, funded by Orleeno (platform ledger debit).
+    Once per order.
+    """
+    if kind == "subscription":
+        sub = db.query(Subscription).filter(Subscription.subscription_id == order.subscription_reference_id).first()
+        settlement = ((sub.pricing_snapshot or {}).get("settlement") if sub else None) or {}
+        if settlement:
+            amount = Decimal(settlement["provider_earning_per_delivery"])
+        else:
+            packages = db.query(SubscriptionPackage).filter(
+                SubscriptionPackage.subscription_reference_id == order.subscription_reference_id
+            ).all()
+            amount = sum((money(p.unit_price) * p.quantity for p in packages), ZERO)
+        ref_type, ref_id, day = "order", order.order_id, order.order_date
+    else:
+        settlement = (order.pricing_snapshot or {}).get("settlement") or {}
+        amount = Decimal(settlement["provider_earning_total"]) if settlement else money(order.total_price)
+        ref_type, ref_id, day = "extra_order", order.extra_order_id, order.delivery_date
+    amount = money(amount)
+    if amount <= ZERO:
+        return ZERO
+    ledger.post_provider(
+        db, order.vendor_reference_id, type="credit", amount=amount, reason="no_pickup_compensation",
+        idempotency_key=f"compensation:{ref_type}:{ref_id}", reference_type=ref_type, reference_id=ref_id,
+        description=f"Packed {order.meal_slot} on {day} was not collected - paid by Orleeno",
+        counts_as_earning=True,
+    )
+    ledger.post_platform(
+        db, entry_type="kitchen_compensation", direction="debit", amount=amount,
+        reference_type=ref_type, reference_id=ref_id, idempotency_key=f"platform:compensation:{ref_type}:{ref_id}",
+    )
+    notify.kitchen(
+        db, order.vendor_reference_id, "wallet", "Paid for an uncollected order",
+        f"Your packed {order.meal_slot} for {day} was not picked up. Rs {amount} has been added to your wallet.",
+        {"order_id": str(ref_id), "kind": ref_type},
+    )
+    return amount
+
+
 # ── Settlement on delivery ────────────────────────────────────
 
 def _legacy_partner_fee() -> Decimal:
@@ -303,10 +376,10 @@ def settle_extra_order(db: Session, order: ExtraOrder) -> None:
     settlement = (order.pricing_snapshot or {}).get("settlement") or {}
     if settlement:
         provider_amount = Decimal(settlement["provider_earning_total"])
-        partner_amount = Decimal(settlement["partner_payout_total"])
     else:
         provider_amount = money(order.total_price)
-        partner_amount = _legacy_partner_fee()
+    # one trip per checkout: the partner is paid once, whichever line is settled first
+    partner_amount = checkout.partner_payout(db, order)
 
     if provider_amount > ZERO:
         ledger.post_provider(
@@ -318,10 +391,15 @@ def settle_extra_order(db: Session, order: ExtraOrder) -> None:
         )
 
     paid_partner = ZERO
-    if order.delivery_boy_reference_id and partner_amount > ZERO:
+    payout_key = f"payout:checkout:{checkout.key(order)}"
+    if (
+        order.delivery_boy_reference_id
+        and partner_amount > ZERO
+        and ledger.delivery_txn_exists(db, payout_key) is None
+    ):
         ledger.post_delivery(
             db, order.delivery_boy_reference_id, type="credit", amount=partner_amount,
-            reason="delivery_payout", idempotency_key=f"payout:extra_order:{order.extra_order_id}",
+            reason="delivery_payout", idempotency_key=payout_key,
             reference_type="extra_order", reference_id=order.extra_order_id,
             description=f"Delivery of one-time {order.meal_slot} on {order.delivery_date}",
             counts_as_earning=True,

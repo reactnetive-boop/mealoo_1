@@ -53,6 +53,9 @@ class DeliveryBoyComplaint(Base):
 
     evidence_urls = Column(ARRAY(Text), nullable=True, default=[])
 
+    # admin handling the complaint (SLA: COMPLAINT_SLA_HOURS)
+    assigned_to = Column(UUID(as_uuid=True), nullable=True, index=True)
+
     admin_notes = Column(Text, nullable=True)
 
     resolved_by = Column(UUID(as_uuid=True), nullable=True)

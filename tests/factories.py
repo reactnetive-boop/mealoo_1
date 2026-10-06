@@ -15,6 +15,7 @@ from app.models.menu_category_model import MenuCategory
 from app.models.menu_package_item_model import MenuPackageItem
 from app.models.menu_package_model import MenuPackage
 from app.models.provider_model import Provider
+from app.models.provider_payout_model import ProviderPayoutDetails
 from app.models.provider_selected_package_model import ProviderSelectedPackage
 from app.models.serviceable_pincode_model import ServiceablePincode
 from app.models.subscription_plan_model import SubscriptionPlan
@@ -59,7 +60,7 @@ def admin(db, role="super_admin"):
     return row, auth(token)
 
 
-def provider(db, *, approved=True, pin=PIN, quota=None, accepting=True, active=True, complete=True):
+def provider(db, *, approved=True, pin=PIN, quota=None, accepting=True, active=True, complete=True, payout=True):
     row = Provider(
         mobile_number=_mobile(), hashed_password=hash_password(PASSWORD), is_mobile_verified=True,
         is_active=active, is_accepting_orders=accepting,
@@ -81,6 +82,9 @@ def provider(db, *, approved=True, pin=PIN, quota=None, accepting=True, active=T
     if quota is not None:
         row.daily_meal_quota = quota
     db.add(row)
+    db.flush()
+    if payout:
+        db.add(ProviderPayoutDetails(provider_reference_id=row.provider_id, upi_id="ashakitchen@upi"))
     db.commit()
     token = create_access_token({"provider_id": str(row.provider_id)}, role="provider", token_version=0)
     return row, auth(token)
@@ -89,7 +93,7 @@ def provider(db, *, approved=True, pin=PIN, quota=None, accepting=True, active=T
 def package(db, kitchen, cat, *, price="180", discounted=None, sub_price=None, meal_type="lunch",
             approved=True, capacity=None, predefined=False, sub_available=True, food_type="veg"):
     pkg = MenuPackage(
-        provider_id=kitchen.provider_id if kitchen is not None else uuid.uuid4(),
+        provider_id=kitchen.provider_id if kitchen is not None else None,
         category_reference_id=cat.category_id,
         package_name=f"Thali {next(_seq)}",
         meal_type=meal_type,
@@ -187,3 +191,24 @@ def world(db, *, price="180", discounted=None, sub_price=None, meal_type="lunch"
         "category": cat, "kitchen": kitchen, "kitchen_auth": kitchen_auth, "package": pkg, "plan": pl,
         "user": user, "address": address, "user_auth": user_auth,
     }
+
+
+# ── Hand-over codes (derived, never stored) ──────────────────
+
+def delivery_code(order) -> str:
+    from app.domain.verification import delivery_code as _code
+    return _code(order)
+
+
+def pickup_code(db, kitchen, on=None) -> str:
+    """The kitchen's pickup code for `on` (default today), as the kitchen app shows it."""
+    from app.core.clock import today_local
+    from app.domain.verification import pickup_code_row, pickup_code_value
+    provider_id = getattr(kitchen, "provider_id", kitchen)
+    row = pickup_code_row(db, provider_id, on or today_local())
+    db.commit()
+    return pickup_code_value(row)
+
+
+def wrong_code(code: str) -> str:
+    return "000000" if code != "000000" else "111111"

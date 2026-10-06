@@ -1,7 +1,7 @@
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.repositories.payment_repository import PaymentRepository
+from app.core.errors import DomainError
 
 
 class PaymentService:
@@ -24,5 +24,5 @@ class PaymentService:
     def get_payment(db: Session, user_id: str, payment_id):
         payment = PaymentRepository.get_by_id_and_user(db, payment_id, user_id)
         if not payment:
-            raise HTTPException(status_code=404, detail="Payment not found")
+            raise DomainError("Payment not found", 404)
         return payment

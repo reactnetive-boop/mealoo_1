@@ -9,14 +9,6 @@ from app.models.delivery_boy_wallet_transaction_model import DeliveryBoyWalletTr
 class DeliveryBoyWalletRepository:
 
     @staticmethod
-    def get_by_delivery_boy_id(db: Session, delivery_boy_id):
-        return (
-            db.query(DeliveryBoyWallet)
-            .filter(DeliveryBoyWallet.delivery_boy_reference_id == delivery_boy_id)
-            .first()
-        )
-
-    @staticmethod
     def get_or_create(db: Session, delivery_boy_id) -> DeliveryBoyWallet:
         wallet = (
             db.query(DeliveryBoyWallet)

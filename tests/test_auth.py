@@ -2,7 +2,7 @@
 
 import time
 
-from jose import jwt
+import jwt
 
 from app.core.security import create_access_token
 from app.models.user_model import User

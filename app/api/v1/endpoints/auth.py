@@ -118,4 +118,4 @@ def change_password(
     description="Invalidates every token issued to this kitchen so far.",
 )
 def logout_provider(db: Session = Depends(get_db), current=Depends(get_provider_session)):
-    return AuthService.logout_provider(db, current["provider_id"])
+    return AuthService.logout(db, current["provider_id"])

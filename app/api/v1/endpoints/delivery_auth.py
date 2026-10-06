@@ -104,4 +104,4 @@ def change_password(
     description="Invalidates every token issued so far and marks the partner offline.",
 )
 def logout_delivery_boy(db: Session = Depends(get_db), current=Depends(get_delivery_session)):
-    return DeliveryBoyAuthService.logout_delivery_boy(db, current["delivery_boy_id"])
+    return DeliveryBoyAuthService.logout(db, current["delivery_boy_id"])

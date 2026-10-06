@@ -50,6 +50,14 @@ class Complaint(Base):
         nullable=True
     )
 
+    # A specific meal of a subscription (subscription.orders); order_reference_id is a one-time order
+    subscription_order_reference_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("subscription.orders.order_id", name="complaints_subscription_order_id_fkey"),
+        nullable=True,
+        index=True,
+    )
+
     # 'vendor' | 'platform' | 'delivery' | 'package'
     against = Column(
         String(30),
@@ -78,6 +86,9 @@ class Complaint(Base):
         nullable=True,
         default=[]
     )
+
+    # admin handling the complaint (SLA: COMPLAINT_SLA_HOURS)
+    assigned_to = Column(UUID(as_uuid=True), nullable=True, index=True)
 
     admin_notes = Column(
         Text,

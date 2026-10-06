@@ -26,12 +26,6 @@ class UpdateCapacityRequest(BaseModel):
     )
 
 
-class SelectPackageResponse(BaseModel):
-    success: bool
-    message: str
-    daily_capacity: Optional[int] = None
-
-
 class UpdateCapacityResponse(BaseModel):
     success: bool
     message: str

@@ -1,13 +1,12 @@
 from datetime import date as date_type, timedelta
 
-from fastapi import HTTPException
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.clock import today_local
 from app.core.errors import DomainError
 from app.domain import capacity
-from app.domain.eligibility import serviceable_pincode, parse_pincode
+from app.domain.eligibility import assert_pincode_can_change, serviceable_pincode, parse_pincode
 from app.domain.slots import SLOTS, is_before_cutoff
 from app.models.delivery_boy_model import DeliveryBoy
 from app.models.provider_unavailability_model import ProviderUnavailability
@@ -42,7 +41,7 @@ def missing_profile_fields(provider) -> list[str]:
 def _get(db, provider_id):
     provider = ProviderRepository.get_by_provider_id(db, provider_id)
     if not provider:
-        raise HTTPException(status_code=404, detail="Provider not found")
+        raise DomainError("Provider not found", 404)
     return provider
 
 
@@ -106,6 +105,7 @@ class ProviderService:
 
         update_data = payload.model_dump(exclude_unset=True)
         update_data["pincode"] = _assert_serviceable(db, update_data.get("pincode", provider.pincode))
+        assert_pincode_can_change(db, provider, update_data["pincode"])
 
         new_quota = update_data.get("daily_meal_quota")
         if new_quota is not None and provider.daily_meal_quota != new_quota:
@@ -184,6 +184,7 @@ class ProviderService:
     def update_address(db, provider_id: str, request):
         provider = _get(db, provider_id)
         pin = _assert_serviceable(db, request.pincode)
+        assert_pincode_can_change(db, provider, pin)
         provider.house_no = request.house_no
         provider.address = request.address
         provider.landmark = request.landmark
@@ -252,7 +253,7 @@ class ProviderService:
             ProviderUnavailability.unavailable_date == on,
         ).first()
         if not record:
-            raise HTTPException(status_code=404, detail="Holiday not found")
+            raise DomainError("Holiday not found", 404)
         if on < today_local():
             raise DomainError("Past holidays cannot be removed")
         db.delete(record)

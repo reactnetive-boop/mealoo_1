@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.clock import now_utc, today_local
 from app.core.errors import DomainError
 from app.domain import capacity
+from app.domain import package_revision as revision
 from app.domain.pricing import validate_package_prices, package_price_view
 from app.models.menu_category_model import MenuCategory
 from app.models.menu_package_model import MenuPackage
@@ -70,11 +71,11 @@ def visible_package(db: Session, provider_id: str, package_id) -> MenuPackage:
 
 
 def mark_changed(package: MenuPackage) -> bool:
-    """Send an approved package back for review. Returns True if it changed state."""
-    if package.approval_status == "approved":
-        package.approval_status = "pending"
-        package.approval_note = "Changed by kitchen - waiting for re-approval"
-        return True
+    """
+    A package that is not on sale was edited: a rejected one goes back into the
+    review queue. (Edits of a live package become a revision instead, see
+    domain/package_revision.py.) Returns True if it changed state.
+    """
     if package.approval_status == "rejected":
         package.approval_status = "pending"
         return True
@@ -114,6 +115,9 @@ def package_dict(package: MenuPackage, *, daily_capacity=None, is_offered=None) 
         "is_predefined": bool(package.is_predefined),
         "approval_status": package.approval_status,
         "approval_note": package.approval_note,
+        # an edit of the live version waiting for Orleeno's review (the live version stays on sale)
+        "pending_changes": revision.view(package),
+        "has_pending_changes": bool(package.pending_changes),
         "daily_capacity": daily_capacity,
         "is_offered": is_offered,
         "image_url": next((i.image_url for i in package.images if i.is_primary), None)
@@ -229,27 +233,42 @@ class MenuService:
         # Explicit allow-list: kitchens can never set approval / activation
         update_data = {k: v for k, v in update_data.items() if k in MATERIAL_FIELDS | {"is_available"}}
 
-        validate_package_prices(
-            update_data.get("price", package.price),
-            update_data.get("discounted_price", package.discounted_price),
-            update_data.get("subscription_price", package.subscription_price),
-        )
+        def after(field):
+            return update_data[field] if field in update_data else revision.proposed(package, field)
 
-        material = any(
-            k in MATERIAL_FIELDS and getattr(package, k) != v for k, v in update_data.items()
-        )
-        for key, value in update_data.items():
+        validate_package_prices(after("price"), after("discounted_price"), after("subscription_price"))
+
+        material = {k: v for k, v in update_data.items() if k in MATERIAL_FIELDS}
+        if "is_available" in update_data:
+            # sold out / back in stock is the kitchen's call and applies at once
+            package.is_available = update_data["is_available"]
+
+        if revision.is_live(package):
+            # the approved version stays on sale until Orleeno reviews the edit
+            pending = revision.propose_fields(package, material) if material else bool(package.pending_changes)
+            db.commit()
+            return {
+                "success": True,
+                "message": (
+                    "Changes sent for review. Customers see the current version until they are approved."
+                    if pending else "Package updated successfully"
+                ),
+                "approval_status": package.approval_status,
+                "has_pending_changes": pending,
+            }
+
+        changed = any(getattr(package, k) != v for k, v in material.items())
+        for key, value in material.items():
             setattr(package, key, value)
-
-        reapproval = mark_changed(package) if material else False
+        reapproval = mark_changed(package) if changed else False
         db.commit()
-
         return {
             "success": True,
             "message": (
                 "Package updated and sent for re-approval" if reapproval else "Package updated successfully"
             ),
             "approval_status": package.approval_status,
+            "has_pending_changes": False,
         }
 
     @staticmethod

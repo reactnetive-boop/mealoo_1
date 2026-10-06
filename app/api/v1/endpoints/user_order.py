@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.paging import Paging, paging
 from app.core.rate_limit import limit_by_ip
 from app.dependencies.auth_dependency import get_current_user
 from app.schemas.extra_order_schema import (
@@ -13,8 +14,23 @@ from app.schemas.extra_order_schema import (
     ExtraOrderResponse,
 )
 from app.services.extra_order_service import ExtraOrderService
+from app.services.user_delivery_service import UserDeliveryService
 
 router = APIRouter()
+
+
+@router.get(
+    "/today",
+    summary="Today's Deliveries (with delivery codes)",
+    description=(
+        "Every subscription meal and one-time order arriving today, earliest meal first, with the "
+        "kitchen, delivery partner, progress timestamps and the 6-digit `delivery_code` the customer "
+        "reads out to the delivery partner. The code is only included while the order is open and "
+        "is never shown to the kitchen or the partner."
+    ),
+)
+def todays_deliveries(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return UserDeliveryService.today(db, current_user["user_id"])
 
 
 @router.post(
@@ -56,8 +72,9 @@ def place_extra_order(
     response_model=ExtraOrderListResponse,
     summary="List My Extra Orders",
 )
-def get_order_list(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return ExtraOrderService.get_order_list(db, current_user["user_id"])
+def get_order_list(page: Paging = Depends(paging), db: Session = Depends(get_db),
+                   current_user=Depends(get_current_user)):
+    return ExtraOrderService.get_order_list(db, current_user["user_id"], page)
 
 
 @router.get(

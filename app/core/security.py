@@ -5,7 +5,7 @@ import uuid
 from datetime import timedelta
 
 from passlib.context import CryptContext
-from jose import jwt
+import jwt
 
 from app.core.config import (
     JWT_SECRET_KEY,
@@ -110,12 +110,23 @@ def create_access_token(
 
 
 def decode_access_token(token: str) -> dict:
-    return jwt.decode(
+    """
+    Verify signature and algorithm, then expiry against the app clock
+    (app.core.clock), the same clock that set `exp`. Raises jwt.PyJWTError.
+    """
+    payload = jwt.decode(
         token,
         JWT_SECRET_KEY,
         algorithms=[JWT_ALGORITHM],
-        options={"require_exp": True},
+        options={"require": ["exp"], "verify_exp": False, "verify_iat": False},
     )
+    try:
+        expires = int(payload["exp"])
+    except (TypeError, ValueError):
+        raise jwt.InvalidTokenError("invalid exp") from None
+    if expires <= int(now_utc().timestamp()):
+        raise jwt.ExpiredSignatureError("token expired")
+    return payload
 
 
 # ── One-time codes ─────────────────────────────────────────

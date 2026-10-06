@@ -20,6 +20,7 @@ class Subscription(Base):
         Index("idx_subscriptions_vendor", "vendor_reference_id"),
         Index("idx_subscriptions_status", "status"),
         Index("idx_subscriptions_dates", "start_date", "end_date"),
+        Index("idx_subscriptions_delivery_boy", "delivery_boy_reference_id"),
         {"schema": "subscription"},
     )
 
@@ -53,6 +54,14 @@ class Subscription(Base):
         UUID(as_uuid=True),
         ForeignKey("auth.user_addresses.user_address_id", name="subscriptions_user_address_id_fkey"),
         nullable=False
+    )
+
+    # Delivery partner currently serving this subscription (admin assignment).
+    # New meals inherit it; history lives in subscription_delivery_assignments.
+    delivery_boy_reference_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("delivery.delivery_boys.delivery_boy_id", name="subscriptions_delivery_boy_id_fkey"),
+        nullable=True,
     )
 
     # 'pending' | 'active' | 'paused' | 'cancelled' | 'expired' | 'switched'

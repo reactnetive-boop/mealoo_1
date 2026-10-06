@@ -1,13 +1,12 @@
 from datetime import date as Date
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit, business_event
 from app.core.clock import now_utc, today_local
 from app.core.errors import DomainError
-from app.domain import capacity, ledger
-from app.domain.eligibility import serviceable_pincode
+from app.domain import capacity, ledger, notify
+from app.domain.eligibility import assert_pincode_can_change, serviceable_pincode
 from app.domain.pricing import money
 from app.models.provider_model import Provider
 from app.models.subscription_model import Subscription
@@ -28,7 +27,7 @@ def _provider(db: Session, provider_id, lock: bool = False) -> Provider:
         q = q.with_for_update()
     provider = q.first()
     if not provider:
-        raise HTTPException(status_code=404, detail="Provider not found")
+        raise DomainError("Provider not found", 404)
     return provider
 
 
@@ -163,6 +162,16 @@ class AdminProviderService:
             db, table="provider.providers", record_id=provider.provider_id,
             old=before, new=provider_view(provider), actor_id=admin_id, actor_type="admin", ip=ip,
         )
+        if approve:
+            notify.kitchen(
+                db, provider.provider_id, "account_update", "Kitchen approved",
+                "Your kitchen is live on Orleeno. Add packages and start accepting orders." + (f" {note}" if note else ""),
+            )
+        else:
+            notify.kitchen(
+                db, provider.provider_id, "account_update", "Application needs changes",
+                f"Your kitchen application was not approved: {note} Update your profile and submit again.",
+            )
         db.commit()
         business_event("provider.approval", provider_id=provider_id, approved=approve, admin_id=admin_id)
         return {
@@ -180,8 +189,7 @@ class AdminProviderService:
         update_data = payload.model_dump(exclude_unset=True)
 
         if "pincode" in update_data and update_data["pincode"] is not None:
-            if update_data["pincode"] != provider.pincode and _open_subscription_count(db, provider_id):
-                raise DomainError("The pincode cannot change while the kitchen has running subscriptions")
+            assert_pincode_can_change(db, provider, update_data["pincode"])
             if not serviceable_pincode(db, update_data["pincode"]):
                 raise DomainError("That pincode is not an active Orleeno service area")
 
@@ -237,6 +245,12 @@ class AdminProviderService:
             db, table="provider.providers", record_id=provider.provider_id,
             old=before, new=provider_view(provider), actor_id=admin_id, actor_type="admin", ip=ip,
         )
+        notify.kitchen(
+            db, provider.provider_id, "account_update",
+            "Kitchen reactivated" if is_active else "Kitchen deactivated",
+            "Your kitchen account is active again." if is_active
+            else "Orleeno has deactivated your kitchen account. Contact support for details.",
+        )
         db.commit()
         return {"success": True, "message": f"Provider {'activated' if is_active else 'deactivated'}"}
 
@@ -248,6 +262,12 @@ class AdminProviderService:
         record_audit(
             db, table="provider.providers", record_id=provider.provider_id,
             old=before, new=provider_view(provider), actor_id=admin_id, actor_type="admin", ip=ip,
+        )
+        notify.kitchen(
+            db, provider.provider_id, "account_update",
+            "New orders turned on" if accepting else "New orders paused",
+            "Orleeno turned new orders back on for your kitchen." if accepting
+            else "Orleeno paused new orders for your kitchen. Running subscriptions continue as usual.",
         )
         db.commit()
         state = "now accepting orders" if accepting else "not accepting new orders"
@@ -266,7 +286,7 @@ class AdminProviderService:
             ProviderUnavailability.unavailable_date == payload.date
         ).first()
         if existing:
-            raise HTTPException(status_code=409, detail=f"Provider is already marked unavailable on {payload.date}")
+            raise DomainError(f"Provider is already marked unavailable on {payload.date}", 409)
 
         record = ProviderUnavailability(
             provider_reference_id=provider_id,
@@ -277,6 +297,13 @@ class AdminProviderService:
         record_audit(
             db, table="provider.provider_unavailability", record_id=provider_id, operation="I",
             new={"date": payload.date, "reason": payload.reason}, actor_id=admin_id, actor_type="admin", ip=ip,
+        )
+        notify.kitchen(
+            db, provider_id, "holiday", "Holiday added by Orleeno",
+            f"Your kitchen is marked closed on {payload.date}."
+            + (f" Reason: {payload.reason}." if payload.reason else "")
+            + " Orders for that day will be moved or refunded.",
+            {"date": str(payload.date)},
         )
         db.commit()
         db.refresh(record)
@@ -300,7 +327,7 @@ class AdminProviderService:
             ProviderUnavailability.unavailable_date == unavailable_date
         ).first()
         if not record:
-            raise HTTPException(status_code=404, detail="Unavailability record not found")
+            raise DomainError("Unavailability record not found", 404)
         if unavailable_date < today_local():
             raise DomainError("Past holidays cannot be removed")
         db.delete(record)
@@ -364,6 +391,11 @@ class AdminProviderService:
             db, table="provider.provider_wallet_transactions", record_id=txn.provider_wallet_transaction_id,
             operation="I", new={"provider_id": provider_id, "type": payload.type, "amount": amount, "reason": payload.reason},
             actor_id=admin_id, actor_type="admin", ip=ip,
+        )
+        notify.kitchen(
+            db, provider_id, "wallet", f"Wallet {payload.type}ed",
+            f"Orleeno {payload.type}ed Rs {amount} {'to' if payload.type == 'credit' else 'from'} your wallet: {payload.reason}.",
+            {"provider_wallet_transaction_id": str(txn.provider_wallet_transaction_id)},
         )
         db.commit()
         business_event("wallet.admin_adjust", owner="provider", owner_id=provider_id, type=payload.type, amount=amount, admin_id=admin_id)

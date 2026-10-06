@@ -7,12 +7,13 @@ stack traces, SQL and exception text stay in the server log only.
 """
 
 import logging
-import uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
+from app.core.observability import error_ref
 
 logger = logging.getLogger("app.errors")
 
@@ -20,11 +21,13 @@ logger = logging.getLogger("app.errors")
 class DomainError(Exception):
     """A business rule was violated; `message` is shown to the caller."""
 
-    def __init__(self, message: str, status_code: int = 400, code: str | None = None):
+    def __init__(self, message: str, status_code: int = 400, code: str | None = None,
+                 headers: dict[str, str] | None = None):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.code = code
+        self.headers = headers
 
 
 def _body(detail, code: str | None = None):
@@ -40,7 +43,7 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(DomainError)
     async def _domain(request: Request, exc: DomainError):
-        return JSONResponse(status_code=exc.status_code, content=_body(exc.message, exc.code))
+        return JSONResponse(status_code=exc.status_code, content=_body(exc.message, exc.code), headers=exc.headers)
 
     @app.exception_handler(HTTPException)
     async def _http(request: Request, exc: HTTPException):
@@ -67,7 +70,7 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(IntegrityError)
     async def _integrity(request: Request, exc: IntegrityError):
-        ref = uuid.uuid4().hex[:12]
+        ref = error_ref()
         logger.warning("integrity error ref=%s path=%s: %s", ref, request.url.path, exc.orig)
         return JSONResponse(
             status_code=409,
@@ -76,12 +79,12 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(SQLAlchemyError)
     async def _db(request: Request, exc: SQLAlchemyError):
-        ref = uuid.uuid4().hex[:12]
+        ref = error_ref()
         logger.exception("database error ref=%s path=%s", ref, request.url.path)
         return JSONResponse(status_code=500, content=_body(f"Internal server error (ref {ref})."))
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception):
-        ref = uuid.uuid4().hex[:12]
+        ref = error_ref()
         logger.exception("unhandled error ref=%s path=%s", ref, request.url.path)
         return JSONResponse(status_code=500, content=_body(f"Internal server error (ref {ref})."))

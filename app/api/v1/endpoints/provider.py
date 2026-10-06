@@ -4,15 +4,19 @@ from fastapi import (
     APIRouter,
     Depends,
     Query,
+    Request,
     UploadFile,
     File
 )
 
 from typing import Optional
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.rate_limit import client_ip, limit_by_ip
+from app.services.service_area_service import ServiceAreaService
 from app.dependencies.auth_dependency import (
     get_provider_session,
     get_active_provider,
@@ -30,6 +34,8 @@ from app.schemas.provider_schema import (
     HolidayRequest,
 )
 from app.services.provider_service import ProviderService
+from app.services.provider_order_service import ProviderOrderService
+from app.services.provider_notification_service import ProviderNotificationService
 
 router = APIRouter()
 
@@ -178,3 +184,63 @@ def remove_holiday(
 )
 def list_delivery_partners(db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
     return ProviderService.assignable_delivery_partners(db, current_provider["provider_id"])
+
+
+@router.get(
+    "/pickup-code",
+    summary="Today's Pickup Code",
+    description=(
+        "The kitchen's 6-digit pickup code for today (business date). Read it out to the delivery "
+        "partner when handing over today's orders; the partner enters it to record the pickup. It "
+        "works only for this kitchen and only today, and it is never shown to partners or customers."
+    ),
+)
+def get_pickup_code(db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
+    return ProviderOrderService.get_pickup_code(db, current_provider["provider_id"])
+
+
+@router.post(
+    "/pickup-code/regenerate",
+    summary="Replace Today's Pickup Code",
+    description="Use when the code was shared with the wrong person. The old code stops working at once.",
+    dependencies=[Depends(limit_by_ip("pickup_code_regenerate", 5, 3600))],
+)
+def regenerate_pickup_code(request: Request, db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
+    return ProviderOrderService.regenerate_pickup_code(db, current_provider["provider_id"], client_ip(request))
+
+
+@router.get(
+    "/notifications",
+    summary="Kitchen Notifications",
+    description=(
+        "Newest first, with the `unread` count for the bell badge. Types: `new_subscription`, `new_order`, "
+        "`partner_assigned`, `partner_unassigned`, `pickup_pending`. `data` carries `subscription_id` or "
+        "`order_id` + `kind` to open the related screen."
+    ),
+)
+def list_notifications(
+    limit: int = Query(50, ge=1, le=200),
+    unread_only: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_provider=Depends(get_active_provider),
+):
+    return ProviderNotificationService.list(db, current_provider["provider_id"], limit=limit, unread_only=unread_only)
+
+
+@router.put("/notifications/read-all", summary="Mark All Kitchen Notifications Read")
+def mark_all_notifications_read(db: Session = Depends(get_db), current_provider=Depends(get_active_provider)):
+    return ProviderNotificationService.mark_all_read(db, current_provider["provider_id"])
+
+
+@router.put("/notifications/{notification_id}/read", summary="Mark a Kitchen Notification Read")
+def mark_notification_read(notification_id: UUID, db: Session = Depends(get_db), current_provider=Depends(get_active_provider)):
+    return ProviderNotificationService.mark_read(db, current_provider["provider_id"], notification_id)
+
+
+@router.get(
+    "/service-areas",
+    summary="My Delivery Areas",
+    description="Pincodes this kitchen delivers to: its own plus those Orleeno added. Contact Orleeno to change them.",
+)
+def my_service_areas(db: Session = Depends(get_db), current_provider=Depends(get_provider_session)):
+    return ServiceAreaService.list(db, current_provider["provider_id"])

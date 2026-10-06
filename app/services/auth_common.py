@@ -10,15 +10,20 @@ Password reset: verifying a reset OTP returns a one-time reset token (stored
 hashed, short-lived). The final reset call must present that token, so
 knowing a phone number is never enough to change its password.
 
-Login: per-account failure counter with a temporary lock, plus generic error
-messages that do not reveal whether a number is registered.
+Login: wrong passwords are counted per (account, client IP) with an
+exponential back-off, so someone who only knows a phone number can lock out
+their own IP but not the owner. A much higher account-wide threshold (stored on
+the account row) still stops a distributed attack. Error messages never reveal
+whether a number is registered.
 """
 
 from dataclasses import dataclass
 from datetime import timedelta
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
+from app.core import rate_limit
 from app.core.audit import security_event
 from app.core.clock import now_utc
 from app.core.config import (
@@ -30,6 +35,9 @@ from app.core.config import (
     PASSWORD_RESET_TOKEN_TTL_MINUTES,
     LOGIN_MAX_FAILED_ATTEMPTS,
     LOGIN_LOCKOUT_MINUTES,
+    LOGIN_LOCKOUT_MAX_MINUTES,
+    LOGIN_FAILURE_WINDOW_MINUTES,
+    LOGIN_ACCOUNT_LOCK_THRESHOLD,
 )
 from app.core.errors import DomainError
 from app.core.security import (
@@ -157,24 +165,59 @@ def otp_response(code: str, **fields) -> dict:
 
 # ── Login lockout ─────────────────────────────────────────────
 
-def assert_not_locked(account) -> None:
-    if account is not None and account.locked_until and account.locked_until > now_utc():
+def _throttle_keys(role: str, account, ip: str | None) -> tuple[str, str]:
+    account_id = sa_inspect(account).identity[0]
+    base = f"login:{role}:{account_id}:{ip or 'unknown'}"
+    return f"{base}:fails", f"{base}:block"
+
+
+def _wait_text(seconds: int) -> str:
+    minutes = -(-seconds // 60)
+    if minutes < 60:
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    hours = -(-minutes // 60)
+    return f"{hours} hour{'s' if hours != 1 else ''}"
+
+
+def assert_login_allowed(role: str, account, ip: str | None) -> None:
+    """Refuse before the password is checked when this account or this (account, IP) is cooling down."""
+    if account is None:
+        return
+    if account.locked_until and account.locked_until > now_utc():
         raise DomainError("Too many failed attempts. Please try again later.", 429, code="ACCOUNT_LOCKED")
+    wait = rate_limit.blocked_for(_throttle_keys(role, account, ip)[1])
+    if wait:
+        raise DomainError(
+            f"Too many failed attempts. Please try again in {_wait_text(wait)} or reset your password.",
+            429,
+            code="LOGIN_THROTTLED",
+            headers={"Retry-After": str(wait)},
+        )
 
 
-def register_failed_login(db: Session, account, identity: str) -> None:
+def register_failed_login(db: Session, role: str, account, identity: str, ip: str | None) -> None:
+    fails_key, block_key = _throttle_keys(role, account, ip)
+    fails = rate_limit.incr(fails_key, LOGIN_FAILURE_WINDOW_MINUTES * 60)
+    if fails >= LOGIN_MAX_FAILED_ATTEMPTS:
+        # 15, 30, 60 ... minutes, capped
+        doublings = min(fails - LOGIN_MAX_FAILED_ATTEMPTS, 16)
+        minutes = min(LOGIN_LOCKOUT_MINUTES * 2 ** doublings, LOGIN_LOCKOUT_MAX_MINUTES)
+        rate_limit.block(block_key, minutes * 60)
+        security_event("login.throttled", role=role, identity=identity[-4:], ip=ip, minutes=minutes)
+
     account.failed_login_count = (account.failed_login_count or 0) + 1
-    if account.failed_login_count >= LOGIN_MAX_FAILED_ATTEMPTS:
+    if account.failed_login_count >= LOGIN_ACCOUNT_LOCK_THRESHOLD:
         account.locked_until = now_utc() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
         account.failed_login_count = 0
-        security_event("login.locked", identity=identity[-4:])
+        security_event("login.locked", role=role, identity=identity[-4:])
     db.commit()
-    security_event("login.failed", identity=identity[-4:])
+    security_event("login.failed", role=role, identity=identity[-4:], ip=ip)
 
 
-def register_successful_login(account) -> None:
+def register_successful_login(role: str, account, ip: str | None) -> None:
     account.failed_login_count = 0
     account.locked_until = None
+    rate_limit.delete(*_throttle_keys(role, account, ip))
 
 
 def revoke_sessions(account) -> None:

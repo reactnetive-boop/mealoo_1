@@ -35,6 +35,9 @@ class AddReviewRequest(BaseModel):
 
     subscription_id: Optional[UUID] = None
 
+    # rate one delivered meal of a subscription
+    subscription_order_id: Optional[UUID] = None
+
     review_date: Optional[date] = None
 
 
@@ -72,6 +75,8 @@ class ReviewResponse(BaseModel):
 
     order_reference_id: Optional[UUID]
 
+    subscription_order_reference_id: Optional[UUID] = None
+
     subscription_reference_id: Optional[UUID]
 
     vendor_rating: int
@@ -94,6 +99,12 @@ class ReviewListResponse(BaseModel):
     success: bool
 
     total: int
+
+    page: int = 1
+
+    limit: int = 100
+
+    has_more: bool = False
 
     reviews: List[ReviewResponse]
 
@@ -125,5 +136,7 @@ class PublicReviewListResponse(BaseModel):
     success: bool
 
     total: int
+
+    page: int = 1
 
     reviews: List[PublicReviewResponse]

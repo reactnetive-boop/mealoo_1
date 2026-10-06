@@ -60,7 +60,8 @@ def test_kitchen_never_sees_customer_delivery_code(client, db):
     for o in r.json()["orders"]:
         assert "otp_for_delivery" not in o
     meal = db.query(Order).first()
-    assert meal.otp_for_delivery not in text
+    assert f.delivery_code(meal) not in text
+    assert meal.otp_for_delivery is None  # nothing in plaintext at rest
 
 
 def test_kitchen_cannot_mark_delivered_or_loop_statuses(client, db):
@@ -85,15 +86,16 @@ def test_full_handover_and_single_settlement(client, db):
     w, sub_id, meal, boy, boy_auth = _ready(client, db)
     oid = str(meal.order_id)
 
-    # pickup needs the kitchen's code
-    assert client.put(f"{D}/orders/{oid}/pickup", headers=boy_auth, json={"pickup_code": "0000" if meal.pickup_code != "0000" else "1111"}).status_code == 400
-    r = client.put(f"{D}/orders/{oid}/pickup", headers=boy_auth, json={"pickup_code": meal.pickup_code})
+    # pickup needs the kitchen's code for today
+    code = f.pickup_code(db, w["kitchen"])
+    assert client.put(f"{D}/orders/{oid}/pickup", headers=boy_auth, json={"pickup_code": f.wrong_code(code)}).status_code == 400
+    r = client.put(f"{D}/orders/{oid}/pickup", headers=boy_auth, json={"pickup_code": code})
     assert r.status_code == 200, r.text
 
-    r = client.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": meal.otp_for_delivery})
+    r = client.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": f.delivery_code(meal)})
     assert r.status_code == 200, r.text
     # a retry does not pay twice
-    assert client.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": meal.otp_for_delivery}).status_code == 200
+    assert client.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": f.delivery_code(meal)}).status_code == 200
 
     db.expire_all()
     kitchen_wallet = db.query(ProviderWallet).filter(ProviderWallet.provider_reference_id == w["kitchen"].provider_id).one()
@@ -107,11 +109,11 @@ def test_full_handover_and_single_settlement(client, db):
 def test_wrong_delivery_codes_lock_the_order(client, db):
     w, sub_id, meal, boy, boy_auth = _ready(client, db)
     oid = str(meal.order_id)
-    client.put(f"{D}/orders/{oid}/pickup", headers=boy_auth, json={"pickup_code": meal.pickup_code})
-    wrong = "000000" if meal.otp_for_delivery != "000000" else "111111"
+    client.put(f"{D}/orders/{oid}/pickup", headers=boy_auth, json={"pickup_code": f.pickup_code(db, w["kitchen"])})
+    wrong = f.wrong_code(f.delivery_code(meal))
     for _ in range(5):
         assert client.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": wrong}).status_code == 400
-    r = client.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": meal.otp_for_delivery})
+    r = client.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": f.delivery_code(meal)})
     assert r.status_code == 423
     assert r.json()["code"] == "DELIVERY_LOCKED"
 
@@ -119,14 +121,14 @@ def test_wrong_delivery_codes_lock_the_order(client, db):
 def test_concurrent_deliveries_settle_once(client, db):
     w, sub_id, meal, boy, boy_auth = _ready(client, db)
     oid = str(meal.order_id)
-    client.put(f"{D}/orders/{oid}/pickup", headers=boy_auth, json={"pickup_code": meal.pickup_code})
+    client.put(f"{D}/orders/{oid}/pickup", headers=boy_auth, json={"pickup_code": f.pickup_code(db, w["kitchen"])})
     codes = []
 
     def go():
         from fastapi.testclient import TestClient
         from app.main import app
         with TestClient(app) as c:
-            codes.append(c.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": meal.otp_for_delivery}).status_code)
+            codes.append(c.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": f.delivery_code(meal)}).status_code)
 
     threads = [threading.Thread(target=go) for _ in range(4)]
     [t.start() for t in threads]
@@ -141,7 +143,7 @@ def test_unassigned_or_unapproved_partner_cannot_act(client, db):
     w, sub_id, meal, boy, boy_auth = _ready(client, db)
     other, other_auth = f.delivery_boy(db)
     oid = str(meal.order_id)
-    assert client.put(f"{D}/orders/{oid}/pickup", headers=other_auth, json={"pickup_code": meal.pickup_code}).status_code == 404
+    assert client.put(f"{D}/orders/{oid}/pickup", headers=other_auth, json={"pickup_code": f.pickup_code(db, w["kitchen"])}).status_code == 404
     pending, pending_auth = f.delivery_boy(db, approved=False)
     assert client.get(f"{D}/orders", headers=pending_auth).status_code == 403
     assert client.get(f"{D}/me/state", headers=pending_auth).json()["next_step"] == "awaiting_approval"
@@ -150,7 +152,7 @@ def test_unassigned_or_unapproved_partner_cannot_act(client, db):
 def test_pickup_only_on_delivery_day(client, db):
     w, sub_id, meal, boy, boy_auth = _ready(client, db)
     clock.freeze(datetime(2026, 10, 6, 8, 0))
-    r = client.put(f"{D}/orders/{meal.order_id}/pickup", headers=boy_auth, json={"pickup_code": meal.pickup_code})
+    r = client.put(f"{D}/orders/{meal.order_id}/pickup", headers=boy_auth, json={"pickup_code": f.pickup_code(db, w["kitchen"])})
     assert r.status_code == 400
 
 
@@ -172,8 +174,8 @@ def test_pricing_charges_flow_to_platform_ledger(client, db):
     assert sub.final_amount == Decimal("1393.00")
     assert sub.charges_amount == Decimal("133.00")
 
-    client.put(f"{D}/orders/{meal.order_id}/pickup", headers=boy_auth, json={"pickup_code": meal.pickup_code})
-    client.put(f"{D}/orders/{meal.order_id}/deliver", headers=boy_auth, json={"otp": meal.otp_for_delivery})
+    client.put(f"{D}/orders/{meal.order_id}/pickup", headers=boy_auth, json={"pickup_code": f.pickup_code(db, w["kitchen"])})
+    client.put(f"{D}/orders/{meal.order_id}/deliver", headers=boy_auth, json={"otp": f.delivery_code(meal)})
     db.expire_all()
     entries = {
         (e.entry_type, e.direction): e.amount
@@ -191,3 +193,36 @@ def test_pricing_charges_flow_to_platform_ledger(client, db):
     })
     db.expire_all()
     assert db.query(Subscription).filter(Subscription.subscription_id == sub_id).one().final_amount == Decimal("1393.00")
+
+
+def test_failed_delivery_after_waiting_pays_kitchen_and_partner(client, db):
+    from datetime import datetime
+
+    from app.core import clock
+    from app.models.delivery_boy_wallet_model import DeliveryBoyWallet
+    from app.models.wallet_model import Wallet
+
+    w, sub_id, meal, boy, boy_auth = _ready(client, db)
+    oid = str(meal.order_id)
+    body = {"reason": "customer_unavailable", "note": "Door locked, phone off"}
+    client.put(f"{D}/orders/{oid}/pickup", headers=boy_auth, json={"pickup_code": f.pickup_code(db, w["kitchen"])})
+    r = client.put(f"{D}/orders/{oid}/failed", headers=boy_auth, json=body)
+    assert r.status_code == 400 and r.json()["code"] == "NOT_ARRIVED"
+
+    assert client.put(f"{D}/orders/{oid}/arrived", headers=boy_auth).status_code == 200
+    r = client.put(f"{D}/orders/{oid}/failed", headers=boy_auth, json=body)
+    assert r.status_code == 400 and r.json()["code"] == "WAIT_FOR_CUSTOMER"
+
+    balance_before = db.query(Wallet).filter(Wallet.user_reference_id == w["user"].user_id).one().balance
+    clock.freeze(datetime(2026, 10, 5, 5, 11))
+    r = client.put(f"{D}/orders/{oid}/failed", headers=boy_auth, json=body)
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    row = db.query(Order).filter(Order.order_id == meal.order_id).one()
+    assert row.status == "delivery_failed" and row.failure_reason == "customer_unavailable" and row.settled_at
+    partner = db.query(DeliveryBoyWallet).filter(DeliveryBoyWallet.delivery_boy_reference_id == boy.delivery_boy_id).one()
+    assert partner.balance > 0
+    assert db.query(Wallet).filter(Wallet.user_reference_id == w["user"].user_id).one().balance == balance_before
+    # the code no longer works and a retry is a no-op
+    assert client.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": f.delivery_code(meal)}).status_code == 400
+    assert client.put(f"{D}/orders/{oid}/failed", headers=boy_auth, json=body).json()["already_done"] is True

@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.dependencies.auth_dependency import get_active_provider as get_current_provider
 from app.services.provider_wallet_service import ProviderWalletService
+from app.services.payout_details_service import PayoutDetailsService
+from app.schemas.payout_schema import PayoutDetailsRequest
 from app.schemas.provider_wallet_schema import (
     ProviderWalletDetailsResponse,
     ProviderWalletTransactionListResponse,
@@ -95,3 +97,28 @@ def list_withdrawals(
     current_provider=Depends(get_current_provider)
 ):
     return ProviderWalletService.list_withdrawals(db, current_provider["provider_id"])
+
+
+@router.get(
+    "/payout-details",
+    summary="My Payout Details",
+    description="Where withdrawals are sent. `ready` is false until a UPI ID or a full bank account is saved.",
+)
+def get_payout_details(db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
+    return PayoutDetailsService.get_own(db, "provider", current_provider["provider_id"])
+
+
+@router.put(
+    "/payout-details",
+    summary="Save Payout Details",
+    description=(
+        "Bank account (holder name, number, IFSC) and / or UPI ID. Required before the first "
+        "withdrawal. The account number is stored encrypted."
+    ),
+)
+def save_payout_details(
+    payload: PayoutDetailsRequest,
+    db: Session = Depends(get_db),
+    current_provider=Depends(get_current_provider)
+):
+    return PayoutDetailsService.save(db, "provider", current_provider["provider_id"], payload)

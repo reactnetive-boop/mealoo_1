@@ -1,8 +1,8 @@
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.models.review_model import Review
+from app.core.errors import DomainError
 
 
 class AdminReviewService:
@@ -28,7 +28,7 @@ class AdminReviewService:
     def set_visibility(db: Session, review_id: str, is_visible: bool, admin_id: str = None):
         review = db.query(Review).filter(Review.review_id == review_id).first()
         if not review:
-            raise HTTPException(status_code=404, detail="Review not found")
+            raise DomainError("Review not found", 404)
 
         review.is_visible = is_visible
         record_audit(db, table="provider.reviews", record_id=review.review_id,
@@ -42,7 +42,7 @@ class AdminReviewService:
     def delete_review(db: Session, review_id: str, admin_id: str = None):
         review = db.query(Review).filter(Review.review_id == review_id).first()
         if not review:
-            raise HTTPException(status_code=404, detail="Review not found")
+            raise DomainError("Review not found", 404)
 
         record_audit(db, table="provider.reviews", record_id=review.review_id, operation="D",
                      old={"vendor_rating": review.vendor_rating, "review_text": review.review_text},
