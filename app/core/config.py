@@ -154,6 +154,10 @@ WALLET_TOPUP_DAILY_LIMIT = os.getenv("WALLET_TOPUP_DAILY_LIMIT", "25000.00")
 # admin credit that records where the money came from.
 WALLET_SELF_TOPUP_ENABLED = _bool("WALLET_SELF_TOPUP_ENABLED", not IS_PRODUCTION)
 
+# Customers may not cancel their own plans or one-time orders (business rule);
+# admins still can. Read per request (app.core.config.CUSTOMER_CANCELLATION_ENABLED).
+CUSTOMER_CANCELLATION_ENABLED = _bool("CUSTOMER_CANCELLATION_ENABLED", False)
+
 # Payment gateway for wallet top-ups: "none" (internal top-up only) or "razorpay"
 PAYMENT_GATEWAY = (os.getenv("PAYMENT_GATEWAY") or "none").strip().lower()
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID") or None

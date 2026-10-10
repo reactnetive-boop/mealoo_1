@@ -20,6 +20,7 @@ from app.core.audit import business_event
 from app.core.clock import today_local
 from app.core.config import EXTRA_ORDER_MAX_DAYS_AHEAD
 from app.core.errors import DomainError
+from app.domain.cancellation import assert_customer_can_cancel, customer_cancellation_enabled
 from app.core.paging import FIRST_PAGE, Paging
 from app.domain import capacity, checkout, ledger, notify, orders as meals
 from app.domain.eligibility import assert_sellable, is_on_holiday
@@ -86,7 +87,7 @@ def order_view(order: ExtraOrder, package: MenuPackage | None = None, provider: 
         "refund_amount": order.refund_amount,
         "otp_for_delivery": delivery_code(order) if show_code else None,
         "delivery_window": delivery_window(order.meal_slot),
-        "can_cancel": order.status == "pending" and is_before_cutoff(order.delivery_date, order.meal_slot),
+        "can_cancel": customer_cancellation_enabled() and order.status == "pending" and is_before_cutoff(order.delivery_date, order.meal_slot),
         "delivered_at": order.delivered_at,
         "created_at": order.created_at,
     }
@@ -295,6 +296,7 @@ class ExtraOrderService:
     def cancel_order(db: Session, user_id: str, order_id):
         """Cancels the whole checkout (one delivery): every line the kitchen has not accepted yet."""
         order = ExtraOrderService._owned(db, user_id, order_id, lock=True)
+        assert_customer_can_cancel("One-time orders")
         if order.status != "pending":
             raise DomainError("This order is already being prepared and can no longer be cancelled")
         if not is_before_cutoff(order.delivery_date, order.meal_slot):

@@ -88,7 +88,7 @@ def test_one_trip_assign_pickup_deliver_and_pay_once(client, db):
     assert kitchen.balance == Decimal("250.00")  # both packages
 
 
-def test_customer_cancel_cancels_the_whole_checkout(client, db):
+def test_customer_cancel_cancels_the_whole_checkout(client, db, customer_cancellation):
     w, lines, placed = _two_package_checkout(client, db)
     r = client.put(f"{E}/{lines[1].extra_order_id}/cancel", headers=w["user_auth"])
     assert r.status_code == 200, r.text
@@ -97,7 +97,7 @@ def test_customer_cancel_cancels_the_whole_checkout(client, db):
     assert db.query(Wallet).filter(Wallet.user_reference_id == w["user"].user_id).one().balance == Decimal("1000.00")
 
 
-def test_cancel_refused_once_the_kitchen_accepted_part(client, db):
+def test_cancel_refused_once_the_kitchen_accepted_part(client, db, customer_cancellation):
     w, lines, _ = _two_package_checkout(client, db)
     client.put(f"{K}/extra/{lines[0].extra_order_id}/status", headers=w["kitchen_auth"], json={"status": "confirmed"})
     r = client.put(f"{E}/{lines[1].extra_order_id}/cancel", headers=w["user_auth"])

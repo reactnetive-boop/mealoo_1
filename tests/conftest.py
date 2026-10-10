@@ -116,3 +116,10 @@ def client(app):
     from fastapi.testclient import TestClient
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture
+def customer_cancellation(monkeypatch):
+    """Customers can't cancel by default; tests of the cancel rules switch it on."""
+    from app.core import config
+    monkeypatch.setattr(config, "CUSTOMER_CANCELLATION_ENABLED", True)

@@ -71,7 +71,7 @@ def test_kitchen_daily_limit(client, db):
     assert r.status_code == 400 and r.json()["code"] == "DAILY_LIMIT_FULL"
 
 
-def test_customer_cancel_refunds_once(client, db):
+def test_customer_cancel_refunds_once(client, db, customer_cancellation):
     w = f.world(db, balance="1000")
     oid = client.post(E, headers=w["user_auth"], json=_body(w, day="2026-10-06")).json()["orders"][0]["extra_order_id"]
     assert client.put(f"{E}/{oid}/cancel", headers=w["user_auth"]).status_code == 200
@@ -79,7 +79,7 @@ def test_customer_cancel_refunds_once(client, db):
     assert _balance(db, w["user"]) == Decimal("1000.00")
 
 
-def test_kitchen_decline_refunds_and_confirmed_cannot_be_customer_cancelled(client, db):
+def test_kitchen_decline_refunds_and_confirmed_cannot_be_customer_cancelled(client, db, customer_cancellation):
     w = f.world(db, balance="1000")
     a = client.post(E, headers=w["user_auth"], json=_body(w)).json()["orders"][0]["extra_order_id"]
     b = client.post(E, headers=w["user_auth"], json=_body(w)).json()["orders"][0]["extra_order_id"]

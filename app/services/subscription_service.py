@@ -28,6 +28,7 @@ from app.core.config import (
     CUSTOM_PLAN_MAX_DAYS,
 )
 from app.core.errors import DomainError
+from app.domain.cancellation import assert_customer_can_cancel, customer_cancellation_enabled
 from app.core.paging import FIRST_PAGE, Paging
 from app.domain import capacity, ledger, notify, orders as meals, partner_leave
 from app.domain.delivery_assignment import inherited_partner
@@ -194,7 +195,7 @@ def subscription_view(db: Session, sub: Subscription) -> dict:
         } if next_meal else None,
         "can_pause": sub.status == "active" and (today + timedelta(days=1)) < sub.end_date,
         "can_resume": sub.status == "paused",
-        "can_cancel": sub.status in ("active", "paused"),
+        "can_cancel": customer_cancellation_enabled() and sub.status in ("active", "paused"),
         "can_switch": sub.status == "active",
         "packages": [
             {
@@ -735,6 +736,7 @@ class SubscriptionService:
     @staticmethod
     def cancel_subscription(db: Session, user_id: str, subscription_id, payload):
         sub = owned_subscription(db, user_id, subscription_id, lock=True)
+        assert_customer_can_cancel("Plans")
         result = SubscriptionService.cancel(db, sub, reason=(payload.cancel_reason or "Cancelled by customer"), actor="customer")
         db.commit()
         return {

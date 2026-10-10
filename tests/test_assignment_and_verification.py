@@ -197,7 +197,7 @@ def test_only_admins_can_assign(client, db):
     assert db.query(SubscriptionDeliveryAssignment).count() == 0
 
 
-def test_invalid_partner_or_subscription_is_rejected(client, db):
+def test_invalid_partner_or_subscription_is_rejected(client, db, customer_cancellation):
     w, sub_id, boy, boy_auth, admin_hdr = _setup(client, db)
     pending, _ = f.delivery_boy(db, approved=False)
     r = _assign(client, admin_hdr, sub_id, pending)

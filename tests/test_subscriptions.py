@@ -177,7 +177,7 @@ def test_pause_and_resume_extend_end_date(client, db):
     assert len(delivered_or_due) == 7  # still exactly the 7 meals paid for
 
 
-def test_cancel_refunds_unstarted_meals_once(client, db):
+def test_cancel_refunds_unstarted_meals_once(client, db, customer_cancellation):
     w = f.world(db, balance="5000")
     sub_id = client.post(S, headers=w["user_auth"], json=_body(w)).json()["subscription_id"]
     clock.freeze(datetime(2026, 10, 5, 10, 0))  # today's lunch already being cooked
