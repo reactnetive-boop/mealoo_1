@@ -7,6 +7,7 @@ response now goes through one of these allow-listed views.
 """
 
 from app.domain.pricing import package_price_view
+from app.domain.slots import expand_plan_slot
 from app.core.config import DELIVERY_CODE_MAX_ATTEMPTS, PICKUP_CODE_MAX_ATTEMPTS
 
 
@@ -61,7 +62,6 @@ def delivery_boy_view(b) -> dict:
         "vehicle_type": b.vehicle_type,
         "vehicle_number": b.vehicle_number,
         "profile_image": b.profile_image,
-        "assigned_provider_reference_id": b.assigned_provider_reference_id,
         "is_mobile_verified": bool(b.is_mobile_verified),
         "is_active": bool(b.is_active),
         "is_online": bool(b.is_online),
@@ -116,13 +116,18 @@ def subscription_admin_view(s) -> dict:
         "user_address_reference_id": s.user_address_reference_id,
         "status": s.status,
         "meal_slot": s.meal_slot,
+        # the meals chosen together, e.g. ["lunch", "dinner"]
+        "meal_slots": expand_plan_slot(s.meal_slot),
         "subscription_type": s.subscription_type,
         "start_date": s.start_date,
         "end_date": s.end_date,
         "free_skips_total": s.free_skips_total,
         "free_skips_used": s.free_skips_used,
+        # total_amount = every meal at the per-meal price; discount_amount = the plan
+        # discount (e.g. 5%) taken once off that total; final_amount = what was paid
         "total_amount": s.total_amount,
         "discount_amount": s.discount_amount,
+        "discount_percent": (s.pricing_snapshot or {}).get("discount_percent"),
         "charges_amount": s.charges_amount,
         "final_amount": s.final_amount,
         "refunded_amount": s.refunded_amount,
@@ -222,6 +227,10 @@ def package_admin_view(pkg, provider_name: str | None = None) -> dict:
         "deleted_at": pkg.deleted_at,
         "created_at": pkg.created_at,
         "updated_at": pkg.updated_at,
+        # the kitchen's (or Orleeno's) cover photo, as uploaded; relative "uploads/..." path
+        "image_url": next((i.image_url for i in pkg.images if i.is_primary), None)
+        or (pkg.images[0].image_url if pkg.images else None),
+        "image_count": len(pkg.images),
     }
     data.update(package_price_view(pkg))
     return data

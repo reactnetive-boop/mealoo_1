@@ -33,6 +33,11 @@ from app.models.serviceable_pincode_model import ServiceablePincode
 from app.models.subscription_model import Subscription
 
 
+# Shown on the ordering screens whenever the delivery pincode is not served by
+# the kitchen (or by Orleeno at all); the apps show the same text.
+PINCODE_UNAVAILABLE_MESSAGE = "Delivery is not available at this PIN code. Please change your PIN code."
+
+
 def parse_pincode(value) -> int | None:
     try:
         pin = int(str(value).strip())
@@ -223,13 +228,11 @@ def assert_sellable(
         raise DomainError("This kitchen's area is not currently serviced by Orleeno")
 
     if delivery_pincode is not None:
+        # same rule as the listing (serves_pincode_filter) and admin re-assignment
         pin = parse_pincode(delivery_pincode)
         if pin is None or serviceable_pincode(db, pin) is None:
-            raise DomainError("Your delivery pincode is not serviceable yet", code="PINCODE_NOT_SERVICEABLE")
+            raise DomainError(PINCODE_UNAVAILABLE_MESSAGE, code="PINCODE_NOT_SERVICEABLE")
         if not kitchen_serves(db, provider, pin):
-            raise DomainError(
-                "This kitchen does not deliver to your address pincode",
-                code="ADDRESS_NOT_SERVICEABLE",
-            )
+            raise DomainError(PINCODE_UNAVAILABLE_MESSAGE, code="ADDRESS_NOT_SERVICEABLE")
 
     return provider, package

@@ -12,11 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import business_event
 from app.core.clock import now_utc, today_local
-from app.core.config import DELIVERY_BOY_FEE_PER_DELIVERY
-from app.domain import checkout, ledger, notify, partner_leave
+from app.domain import checkout, ledger, notify, partner_leave, vendor_partner
 from app.domain.delivery_assignment import inherited_partner
 from app.domain.verification import new_seed
-from app.domain.pricing import money, ZERO, customer_payable_per_delivery
+from app.domain.pricing import money, ZERO, customer_payable_per_delivery, partner_payout_now
 from app.domain.slots import expand_plan_slot, is_before_cutoff
 from app.models.extra_order_model import ExtraOrder
 from app.models.order_model import Order
@@ -41,7 +40,10 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
     CONFLICT DO NOTHING, so running it any number of times - midnight job,
     restart, subscription creation - never duplicates a meal. Dates in the
     past, and today's slots whose cut-off has passed, are never created.
-    New meals go to the subscription's assigned delivery partner, if any.
+    New meals go to the subscription's assigned delivery partner; a
+    subscription without a usable partner is given its kitchen's partner
+    (vendor_partner.ensure_subscription_partner), so nobody has to assign
+    every new meal by hand.
 
     Nothing is generated for a kitchen that is inactive or no longer approved
     (admins cannot get there while subscriptions run, so this only guards
@@ -95,26 +97,26 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
             })
         current += timedelta(days=1)
 
-    if not rows:
-        return 0
-
-    for r in rows:
-        r["order_id"] = uuid.uuid4()
-
-    stmt = (
-        pg_insert(Order)
-        .values(rows)
-        .on_conflict_do_nothing(index_elements=["subscription_reference_id", "order_date", "meal_slot"])
-    )
-    result = db.execute(stmt)
-    db.flush()
-    created = result.rowcount or 0
-    if created:
-        # never the codes themselves: only that they exist
-        business_event(
-            "delivery_codes.generated", subscription_id=subscription.subscription_id,
-            meals=created, delivery_boy_id=partner_id,
+    created = 0
+    if rows:
+        for r in rows:
+            r["order_id"] = uuid.uuid4()
+        stmt = (
+            pg_insert(Order)
+            .values(rows)
+            .on_conflict_do_nothing(index_elements=["subscription_reference_id", "order_date", "meal_slot"])
         )
+        result = db.execute(stmt)
+        db.flush()
+        created = result.rowcount or 0
+        if created:
+            # never the codes themselves: only that they exist
+            business_event(
+                "delivery_codes.generated", subscription_id=subscription.subscription_id,
+                meals=created, delivery_boy_id=partner_id,
+            )
+    if partner_id is None:
+        vendor_partner.ensure_subscription_partner(db, subscription)
     return created
 
 
@@ -283,12 +285,22 @@ def compensate_kitchen(db: Session, order, kind: str) -> Decimal:
 
 
 # ── Settlement on delivery ────────────────────────────────────
+#
+# Kitchen and platform money is booked once per order (settled_at), for a
+# delivered order and for a failed hand-over (the food was cooked). The
+# delivery partner is paid only for a delivery that was completed: status
+# 'delivered', reached through the partner's verified hand-over (customer
+# code) or an admin confirming it. A failed or cancelled delivery earns the
+# partner nothing.
+#
+# The partner amount is the "Delivery Partner Payout" set in Admin -> Pricing
+# (master.pricing_components, key delivery_partner_payout) at the moment the
+# delivery completes, for subscription meals and one-time orders alike
+# (one-time: once per checkout, which is one trip). Every payout carries a
+# deterministic idempotency key, so a retried request, a replayed admin
+# action or a re-run job can never credit it twice.
 
-def _legacy_partner_fee() -> Decimal:
-    return money(DELIVERY_BOY_FEE_PER_DELIVERY)
-
-
-def _book_platform(db: Session, settlement: dict, ref_type: str, ref_id, partner_payout: Decimal) -> None:
+def _book_platform(db: Session, settlement: dict, ref_type: str, ref_id) -> None:
     for key, amount in (settlement.get("charges_per_delivery") or {}).items():
         entry_type = "commission" if key == "platform_commission" else key
         ledger.post_platform(
@@ -302,129 +314,120 @@ def _book_platform(db: Session, settlement: dict, ref_type: str, ref_id, partner
         reference_type=ref_type, reference_id=ref_id,
         idempotency_key=f"platform:plan_discount:{ref_type}:{ref_id}",
     )
+
+
+def _pay_partner(db: Session, *, delivery_boy_id, kind: str, payout_key: str, ref_type: str, ref_id,
+                 food_amount: Decimal, units: int, label: str) -> Decimal:
+    """Credit the partner the configured payout for one completed delivery, once per payout_key."""
+    if delivery_boy_id is None or ledger.delivery_txn_exists(db, payout_key) is not None:
+        return ZERO
+    amount, component = partner_payout_now(db, kind, food_amount=food_amount, units=units)
+    if amount <= ZERO:
+        business_event("delivery.payout_not_configured", reference_type=ref_type, reference_id=ref_id)
+        return ZERO
+    version = f" (payout setting v{component.version})" if component is not None else ""
+    ledger.post_delivery(
+        db, delivery_boy_id, type="credit", amount=amount,
+        reason="delivery_payout", idempotency_key=payout_key,
+        reference_type=ref_type, reference_id=ref_id,
+        description=f"Delivery of {label}{version}",
+        counts_as_earning=True,
+    )
     ledger.post_platform(
-        db, entry_type="delivery_partner_payout", direction="debit", amount=partner_payout,
+        db, entry_type="delivery_partner_payout", direction="debit", amount=amount,
         reference_type=ref_type, reference_id=ref_id,
         idempotency_key=f"platform:delivery_partner_payout:{ref_type}:{ref_id}",
     )
+    notify.delivery_partner(
+        db, delivery_boy_id, "payout", "Delivery payout credited",
+        f"Rs {amount} added to your wallet for the delivery of {label}.",
+        {"reference_id": str(ref_id), "reference_type": ref_type},
+    )
+    business_event("delivery.payout_credited", delivery_boy_id=delivery_boy_id, reference_type=ref_type,
+                   reference_id=ref_id, amount=amount)
+    return amount
 
 
 def settle_subscription_meal(db: Session, order: Order) -> None:
-    """Book kitchen, partner and platform money for a delivered meal (once)."""
-
-    if order.settled_at is not None:
-        return
+    """Book kitchen and platform money for a delivered / failed meal (once); pay the partner if delivered."""
 
     subscription = db.query(Subscription).filter(
         Subscription.subscription_id == order.subscription_reference_id
     ).first()
-    settlement = ((subscription.pricing_snapshot or {}).get("settlement") if subscription else None) or {}
+    snapshot = (subscription.pricing_snapshot or {}) if subscription else {}
+    settlement = snapshot.get("settlement") or {}
+    packages = db.query(SubscriptionPackage).filter(
+        SubscriptionPackage.subscription_reference_id == order.subscription_reference_id
+    ).all()
 
-    if settlement:
-        provider_amount = Decimal(settlement["provider_earning_per_delivery"])
-        partner_amount = Decimal(settlement["partner_payout_per_delivery"])
-    else:
-        # Created before pricing snapshots: the rules in force at the time
-        packages = db.query(SubscriptionPackage).filter(
-            SubscriptionPackage.subscription_reference_id == order.subscription_reference_id
-        ).all()
-        provider_amount = sum((money(p.unit_price) * p.quantity for p in packages), ZERO)
-        partner_amount = _legacy_partner_fee()
+    if order.settled_at is None:
+        if settlement:
+            provider_amount = Decimal(settlement["provider_earning_per_delivery"])
+        else:
+            # Created before pricing snapshots: the rules in force at the time
+            provider_amount = sum((money(p.unit_price) * p.quantity for p in packages), ZERO)
+        if provider_amount > ZERO:
+            ledger.post_provider(
+                db, order.vendor_reference_id, type="credit", amount=provider_amount,
+                reason="order_delivered", idempotency_key=f"earning:order:{order.order_id}",
+                reference_type="order", reference_id=order.order_id,
+                description=f"Earnings for {order.meal_slot} on {order.order_date}",
+                counts_as_earning=True,
+            )
+        if settlement:
+            _book_platform(db, settlement, "order", order.order_id)
+        order.settled_at = now_utc()
 
-    if provider_amount > ZERO:
-        ledger.post_provider(
-            db, order.vendor_reference_id, type="credit", amount=provider_amount,
-            reason="order_delivered", idempotency_key=f"earning:order:{order.order_id}",
-            reference_type="order", reference_id=order.order_id,
-            description=f"Earnings for {order.meal_slot} on {order.order_date}",
-            counts_as_earning=True,
+    if order.status == "delivered":
+        deliveries = max(int(snapshot.get("deliveries") or 1), 1)
+        if snapshot.get("food_amount") is not None:
+            food = money(Decimal(snapshot["food_amount"]) / deliveries)
+        else:
+            food = sum((money(p.unit_price) * p.quantity for p in packages), ZERO)
+        units = int(snapshot.get("quantity") or sum(p.quantity for p in packages) or 1)
+        _pay_partner(
+            db, delivery_boy_id=order.delivery_boy_reference_id, kind="subscription",
+            payout_key=f"payout:order:{order.order_id}", ref_type="order", ref_id=order.order_id,
+            food_amount=food, units=units, label=f"{order.meal_slot} on {order.order_date}",
         )
-
-    paid_partner = ZERO
-    if order.delivery_boy_reference_id and partner_amount > ZERO:
-        ledger.post_delivery(
-            db, order.delivery_boy_reference_id, type="credit", amount=partner_amount,
-            reason="delivery_payout", idempotency_key=f"payout:order:{order.order_id}",
-            reference_type="order", reference_id=order.order_id,
-            description=f"Delivery of {order.meal_slot} on {order.order_date}",
-            counts_as_earning=True,
-        )
-        paid_partner = partner_amount
-        notify.delivery_partner(
-            db, order.delivery_boy_reference_id, "payout", "Delivery payout credited",
-            f"Rs {partner_amount} added to your wallet.",
-            {"reference_id": str(order.order_id), "reference_type": "order"},
-        )
-
-    if settlement:
-        _book_platform(db, settlement, "order", order.order_id, paid_partner)
-    elif paid_partner > ZERO:
-        ledger.post_platform(
-            db, entry_type="delivery_partner_payout", direction="debit", amount=paid_partner,
-            reference_type="order", reference_id=order.order_id,
-            idempotency_key=f"platform:delivery_partner_payout:order:{order.order_id}",
-        )
-
-    order.settled_at = now_utc()
     db.flush()
 
 
 def settle_extra_order(db: Session, order: ExtraOrder) -> None:
-    if order.settled_at is not None:
-        return
+    """Book a one-time line's kitchen and platform money (once); pay the partner once per delivered trip."""
 
-    settlement = (order.pricing_snapshot or {}).get("settlement") or {}
-    if settlement:
-        provider_amount = Decimal(settlement["provider_earning_total"])
-    else:
-        provider_amount = money(order.total_price)
-    # one trip per checkout: the partner is paid once, whichever line is settled first
-    partner_amount = checkout.partner_payout(db, order)
+    if order.settled_at is None:
+        settlement = (order.pricing_snapshot or {}).get("settlement") or {}
+        provider_amount = Decimal(settlement["provider_earning_total"]) if settlement else money(order.total_price)
+        if provider_amount > ZERO:
+            ledger.post_provider(
+                db, order.vendor_reference_id, type="credit", amount=provider_amount,
+                reason="order_delivered", idempotency_key=f"earning:extra_order:{order.extra_order_id}",
+                reference_type="extra_order", reference_id=order.extra_order_id,
+                description=f"Earnings for one-time {order.meal_slot} on {order.delivery_date}",
+                counts_as_earning=True,
+            )
+        if settlement:
+            # Extra orders are one delivery each: the full charges are booked
+            full = dict(settlement)
+            full["charges_per_delivery"] = {
+                c["key"]: c["amount"] for c in (order.pricing_snapshot or {}).get("charges", [])
+            }
+            full["plan_discount_per_delivery"] = "0"
+            _book_platform(db, full, "extra_order", order.extra_order_id)
+        order.settled_at = now_utc()
 
-    if provider_amount > ZERO:
-        ledger.post_provider(
-            db, order.vendor_reference_id, type="credit", amount=provider_amount,
-            reason="order_delivered", idempotency_key=f"earning:extra_order:{order.extra_order_id}",
-            reference_type="extra_order", reference_id=order.extra_order_id,
-            description=f"Earnings for one-time {order.meal_slot} on {order.delivery_date}",
-            counts_as_earning=True,
+    if order.status == "delivered":
+        # one trip per checkout: the partner is paid once, whichever line is settled first
+        trip = checkout.lines(db, order)
+        food = sum(
+            (Decimal(str((line.pricing_snapshot or {}).get("food_amount") or money(line.total_price))) for line in trip),
+            ZERO,
         )
-
-    paid_partner = ZERO
-    payout_key = f"payout:checkout:{checkout.key(order)}"
-    if (
-        order.delivery_boy_reference_id
-        and partner_amount > ZERO
-        and ledger.delivery_txn_exists(db, payout_key) is None
-    ):
-        ledger.post_delivery(
-            db, order.delivery_boy_reference_id, type="credit", amount=partner_amount,
-            reason="delivery_payout", idempotency_key=payout_key,
-            reference_type="extra_order", reference_id=order.extra_order_id,
-            description=f"Delivery of one-time {order.meal_slot} on {order.delivery_date}",
-            counts_as_earning=True,
+        _pay_partner(
+            db, delivery_boy_id=order.delivery_boy_reference_id, kind="extra_order",
+            payout_key=f"payout:checkout:{checkout.key(order)}", ref_type="extra_order", ref_id=order.extra_order_id,
+            food_amount=food, units=sum(line.quantity for line in trip) or 1,
+            label=f"one-time {order.meal_slot} on {order.delivery_date}",
         )
-        paid_partner = partner_amount
-        notify.delivery_partner(
-            db, order.delivery_boy_reference_id, "payout", "Delivery payout credited",
-            f"Rs {partner_amount} added to your wallet.",
-            {"reference_id": str(order.extra_order_id), "reference_type": "extra_order"},
-        )
-
-    if settlement:
-        # Extra orders are one delivery each: the full charges are booked
-        full = dict(settlement)
-        full["charges_per_delivery"] = {
-            c["key"]: c["amount"] for c in (order.pricing_snapshot or {}).get("charges", [])
-        }
-        full["plan_discount_per_delivery"] = "0"
-        _book_platform(db, full, "extra_order", order.extra_order_id, paid_partner)
-    elif paid_partner > ZERO:
-        ledger.post_platform(
-            db, entry_type="delivery_partner_payout", direction="debit", amount=paid_partner,
-            reference_type="extra_order", reference_id=order.extra_order_id,
-            idempotency_key=f"platform:delivery_partner_payout:extra_order:{order.extra_order_id}",
-        )
-
-    order.settled_at = now_utc()
     db.flush()

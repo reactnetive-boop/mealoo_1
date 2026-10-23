@@ -76,6 +76,20 @@ def normalize_plan_slot(value: str) -> str:
     return v
 
 
+def plan_slot_for(slots) -> str:
+    """
+    Plan meal_slot value for a set of daily meals chosen together, in any
+    order: ["dinner", "lunch"] -> "lunch_dinner", all three -> "all_slots".
+    """
+    chosen = [s for s in SLOTS if s in {str(x).strip().lower() for x in slots}]
+    if not chosen or len(chosen) != len({str(x).strip().lower() for x in slots if str(x).strip()}):
+        raise ValueError(f"Choose meals from: {', '.join(SLOTS)}")
+    for key, meals in PLAN_SLOT_EXPANSION.items():
+        if meals == chosen:
+            return key
+    raise ValueError(f"Choose meals from: {', '.join(SLOTS)}")
+
+
 def expand_plan_slot(plan_slot: str) -> list[str]:
     """Individual meals per day for a plan slot; unknown values -> []."""
     try:

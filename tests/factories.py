@@ -11,6 +11,7 @@ from app.models.admin_user_model import AdminUser
 from app.models.delivery_boy_document_model import DeliveryBoyDocument
 from app.models.delivery_boy_model import DeliveryBoy
 from app.models.delivery_boy_payout_model import DeliveryBoyPayoutDetails
+from app.models.delivery_partner_vendor_model import DeliveryPartnerVendor
 from app.models.menu_category_model import MenuCategory
 from app.models.menu_package_item_model import MenuPackageItem
 from app.models.menu_package_model import MenuPackage
@@ -154,16 +155,28 @@ def customer(db, *, balance="0", pin=PIN, status="active"):
 
 
 def delivery_boy(db, *, approved=True, kitchen=None, online=True, documents=True):
+    """
+    kitchen: the partner serves that kitchen (delivery_partner_vendors). A
+    kitchen has one current partner, so for a kitchen that already has one the
+    new partner stays in the shared pool. The row is written directly: no
+    existing work is handed over (use the admin API for that).
+    """
     boy = DeliveryBoy(
         mobile_number=_mobile(), hashed_password=hash_password(PASSWORD), is_mobile_verified=True,
         full_name="Kiran Rider", email="kiran@example.com", gender="male", is_active=True,
         is_online=online, vehicle_type="bike", vehicle_number="KA01AB1234",
-        assigned_provider_reference_id=kitchen.provider_id if kitchen is not None else None,
         approval_status="approved" if approved else "pending",
     )
     boy.date_of_birth = now_utc().date().replace(year=1995)
     db.add(boy)
     db.flush()
+    if kitchen is not None and db.query(DeliveryPartnerVendor).filter(
+        DeliveryPartnerVendor.provider_reference_id == kitchen.provider_id, DeliveryPartnerVendor.status == "active",
+    ).first() is None:
+        db.add(DeliveryPartnerVendor(
+            delivery_boy_reference_id=boy.delivery_boy_id, provider_reference_id=kitchen.provider_id,
+            status="active", assigned_by_type="system",
+        ))
     if documents:
         for t in ("aadhaar", "pan", "driving_license", "vehicle_rc"):
             db.add(DeliveryBoyDocument(

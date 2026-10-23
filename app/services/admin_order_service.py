@@ -21,7 +21,7 @@ from app.core.clock import now_utc, today_local
 from app.core.config import DELIVERY_CODE_MAX_ATTEMPTS, PICKUP_CODE_MAX_ATTEMPTS
 from app.core.errors import DomainError
 from app.domain import capacity, checkout, notify, partner_leave
-from app.domain import delivery_assignment
+from app.domain import delivery_assignment, vendor_partner
 from app.domain import orders as meals
 from app.domain.eligibility import is_on_holiday, kitchen_serves, parse_pincode, provider_block_reason
 from app.domain.slots import SLOTS, is_before_cutoff
@@ -98,7 +98,7 @@ def _locked_subscription(db: Session, subscription_id) -> Subscription:
     return sub
 
 
-def _partner_brief(boy: DeliveryBoy | None, provider_id=None) -> dict | None:
+def _partner_brief(db: Session, boy: DeliveryBoy | None, provider_id=None) -> dict | None:
     if boy is None:
         return None
     return {
@@ -110,9 +110,8 @@ def _partner_brief(boy: DeliveryBoy | None, provider_id=None) -> dict | None:
         "is_active": bool(boy.is_active),
         "is_online": bool(boy.is_online),
         "approval_status": boy.approval_status,
-        "assigned_provider_reference_id": boy.assigned_provider_reference_id,
         # why new meals would NOT go to this partner (None = they will)
-        "block_reason": delivery_assignment.partner_block_reason(boy, provider_id) if provider_id else None,
+        "block_reason": delivery_assignment.partner_block_reason(db, boy, provider_id) if provider_id else None,
     }
 
 
@@ -366,7 +365,11 @@ class AdminOrderService:
             } if plan else None,
             "delivery_address": address_view(address) if address else None,
             "packages": packages,
-            "delivery_boy": _partner_brief(boys.get(current), sub.vendor_reference_id),
+            "delivery_boy": _partner_brief(db, boys.get(current), sub.vendor_reference_id),
+            # the kitchen's own partner, who new meals go to automatically
+            "kitchen_delivery_partner": _partner_brief(
+                db, vendor_partner.kitchen_partner(db, sub.vendor_reference_id), sub.vendor_reference_id,
+            ),
             "assignment_status": assignment_status,
             "can_assign": sub.status in delivery_assignment.ASSIGNABLE_SUBSCRIPTION_STATUSES,
             "stats": stats,
@@ -631,9 +634,10 @@ class AdminOrderService:
 
         previous_provider_id = str(order.vendor_reference_id)
         order.vendor_reference_id = provider.provider_id
-        # pickup now needs the new kitchen's daily code; the new kitchen (or an admin) picks the partner
+        # pickup now needs the new kitchen's daily code; the new kitchen's partner collects it
         order.delivery_boy_reference_id = None
         order.pickup_code_attempts = 0
+        vendor_partner.assign_moved_order(db, order, "subscription")
 
         record_audit(
             db, table="subscription.orders", record_id=order.order_id,
@@ -684,6 +688,7 @@ class AdminOrderService:
             line.pickup_code_attempts = 0
             # the new kitchen confirms it again
             line.status = "pending"
+        vendor_partner.assign_moved_order(db, order, "extra")
 
         record_audit(
             db, table="subscription.extra_orders", record_id=order.extra_order_id,

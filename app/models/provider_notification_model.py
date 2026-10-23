@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, Boolean, Text, DateTime, ForeignKey, Index
+from sqlalchemy import Column, String, Boolean, Text, DateTime, ForeignKey, Index, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 
@@ -15,6 +15,10 @@ class ProviderNotification(Base):
     __table_args__ = (
         Index("idx_provider_notifications_provider", "provider_reference_id"),
         Index("idx_provider_notifications_unread", "provider_reference_id", "is_read"),
+        Index(
+            "uq_provider_notifications_dedupe", "dedupe_key", unique=True,
+            postgresql_where=text("dedupe_key IS NOT NULL"),
+        ),
         {"schema": "provider"},
     )
 
@@ -27,7 +31,7 @@ class ProviderNotification(Base):
     )
 
     # new_subscription | new_order | partner_assigned | partner_unassigned |
-    # pickup_pending | general
+    # pickup_pending | meal_skipped | general
     type = Column(String(50), nullable=False)
 
     title = Column(String(150), nullable=False)
@@ -41,3 +45,6 @@ class ProviderNotification(Base):
     read_at = Column(DateTime(timezone=True))
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # One notice per business event (e.g. "meal_skipped:<order_id>"): a retried
+    # request finds the existing row instead of notifying the kitchen twice
+    dedupe_key = Column(String(160), nullable=True)

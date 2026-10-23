@@ -22,7 +22,7 @@ from app.core.config import EXTRA_ORDER_MAX_DAYS_AHEAD
 from app.core.errors import DomainError
 from app.domain.cancellation import assert_customer_can_cancel, customer_cancellation_enabled
 from app.core.paging import FIRST_PAGE, Paging
-from app.domain import capacity, checkout, ledger, notify, orders as meals
+from app.domain import capacity, checkout, ledger, notify, orders as meals, vendor_partner
 from app.domain.eligibility import assert_sellable, is_on_holiday
 from app.domain.pricing import build_quote, current_components, quote_view, selling_price, money, ZERO
 from app.domain.slots import package_serves, is_before_cutoff, SLOT_CUTOFFS, delivery_window
@@ -225,6 +225,8 @@ class ExtraOrderService:
             db.add(order)
             created.append((order, package))
         db.flush()
+        # the kitchen's delivery partner gets the trip; without one it waits, flagged for Orleeno
+        partner = vendor_partner.assign_checkout(db, [o for o, _ in created])
 
         txn = ledger.post_customer(
             db, user_id,
@@ -259,6 +261,7 @@ class ExtraOrderService:
             "message": "Order placed successfully",
             "total_amount": total,
             "wallet_balance_after": txn.balance_after,
+            "delivery_partner_assigned": partner is not None,
             "orders": [order_view(o, p, provider) for o, p in created],
         }
 

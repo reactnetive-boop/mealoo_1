@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import now_utc, today_local
 from app.core.errors import DomainError
+from app.domain import vendor_partner
 from app.domain.status import (
     IN_HAND_STATUSES,
     SUB_UNPICKED_STATUSES,
@@ -34,6 +35,36 @@ from app.services.delivery_views import (
 )
 
 SUBSCRIPTION_PAGE_MAX = 50
+VENDOR_UPCOMING_DAYS = 7
+_GONE = ("cancelled", "skipped")
+
+
+def _kitchen_brief(row, p: Provider) -> dict:
+    return {
+        "provider_id": p.provider_id,
+        "business_name": p.business_name,
+        "owner_name": p.full_name,
+        "mobile_number": p.mobile_number,
+        "address": vendor_partner.kitchen_address(p),
+        "area": p.area,
+        "city": p.city,
+        "pincode": p.pincode,
+        "is_accepting_orders": bool(p.is_accepting_orders),
+        "assigned_at": row.assigned_at,
+    }
+
+
+def _profile(db: Session, boy) -> dict:
+    """The partner's profile with the kitchens Orleeno assigned them (read fresh on every call)."""
+    kitchens = vendor_partner.partner_kitchens(db, boy.delivery_boy_id)
+    return {
+        **DeliveryBoyProfileResponse.model_validate(boy).model_dump(),
+        "assigned_vendor_count": len(kitchens),
+        "assigned_vendors": [
+            {"provider_id": p.provider_id, "business_name": p.business_name, "area": p.area, "city": p.city}
+            for _, p in kitchens
+        ],
+    }
 
 
 class DeliveryBoyOrderService(DeliveryHandoverService):
@@ -45,7 +76,7 @@ class DeliveryBoyOrderService(DeliveryHandoverService):
         boy = Repo.get_by_id(db, delivery_boy_id)
         if not boy:
             raise DomainError("Delivery boy not found", 404)
-        return {"success": True, "profile": DeliveryBoyProfileResponse.model_validate(boy)}
+        return {"success": True, "profile": _profile(db, boy)}
 
     @staticmethod
     def update_profile(db: Session, delivery_boy_id: str, payload):
@@ -63,7 +94,113 @@ class DeliveryBoyOrderService(DeliveryHandoverService):
         return {
             "success": True,
             "message": "Profile updated",
-            "profile": DeliveryBoyProfileResponse.model_validate(boy),
+            "profile": _profile(db, boy),
+        }
+
+    # ── Assigned kitchens ─────────────────────────────────
+
+    @staticmethod
+    def _kitchen_counts(db: Session, delivery_boy_id, provider_ids) -> dict:
+        """Today's work per kitchen for this partner: to collect, ready, in hand, delivered."""
+        today = today_local()
+        counts = {pid: {"today_total": 0, "to_pickup": 0, "ready_for_pickup": 0, "in_hand": 0, "delivered": 0,
+                        "upcoming": 0} for pid in provider_ids}
+        if not provider_ids:
+            return counts
+        end = today + timedelta(days=VENDOR_UPCOMING_DAYS)
+        for model, day_col, unpicked in (
+            (Order, Order.order_date, SUB_UNPICKED_STATUSES),
+            (ExtraOrder, ExtraOrder.delivery_date, EXTRA_UNPICKED_STATUSES),
+        ):
+            rows = db.query(model.vendor_reference_id, day_col, model.status).filter(
+                model.delivery_boy_reference_id == delivery_boy_id,
+                model.vendor_reference_id.in_(list(provider_ids)),
+                day_col >= today, day_col <= end,
+                model.status.notin_(_GONE),
+            ).all()
+            for pid, day, status in rows:
+                c = counts[pid]
+                if day > today:
+                    if status in unpicked:
+                        c["upcoming"] += 1
+                    continue
+                c["today_total"] += 1
+                if status in unpicked:
+                    c["to_pickup"] += 1
+                    if status == "ready_for_pickup":
+                        c["ready_for_pickup"] += 1
+                elif status in IN_HAND_STATUSES:
+                    c["in_hand"] += 1
+                elif status == "delivered":
+                    c["delivered"] += 1
+        return counts
+
+    @staticmethod
+    def list_vendors(db: Session, delivery_boy_id: str):
+        """Kitchens Orleeno assigned to this partner, with what is waiting at each today."""
+        kitchens = vendor_partner.partner_kitchens(db, delivery_boy_id)
+        counts = DeliveryBoyOrderService._kitchen_counts(db, delivery_boy_id, [p.provider_id for _, p in kitchens])
+        subs = dict(
+            db.query(Subscription.vendor_reference_id, func.count(Subscription.subscription_id))
+            .filter(
+                Subscription.delivery_boy_reference_id == delivery_boy_id,
+                Subscription.status.in_(("active", "paused")),
+            )
+            .group_by(Subscription.vendor_reference_id)
+            .all()
+        )
+        return {
+            "success": True,
+            "total": len(kitchens),
+            "vendors": [
+                {
+                    **_kitchen_brief(row, p),
+                    **counts.get(p.provider_id, {}),
+                    "active_subscriptions": subs.get(p.provider_id, 0),
+                }
+                for row, p in kitchens
+            ],
+        }
+
+    @staticmethod
+    def get_vendor_detail(db: Session, delivery_boy_id: str, provider_id):
+        row = (
+            db.query(vendor_partner.DeliveryPartnerVendor)
+            .filter(
+                vendor_partner.DeliveryPartnerVendor.delivery_boy_reference_id == delivery_boy_id,
+                vendor_partner.DeliveryPartnerVendor.provider_reference_id == provider_id,
+                vendor_partner.DeliveryPartnerVendor.status == "active",
+            )
+            .first()
+        )
+        if row is None:
+            # not one of this partner's kitchens (or no such kitchen)
+            raise DomainError("Kitchen not found", 404)
+        kitchen = db.query(Provider).filter(Provider.provider_id == provider_id).first()
+
+        today = today_local()
+        end = today + timedelta(days=VENDOR_UPCOMING_DAYS)
+        subs = db.query(Order).filter(
+            Order.delivery_boy_reference_id == delivery_boy_id, Order.vendor_reference_id == provider_id,
+            Order.order_date >= today, Order.order_date <= end, Order.status.notin_(_GONE),
+        ).all()
+        extras = db.query(ExtraOrder).filter(
+            ExtraOrder.delivery_boy_reference_id == delivery_boy_id, ExtraOrder.vendor_reference_id == provider_id,
+            ExtraOrder.delivery_date >= today, ExtraOrder.delivery_date <= end, ExtraOrder.status.notin_(_GONE),
+        ).all()
+        lk = _Lookups(db, subs, extras)
+        cards = sorted(
+            [_card(o, "subscription", lk) for o in subs] + [_card(o, "extra", lk) for o in extras], key=_sort_key,
+        )
+        counts = DeliveryBoyOrderService._kitchen_counts(db, delivery_boy_id, [kitchen.provider_id])
+        return {
+            "success": True,
+            "vendor": {
+                **_kitchen_brief(row, kitchen),
+                **counts.get(kitchen.provider_id, {}),
+            },
+            "today_orders": [c for c in cards if c["date"] == today],
+            "upcoming_orders": [c for c in cards if c["date"] > today],
         }
 
     # ── Lists and details ─────────────────────────────────
@@ -175,10 +312,12 @@ class DeliveryBoyOrderService(DeliveryHandoverService):
         )
 
         lk = _Lookups(db, subs + future_subs, extras + future_extras)
-        today_cards = sorted(
+        all_today = sorted(
             [_card(o, "subscription", lk) for o in subs] + [_card(o, "extra", lk) for o in extras],
             key=_sort_key,
         )
+        # skipped / cancelled meals are no longer deliveries: counted, but not listed as work
+        today_cards = [c for c in all_today if c["status"] not in _GONE]
         future_cards = sorted(
             [_card(o, "subscription", lk) for o in future_subs] + [_card(o, "extra", lk) for o in future_extras],
             key=_sort_key,
@@ -186,7 +325,7 @@ class DeliveryBoyOrderService(DeliveryHandoverService):
 
         counts = {"total": 0, "pending": 0, "ready_for_pickup": 0, "picked_up": 0, "out_for_delivery": 0,
                   "delivered": 0, "cancelled": 0, "failed": 0}
-        for c in today_cards:
+        for c in all_today:
             status = c["status"]
             if status in ("cancelled", "skipped"):
                 counts["cancelled"] += 1
@@ -219,6 +358,7 @@ class DeliveryBoyOrderService(DeliveryHandoverService):
             Subscription.delivery_boy_reference_id == delivery_boy_id,
             Subscription.status.in_(("active", "paused")),
         ).scalar() or 0
+        kitchens = vendor_partner.partner_kitchens(db, delivery_boy_id)
 
         return {
             "success": True,
@@ -229,6 +369,11 @@ class DeliveryBoyOrderService(DeliveryHandoverService):
             "next_delivery": next_up,
             "today_orders": today_cards,
             "assigned_subscriptions": assigned_subscriptions,
+            "assigned_vendor_count": len(kitchens),
+            "assigned_vendors": [
+                {"provider_id": p.provider_id, "business_name": p.business_name, "area": p.area}
+                for _, p in kitchens
+            ],
         }
 
     # ── Assigned subscriptions ────────────────────────────

@@ -32,7 +32,7 @@ from app.core.config import (
     OTP_LOG_RETENTION_DAYS,
     PAYOUT_PENDING_ALERT_DAYS,
 )
-from app.domain import ledger
+from app.domain import ledger, payout_audit
 from app.domain.status import IN_HAND_STATUSES
 from app.models.delivery_boy_notification_model import DeliveryBoyNotification
 from app.models.delivery_boy_otp_log_model import DeliveryBoyOTPLog
@@ -149,6 +149,13 @@ def reconcile(db: Session) -> dict:
     wallets = {kind: _wallet_problems(db, spec) for kind, spec in ledger.WALLET_SPECS.items()}
     settlement = _settlement_problems(db)
     pipeline = _pipeline_problems(db)
+    payouts = payout_audit.review(db, sample=SAMPLE)
+    # credits for undelivered orders are history to review (failed hand-overs
+    # paid the partner before 2026-10-24), not a fault of the books
+    settlement["duplicate_partner_payouts"] = {
+        "count": payouts["duplicate_payouts"]["count"], "sample": payouts["duplicate_payouts"]["sample"],
+    }
+    settlement["delivered_without_partner_payout"] = payouts["delivered_without_payout"]
 
     issues = sum(
         check["count"] for kind in wallets.values() for name, check in kind.items() if name != "wallets"
@@ -162,6 +169,7 @@ def reconcile(db: Session) -> dict:
         "wallets": wallets,
         "settlement": settlement,
         "pipeline": pipeline,
+        "partner_payouts": payouts,
         "platform_ledger": _platform_totals(db),
     }
 

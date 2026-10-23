@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, SmallInteger, Text, Boolean, Date, DateTime, ForeignKey, CheckConstraint, Index
+from sqlalchemy import Column, SmallInteger, Text, Boolean, Date, DateTime, ForeignKey, CheckConstraint, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -22,7 +22,20 @@ class Review(Base):
         ),
         Index("idx_reviews_vendor", "vendor_reference_id"),
         Index("idx_reviews_pkg", "package_reference_id"),
-        Index("idx_reviews_unique_daily", "user_reference_id", "vendor_reference_id", "review_date", unique=True),
+        # one visible review per one-time order and per subscription meal
+        Index(
+            "uq_reviews_extra_order", "user_reference_id", "order_reference_id", unique=True,
+            postgresql_where=text("order_reference_id IS NOT NULL AND is_visible"),
+        ),
+        Index(
+            "uq_reviews_subscription_meal", "user_reference_id", "subscription_order_reference_id", unique=True,
+            postgresql_where=text("subscription_order_reference_id IS NOT NULL AND is_visible"),
+        ),
+        # package listings aggregate ratings per (package, kitchen)
+        Index(
+            "idx_reviews_package_rating", "package_reference_id", "vendor_reference_id",
+            postgresql_where=text("is_visible AND package_rating IS NOT NULL"),
+        ),
         {"schema": "provider"},
     )
 

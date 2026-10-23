@@ -138,12 +138,10 @@ DELIVERY_FAILED_WAIT_MINUTES = _int("DELIVERY_FAILED_WAIT_MINUTES", 10)
 # JWT_SECRET_KEY; set it separately to rotate codes without logging everyone out.
 VERIFICATION_CODE_SECRET = os.getenv("VERIFICATION_CODE_SECRET") or None
 
-# Legacy flat payout per delivery. Only used to seed the pricing table and for
-# orders created before pricing snapshots existed.
-DELIVERY_BOY_FEE_PER_DELIVERY = os.getenv(
-    "DELIVERY_BOY_FEE_PER_DELIVERY",
-    "30.00"
-)
+# The delivery partner's payout per delivery is NOT an environment setting:
+# it is the "Delivery Partner Payout" component in Admin -> Pricing
+# (master.pricing_components), read when a delivery completes. The former
+# DELIVERY_BOY_FEE_PER_DELIVERY variable is no longer read anywhere.
 
 # ── Internal wallet top-up (no payment gateway in this phase) ─
 WALLET_TOPUP_MAX_AMOUNT = os.getenv("WALLET_TOPUP_MAX_AMOUNT", "10000.00")

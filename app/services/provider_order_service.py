@@ -23,7 +23,8 @@ from app.core.audit import business_event
 from app.core.clock import today_local
 from app.core.config import PICKUP_CODE_MAX_ATTEMPTS
 from app.core.errors import DomainError
-from app.domain import checkout, item_quantity, notify, orders as meals, partner_leave
+from app.domain import checkout, delivery_assignment, item_quantity, notify, orders as meals, partner_leave
+from app.domain.slots import expand_plan_slot
 from app.domain.status import (
     assert_sub_order_transition, assert_extra_order_transition, allowed_next,
     SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES, IN_HAND_STATUSES,
@@ -146,11 +147,19 @@ def _subscription_views(db: Session, subs) -> list[dict]:
         address = addresses.get(s.user_address_reference_id)
         boy = boys.get(s.delivery_boy_reference_id)
         view = {a.key: getattr(s, a.key) for a in sa_inspect(Subscription).column_attrs}
+        snapshot = s.pricing_snapshot or {}
+        view.pop("pricing_snapshot", None)  # Orleeno's margins and partner payout are not the kitchen's business
         view.update({
             "customer_name": _first_name(users.get(s.user_reference_id)),
             "delivery_area": f"{address.city} {address.pin_code}" if address else None,
             "delivery_boy_name": boy.full_name if boy else None,
             "packages": pkgs.get(s.subscription_id, []),
+            "meal_slots": expand_plan_slot(s.meal_slot),
+            # the plan discount is taken once off the subscription total and funded by Orleeno;
+            # the kitchen earns its per-meal price for every delivered meal
+            "discount_percent": snapshot.get("discount_percent"),
+            "meals_total": snapshot.get("deliveries"),
+            "kitchen_earning_per_meal": (snapshot.get("settlement") or {}).get("provider_earning_per_delivery"),
         })
         out.append(view)
     return out
@@ -400,12 +409,7 @@ class ProviderOrderService:
     @staticmethod
     def _assignable_partner(db: Session, vendor_id: str, delivery_boy_id) -> DeliveryBoy:
         boy = db.query(DeliveryBoy).filter(DeliveryBoy.delivery_boy_id == delivery_boy_id).first()
-        if (
-            boy is None
-            or not boy.is_active
-            or boy.approval_status != "approved"
-            or (boy.assigned_provider_reference_id is not None and str(boy.assigned_provider_reference_id) != str(vendor_id))
-        ):
+        if delivery_assignment.partner_block_reason(db, boy, vendor_id):
             raise DomainError("This delivery partner cannot be assigned to your kitchen", 404)
         if not boy.is_online:
             raise DomainError(f"{boy.full_name or 'This partner'} is offline right now")

@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import business_event, record_audit
 from app.core.clock import today_local
 from app.core.errors import DomainError
-from app.domain import capacity, notify
+from app.domain import capacity, notify, vendor_partner
 from app.domain.delivery_assignment import partner_block_reason, unassign
 from app.domain.eligibility import kitchen_serves, offering, parse_pincode, provider_block_reason
 from app.domain.slots import expand_plan_slot
@@ -57,9 +57,13 @@ def _blocker(db: Session, sub: Subscription, package: SubscriptionPackage | None
 
 def _move(db: Session, sub: Subscription, source: Provider, target: Provider, admin_id: str, reason: str,
           ip: str | None) -> None:
-    if sub.delivery_boy_reference_id:
+    target_partner = vendor_partner.kitchen_partner(db, target.provider_id)
+    if sub.delivery_boy_reference_id and (
+        target_partner is None or str(target_partner.delivery_boy_id) != str(sub.delivery_boy_reference_id)
+    ):
         boy = db.query(DeliveryBoy).filter(DeliveryBoy.delivery_boy_id == sub.delivery_boy_reference_id).first()
-        if partner_block_reason(boy, target.provider_id):
+        # the new kitchen's own partner takes over; otherwise keep a partner who can still serve it
+        if target_partner is not None or partner_block_reason(db, boy, target.provider_id):
             unassign(db, sub, actor_id=admin_id, actor_type="admin", note="subscription moved to another kitchen", ip=ip)
     sub.vendor_reference_id = target.provider_id
     moved_meals = db.query(Order).filter(
@@ -94,6 +98,8 @@ def _move(db: Session, sub: Subscription, source: Provider, target: Provider, ad
         f"Orleeno moved a running subscription to your kitchen: {len(moved_meals)} upcoming meal(s).",
         {"subscription_id": str(sub.subscription_id)},
     )
+    # its meals go to the new kitchen's delivery partner, if it has one
+    vendor_partner.ensure_subscription_partner(db, sub)
 
 
 class SubscriptionTransferService:

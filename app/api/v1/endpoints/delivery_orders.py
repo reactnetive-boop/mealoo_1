@@ -113,6 +113,30 @@ def get_subscription_detail(subscription_id: UUID, db: Session = Depends(get_db)
     return DeliveryBoyOrderService.get_subscription_detail(db, current["delivery_boy_id"], subscription_id)
 
 
+# ── Assigned kitchens ─────────────────────────────────────
+
+@router.get(
+    "/vendors",
+    summary="My Kitchens",
+    description=(
+        "Kitchens Orleeno assigned to you: name, address, contact, and today's work at each "
+        "(`to_pickup`, `ready_for_pickup`, `in_hand`, `delivered`, `upcoming`). Their orders and subscription "
+        "meals come to you automatically."
+    ),
+)
+def list_vendors(db: Session = Depends(get_db), current=Depends(get_current_delivery_boy)):
+    return DeliveryBoyOrderService.list_vendors(db, current["delivery_boy_id"])
+
+
+@router.get(
+    "/vendors/{provider_id}",
+    summary="One of My Kitchens",
+    description="Kitchen details with your pickups there today and in the next 7 days. 404 if it is not yours.",
+)
+def get_vendor_detail(provider_id: UUID, db: Session = Depends(get_db), current=Depends(get_current_delivery_boy)):
+    return DeliveryBoyOrderService.get_vendor_detail(db, current["delivery_boy_id"], provider_id)
+
+
 # ── Subscription meals ────────────────────────────────────
 
 @router.get(

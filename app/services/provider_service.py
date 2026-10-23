@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import today_local
 from app.core.errors import DomainError
-from app.domain import capacity
+from app.domain import capacity, vendor_partner
 from app.domain.eligibility import assert_pincode_can_change, serviceable_pincode, parse_pincode
 from app.domain.slots import SLOTS, is_before_cutoff
 from app.models.delivery_boy_model import DeliveryBoy
@@ -264,30 +264,62 @@ class ProviderService:
 
     @staticmethod
     def assignable_delivery_partners(db, provider_id: str):
+        """Partners the kitchen may give an unassigned order to: its own partner, and shared-pool partners."""
         boys = (
             db.query(DeliveryBoy)
             .filter(
                 DeliveryBoy.is_active == True,  # noqa: E712
                 DeliveryBoy.approval_status == "approved",
-                (DeliveryBoy.assigned_provider_reference_id == provider_id)
-                | (DeliveryBoy.assigned_provider_reference_id.is_(None)),
             )
             .order_by(DeliveryBoy.is_online.desc(), DeliveryBoy.full_name.asc())
             .all()
         )
+        kitchens = vendor_partner.kitchens_by_partner(db, (b.delivery_boy_id for b in boys))
+        own = vendor_partner.kitchen_row(db, provider_id)
+        rows = []
+        for b in boys:
+            mine = {str(p.provider_id) for _, p in kitchens.get(b.delivery_boy_id, [])}
+            if mine and str(provider_id) not in mine:
+                continue  # serves other kitchens only
+            rows.append({
+                "delivery_boy_id": b.delivery_boy_id,
+                "full_name": b.full_name,
+                "mobile_number": b.mobile_number,
+                "vehicle_type": b.vehicle_type,
+                "vehicle_number": b.vehicle_number,
+                "is_online": b.is_online,
+                "is_dedicated": bool(mine),
+                "is_kitchen_partner": own is not None and str(own.delivery_boy_reference_id) == str(b.delivery_boy_id),
+            })
+        rows.sort(key=lambda r: not r["is_kitchen_partner"])
+        return {"success": True, "total": len(rows), "delivery_partners": rows}
+
+    @staticmethod
+    def kitchen_delivery_partner(db, provider_id: str):
+        """The partner Orleeno assigned to this kitchen; its orders and subscription meals go to them."""
+        row = vendor_partner.kitchen_row(db, provider_id)
+        boy = (
+            db.query(DeliveryBoy).filter(DeliveryBoy.delivery_boy_id == row.delivery_boy_reference_id).first()
+            if row else None
+        )
+        if boy is None:
+            return {
+                "success": True,
+                "delivery_partner": None,
+                "message": "No delivery partner is assigned to your kitchen yet. Orleeno will assign one.",
+            }
         return {
             "success": True,
-            "total": len(boys),
-            "delivery_partners": [
-                {
-                    "delivery_boy_id": b.delivery_boy_id,
-                    "full_name": b.full_name,
-                    "mobile_number": b.mobile_number,
-                    "vehicle_type": b.vehicle_type,
-                    "vehicle_number": b.vehicle_number,
-                    "is_online": b.is_online,
-                    "is_dedicated": b.assigned_provider_reference_id is not None,
-                }
-                for b in boys
-            ],
+            "delivery_partner": {
+                "delivery_boy_id": boy.delivery_boy_id,
+                "full_name": boy.full_name,
+                "mobile_number": boy.mobile_number,
+                "vehicle_type": boy.vehicle_type,
+                "vehicle_number": boy.vehicle_number,
+                "is_online": bool(boy.is_online),
+                "can_take_orders": vendor_partner.usable(boy),
+                "assigned_at": row.assigned_at,
+            },
+            "message": None if vendor_partner.usable(boy) else
+            "Your delivery partner is not active right now; new orders wait until Orleeno assigns cover.",
         }

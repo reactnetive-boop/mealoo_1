@@ -134,8 +134,10 @@ def test_free_skip_refunds_once_and_late_skip_does_not(client, db):
     assert r.status_code == 200, r.text
     assert r.json()["is_free_skip"] is True
     assert Decimal(r.json()["refund_amount"]) == Decimal("180.00")
-    # skipping the same meal again does not refund again
-    assert client.put(f"{S}/{sub_id}/orders/{meals[1].order_id}/skip", headers=w["user_auth"]).status_code == 400
+    # skipping the same meal again (a retry) changes nothing and does not refund again
+    again = client.put(f"{S}/{sub_id}/orders/{meals[1].order_id}/skip", headers=w["user_auth"])
+    assert again.status_code == 200 and again.json()["already_skipped"] is True
+    assert _balance(db, w["user"]) == before + Decimal("180.00")
     # no free skips left -> skip allowed but not refunded
     r = client.put(f"{S}/{sub_id}/orders/{meals[2].order_id}/skip", headers=w["user_auth"])
     assert r.json()["is_free_skip"] is False

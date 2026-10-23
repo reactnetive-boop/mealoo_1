@@ -5,7 +5,10 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit, business_event
 from app.core.clock import now_utc, today_local
 from app.core.errors import DomainError
-from app.domain import capacity, ledger, notify
+from app.domain import capacity, ledger, notify, vendor_partner
+from app.domain.status import EXTRA_UNPICKED_STATUSES
+from app.models.delivery_boy_model import DeliveryBoy
+from app.models.extra_order_model import ExtraOrder
 from app.domain.eligibility import assert_pincode_can_change, serviceable_pincode
 from app.domain.pricing import money
 from app.models.provider_model import Provider
@@ -119,10 +122,41 @@ class AdminProviderService:
             .all()
         )
 
+        row = vendor_partner.kitchen_row(db, provider.provider_id)
+        boy = (
+            db.query(DeliveryBoy).filter(DeliveryBoy.delivery_boy_id == row.delivery_boy_reference_id).first()
+            if row else None
+        )
+        today = today_local()
+        unassigned = (
+            db.query(Subscription).filter(
+                Subscription.vendor_reference_id == provider.provider_id,
+                Subscription.status.in_(("active", "paused")),
+                Subscription.delivery_boy_reference_id.is_(None),
+            ).count(),
+            db.query(ExtraOrder).filter(
+                ExtraOrder.vendor_reference_id == provider.provider_id,
+                ExtraOrder.delivery_date >= today,
+                ExtraOrder.status.in_(EXTRA_UNPICKED_STATUSES),
+                ExtraOrder.delivery_boy_reference_id.is_(None),
+            ).count(),
+        )
         return {
             "success": True,
             "provider": provider_view(provider),
             "missing_profile_fields": missing_profile_fields(provider),
+            # the partner this kitchen's new orders and subscription meals go to automatically
+            "delivery_partner": {
+                "delivery_boy_id": boy.delivery_boy_id,
+                "full_name": boy.full_name,
+                "mobile_number": boy.mobile_number,
+                "is_active": bool(boy.is_active),
+                "is_online": bool(boy.is_online),
+                "approval_status": boy.approval_status,
+                "can_take_orders": vendor_partner.usable(boy),
+                "assigned_at": row.assigned_at,
+            } if boy else None,
+            "needs_partner": {"subscriptions": unassigned[0], "one_time_orders": unassigned[1]},
             "packages": [package_admin_view(p) for p in packages],
             "recent_subscriptions": [subscription_admin_view(s) for s in subscriptions],
             "wallet": _wallet_view(wallet),

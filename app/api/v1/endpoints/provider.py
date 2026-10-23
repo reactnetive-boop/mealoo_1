@@ -178,6 +178,18 @@ def remove_holiday(
 
 
 @router.get(
+    "/delivery-partner",
+    summary="My Kitchen's Delivery Partner",
+    description=(
+        "The delivery partner Orleeno assigned to this kitchen. New one-time orders, new subscriptions and "
+        "daily subscription meals go to them automatically. `delivery_partner` is null when none is assigned."
+    ),
+)
+def get_kitchen_delivery_partner(db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
+    return ProviderService.kitchen_delivery_partner(db, current_provider["provider_id"])
+
+
+@router.get(
     "/delivery-partners",
     summary="Delivery Partners This Kitchen Can Assign",
     description="Approved, active partners attached to this kitchen or to the shared pool.",

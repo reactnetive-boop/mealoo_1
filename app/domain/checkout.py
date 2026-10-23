@@ -9,19 +9,16 @@ refund and kitchen decision. Everything about the trip is per checkout:
     is derived from the checkout, see verification.delivery_code);
   * the lines are assigned to the same partner, picked up, started, marked
     arrived and delivered together;
-  * the trip charges and the partner payout are priced on the first line only
-    and the partner is paid once per checkout (orders.settle_extra_order).
+  * the trip charges are priced on the first line only and the partner is
+    paid once per checkout, at the payout configured when it is delivered
+    (orders.settle_extra_order).
 
 Older checkouts (before this rule) keep their per-line codes and are still
 paid once per checkout.
 """
 
-from decimal import Decimal
-
 from sqlalchemy.orm import Session
 
-from app.core.config import DELIVERY_BOY_FEE_PER_DELIVERY
-from app.domain.pricing import ZERO, money
 from app.models.extra_order_model import ExtraOrder
 
 # Seeds of codes shared by a whole checkout carry this prefix
@@ -55,19 +52,3 @@ def lines(db: Session, order: ExtraOrder) -> list:
     if order.checkout_id is None:
         return [order]
     return db.query(ExtraOrder).filter(ExtraOrder.checkout_id == order.checkout_id).all()
-
-
-def partner_payout(db: Session, order: ExtraOrder) -> Decimal:
-    """
-    What the partner earns for the whole trip. New checkouts carry it on one
-    line; older ones priced it on every line, so the largest value is taken,
-    never the sum. Orders from before pricing snapshots use the flat fee.
-    """
-    amounts = []
-    for line in lines(db, order):
-        settlement = (line.pricing_snapshot or {}).get("settlement")
-        if settlement:
-            amounts.append(Decimal(settlement.get("partner_payout_total") or "0"))
-        else:
-            amounts.append(money(DELIVERY_BOY_FEE_PER_DELIVERY))
-    return max(amounts, default=ZERO)

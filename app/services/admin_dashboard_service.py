@@ -17,10 +17,11 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import BUSINESS_TZ, today_local
 from app.domain.slots import SLOT_WINDOWS
-from app.domain.status import SUB_OPEN_STATUSES, SUB_UNPICKED_STATUSES
+from app.domain.status import EXTRA_UNPICKED_STATUSES, SUB_OPEN_STATUSES, SUB_UNPICKED_STATUSES
 from app.models.complaint_model import Complaint
 from app.models.delivery_boy_complaint_model import DeliveryBoyComplaint
 from app.models.delivery_boy_model import DeliveryBoy
+from app.models.delivery_partner_vendor_model import DeliveryPartnerVendor
 from app.models.delivery_boy_wallet_model import DeliveryBoyWallet
 from app.models.extra_order_model import ExtraOrder
 from app.models.menu_package_model import MenuPackage
@@ -195,6 +196,23 @@ def _compute(db: Session) -> dict:
     }
     payouts = db.query(func.count(), func.sum(PayoutRequest.amount)).filter(PayoutRequest.status == "pending").one()
 
+    # work with no delivery partner: kitchens without one, and tasks waiting for one
+    with_partner = db.query(DeliveryPartnerVendor.provider_reference_id).filter(DeliveryPartnerVendor.status == "active")
+    kitchens_without_partner = db.query(func.count(Provider.id)).filter(
+        Provider.approval_status == "approved", Provider.is_active == True,  # noqa: E712
+        Provider.provider_id.notin_(with_partner),
+    ).scalar()
+    subs_without_partner = db.query(func.count(Subscription.subscription_id)).filter(
+        Subscription.status.in_(("active", "paused")), Subscription.delivery_boy_reference_id.is_(None),
+    ).scalar()
+    upcoming_meals_without_partner = db.query(func.count(Order.order_id)).filter(
+        Order.order_date >= today, Order.status.in_(SUB_UNPICKED_STATUSES), Order.delivery_boy_reference_id.is_(None),
+    ).scalar()
+    extras_without_partner = db.query(func.count(ExtraOrder.extra_order_id)).filter(
+        ExtraOrder.delivery_date >= today, ExtraOrder.status.in_(EXTRA_UNPICKED_STATUSES),
+        ExtraOrder.delivery_boy_reference_id.is_(None),
+    ).scalar()
+
     return {
         "success": True,
         "business_date": today,
@@ -224,6 +242,13 @@ def _compute(db: Session) -> dict:
             "today_delivery_failed": meals_today[4],
             "extra_orders_today": extras[0],
             "extra_orders_awaiting_kitchen": extras[1],
+        },
+        "needs_delivery_partner": {
+            "kitchens_without_partner": kitchens_without_partner,
+            "subscriptions": subs_without_partner,
+            "upcoming_meals": upcoming_meals_without_partner,
+            "one_time_orders": extras_without_partner,
+            "total": subs_without_partner + upcoming_meals_without_partner + extras_without_partner,
         },
         "complaints": {
             "open_user_complaints": complaints[0],

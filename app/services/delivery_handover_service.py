@@ -327,9 +327,10 @@ class DeliveryHandoverService:
         """
         The partner reached the customer but could not hand over. Allowed only
         after "arrived" was pressed (the customer was notified) and the partner
-        waited DELIVERY_FAILED_WAIT_MINUTES. The food was cooked and the trip
-        made, so the kitchen and the partner are paid and the customer is not
-        refunded; an admin can still reverse it (refund or mark delivered).
+        waited DELIVERY_FAILED_WAIT_MINUTES. The food was cooked, so the kitchen
+        is paid and the customer is not refunded. The partner is NOT paid: a
+        payout is only for a completed delivery. An admin reviews it: marking
+        it delivered pays the partner, cancelling refunds the customer.
         """
         order = _locked(db, kind, order_id, delivery_boy_id)
         if order.status == "delivery_failed":

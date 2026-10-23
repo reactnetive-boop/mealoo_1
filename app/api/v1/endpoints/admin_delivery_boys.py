@@ -8,7 +8,10 @@ from app.core.database import get_db
 from app.core.rate_limit import client_ip
 from app.dependencies.auth_dependency import get_current_admin, require_super_admin
 from app.services.admin_delivery_boy_service import AdminDeliveryBoyService
-from app.schemas.admin_schema import AdminUpdateDeliveryBoyRequest, AdminApprovalRequest, AdminDocumentReviewRequest
+from app.schemas.admin_schema import (
+    AdminUpdateDeliveryBoyRequest, AdminApprovalRequest, AdminDocumentReviewRequest,
+    AdminAssignVendorRequest, AdminRemoveVendorRequest,
+)
 
 router = APIRouter()
 
@@ -147,10 +150,70 @@ def update_delivery_boy(
     )
 
 
+@router.get(
+    "/{delivery_boy_id}/vendors",
+    summary="Kitchens This Partner Serves",
+    description=(
+        "`assigned_vendors` (name, address, contact, kitchen status, open tasks), `assigned_vendor_count` and "
+        "`vendor_history` (ended assignments)."
+    ),
+)
+def list_vendors(delivery_boy_id: UUID, db: Session = Depends(get_db), current=Depends(get_current_admin)):
+    return AdminDeliveryBoyService.list_vendors(db, str(delivery_boy_id))
+
+
+@router.post(
+    "/{delivery_boy_id}/vendors",
+    summary="Assign a Kitchen to the Partner",
+    description=(
+        "Adds the kitchen to the partner's kitchens (others are kept). A kitchen has one current partner: if it "
+        "had another, it moves here, with every task that partner has not picked up yet. From now on the "
+        "kitchen's new one-time orders, subscriptions and daily meals go to this partner automatically. "
+        "Assigning the same kitchen again only fills tasks still missing a partner."
+    ),
+)
+def add_vendor(
+    delivery_boy_id: UUID,
+    payload: AdminAssignVendorRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin),
+):
+    return AdminDeliveryBoyService.add_vendor(
+        db, str(delivery_boy_id), payload.provider_id, current["admin_id"], note=payload.note, ip=client_ip(request),
+    )
+
+
+@router.delete(
+    "/{delivery_boy_id}/vendors/{provider_id}",
+    summary="Remove a Kitchen from the Partner",
+    description=(
+        "Only this kitchen is removed; the partner's other kitchens are untouched. Its tasks the partner has not "
+        "picked up become unassigned (flagged for an admin); picked-up ones stay with the partner."
+    ),
+)
+def remove_vendor(
+    delivery_boy_id: UUID,
+    provider_id: UUID,
+    request: Request,
+    payload: AdminRemoveVendorRequest | None = None,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin),
+):
+    return AdminDeliveryBoyService.remove_vendor(
+        db, str(delivery_boy_id), provider_id, current["admin_id"],
+        reason=payload.reason if payload else None, ip=client_ip(request),
+    )
+
+
 @router.put(
     "/{delivery_boy_id}/assign-provider",
-    summary="Dedicate Partner to a Kitchen",
-    description="Pass `provider_id` to dedicate the partner to one kitchen; omit it to return them to the shared pool.",
+    summary="Add a Kitchen (legacy)",
+    description=(
+        "Kept for older admin builds. `provider_id` adds that kitchen (same as POST .../vendors); without it every "
+        "kitchen is removed (shared pool). Use the /vendors endpoints instead."
+    ),
+    deprecated=True,
 )
 def assign_provider(
     delivery_boy_id: UUID,

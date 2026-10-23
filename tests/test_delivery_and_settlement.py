@@ -195,7 +195,7 @@ def test_pricing_charges_flow_to_platform_ledger(client, db):
     assert db.query(Subscription).filter(Subscription.subscription_id == sub_id).one().final_amount == Decimal("1393.00")
 
 
-def test_failed_delivery_after_waiting_pays_kitchen_and_partner(client, db):
+def test_failed_delivery_after_waiting_pays_kitchen_not_partner(client, db):
     from datetime import datetime
 
     from app.core import clock
@@ -220,8 +220,9 @@ def test_failed_delivery_after_waiting_pays_kitchen_and_partner(client, db):
     db.expire_all()
     row = db.query(Order).filter(Order.order_id == meal.order_id).one()
     assert row.status == "delivery_failed" and row.failure_reason == "customer_unavailable" and row.settled_at
-    partner = db.query(DeliveryBoyWallet).filter(DeliveryBoyWallet.delivery_boy_reference_id == boy.delivery_boy_id).one()
-    assert partner.balance > 0
+    # the food was cooked (kitchen paid) but the delivery did not complete: no partner payout
+    partner = db.query(DeliveryBoyWallet).filter(DeliveryBoyWallet.delivery_boy_reference_id == boy.delivery_boy_id).first()
+    assert partner is None or partner.balance == 0
     assert db.query(Wallet).filter(Wallet.user_reference_id == w["user"].user_id).one().balance == balance_before
     # the code no longer works and a retry is a no-op
     assert client.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": f.delivery_code(meal)}).status_code == 400

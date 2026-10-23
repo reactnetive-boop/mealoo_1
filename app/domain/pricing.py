@@ -22,10 +22,14 @@ refunds read the snapshot, not the current configuration.
 
 Business rules (current phase):
   customer payable  = food amount + customer-facing charges
-  food amount       = base amount - plan discount
+  food amount       = base amount - plan discount (the plan discount, e.g.
+                      5%, is taken once off the whole subscription total)
   kitchen earning   = base unit price x quantity, per delivered meal
                       (the plan discount is funded by Orleeno)
-  partner earning   = delivery_partner_payout component, per delivery
+  partner earning   = delivery_partner_payout component, per completed
+                      delivery, at the value configured WHEN the delivery
+                      completes (partner_payout_now); the quote's figure is
+                      only an estimate
   Orleeno revenue   = commission + customer-facing charges
                       - partner payout - plan discount
 Percentages are applied to the food amount. Every component is rounded
@@ -140,6 +144,24 @@ def _component_amount(component, *, food_amount: Decimal, units: int, deliveries
         return money(value * deliveries) if include_per_delivery else ZERO
     # per_order: once per checkout
     return money(value) if include_per_order else ZERO
+
+
+def partner_payout_now(db: Session, kind: str, *, food_amount, units: int) -> tuple[Decimal, PricingComponent | None]:
+    """
+    What a delivery partner earns for ONE completed delivery right now, from
+    the current "Delivery Partner Payout" component (Admin -> Pricing).
+    kind: 'subscription' (one meal drop) or 'extra_order' (one checkout trip).
+    Returns (amount, component); 0 when the payout is switched off or does
+    not apply to this kind of order.
+    """
+    component = next((c for c in current_components(db) if c.component_key == PARTNER_PAYOUT_KEY), None)
+    if component is None or not _applies(component, kind):
+        return ZERO, component
+    amount = _component_amount(
+        component, food_amount=money(food_amount), units=max(int(units or 1), 1), deliveries=1,
+        include_per_order=True,
+    )
+    return amount, component
 
 
 def build_quote(

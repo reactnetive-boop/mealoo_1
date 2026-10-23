@@ -142,8 +142,16 @@ class AdminDeliveryBoyResponse(BaseModel):
     is_active: bool
     vehicle_type: Optional[str]
     vehicle_number: Optional[str]
-    assigned_provider_reference_id: Optional[UUID]
     created_at: Optional[datetime]
+
+
+class AdminAssignVendorRequest(BaseModel):
+    provider_id: UUID
+    note: Optional[str] = Field(None, max_length=500)
+
+
+class AdminRemoveVendorRequest(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
 
 
 class AdminUpdateDeliveryBoyRequest(BaseModel):

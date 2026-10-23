@@ -75,6 +75,14 @@ class ProviderSubscriptionResponse(BaseModel):
     delivery_boy_reference_id: Optional[UUID] = None
     delivery_boy_name: Optional[str] = None
     packages: List[OrderPackageLine] = []
+    # the meals chosen together, e.g. ["lunch", "dinner"] (one order per meal per day)
+    meal_slots: List[str] = []
+    # total_amount (every meal at the per-meal price) - discount_amount (the plan discount,
+    # taken once off the total, funded by Orleeno) = final_amount the customer paid
+    discount_percent: Optional[Decimal] = None
+    meals_total: Optional[int] = None
+    # what the kitchen earns for each delivered meal
+    kitchen_earning_per_meal: Optional[Decimal] = None
 
 
 class ProviderSubscriptionListResponse(BaseModel):

@@ -60,7 +60,9 @@ class DeliveryBoy(AccountSecurityMixin, Base):
 
     profile_image = Column(Text, nullable=True)
 
-    # nullable — delivery boys may be platform-wide or tied to one provider
+    # Legacy single-kitchen link, superseded by delivery.delivery_partner_vendors
+    # (a partner can serve several kitchens). No longer read or written; kept
+    # so a downgrade of migration e4f5a6b7c8d9 can restore it.
     assigned_provider_reference_id = Column(
         UUID(as_uuid=True),
         ForeignKey(

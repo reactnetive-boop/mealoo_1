@@ -73,10 +73,22 @@ def list_subscription_plans(
         default=None,
         description="Filter by meal slot e.g. breakfast, lunch, dinner, breakfast_lunch, lunch_dinner, breakfast_dinner, all_slots"
     ),
+    meal_slots: str = Query(
+        default=None,
+        description="The meals chosen together, comma-separated in any order, e.g. `lunch,dinner` "
+                    "(same as meal_slot=lunch_dinner)",
+    ),
     subscription_type: str = Query(
         default=None,
         description="Filter by subscription type e.g. weekly, monthly, quarterly, half_yearly, annually, custom"
     ),
+    package_id: UUID | None = Query(
+        default=None,
+        description="Price every plan for this package (needs provider_id): `pricing` has the original total, "
+                    "the plan discount taken once off that total, and the amount payable",
+    ),
+    provider_id: UUID | None = Query(default=None, description="Kitchen selling the package"),
+    quantity: int = Query(default=1, ge=1, le=5),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
@@ -84,7 +96,11 @@ def list_subscription_plans(
     return SubscriptionService.list_plans(
         db,
         meal_slot=meal_slot,
-        subscription_type=subscription_type
+        subscription_type=subscription_type,
+        meal_slots=meal_slots,
+        package_id=package_id,
+        provider_id=provider_id,
+        quantity=quantity,
     )
 
 

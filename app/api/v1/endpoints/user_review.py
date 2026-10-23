@@ -23,14 +23,13 @@ router = APIRouter()
     "",
     summary="Submit a Review",
     description=(
-        "**Rate and review a vendor after receiving a delivery.**\n\n"
-        "Required: `vendor_id` (the vendor's `provider_id`) and `vendor_rating` (1–5). "
-        "Optional: `package_id`, `order_id`, `subscription_id`, `package_rating`, `review_text`, `review_date`.\n\n"
-        "Only one review per user per vendor per day is allowed (unique constraint). "
-        "The vendor must exist — use `provider_id` from the package listing.\n\n"
-        "**When to call:** After an order is delivered (`status = delivered`). "
-        "Show a 'Rate your meal' prompt on the order detail screen.\n\n"
-        "**Flow:** Order delivered → `POST /user/review` → `GET /user/review` to see your reviews"
+        "**Rate the package of a delivered order or subscription meal.**\n\n"
+        "Send `order_id` (one-time order) or `subscription_order_id` (one meal; `subscription_id` alone "
+        "rates the latest delivered meal), `package_rating` (1–5, the package's own rating), "
+        "`vendor_rating` (1–5) and optionally `review_text`. Kitchen and package are taken from the order; "
+        "`vendor_id` / `package_id` are only checked against it.\n\n"
+        "One review per order / meal: submitting again updates it (`updated: true`). "
+        "Only delivered food can be rated."
     )
 )
 def add_review(
@@ -135,6 +134,26 @@ def delete_review(
         current_user["user_id"],
         review_id
     )
+
+
+@router.get(
+    "/package/{package_id}",
+    summary="A Package's Rating and Reviews",
+    description=(
+        "Average of this package's own ratings (`rating_average`, `rating_count`, `rating_label`, e.g. "
+        "\"4.0 (3 reviews)\" or \"No ratings yet\") and its latest reviews. Pass `provider_id` for an "
+        "Orleeno catalogue package: each kitchen that cooks it has its own rating."
+    ),
+)
+def get_package_reviews(
+    package_id: UUID,
+    provider_id: UUID | None = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return ReviewService.get_package_reviews(db, package_id, provider_id, page=page, limit=limit)
 
 
 @router.get(

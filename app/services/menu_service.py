@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import now_utc, today_local
 from app.core.errors import DomainError
-from app.domain import capacity, item_quantity
+from app.domain import capacity, item_quantity, ratings
 from app.domain import package_revision as revision
 from app.domain.pricing import validate_package_prices, package_price_view
 from app.models.menu_category_model import MenuCategory
@@ -197,22 +197,30 @@ class MenuService:
     def get_package_details(db: Session, provider_id: str, package_id):
         package = visible_package(db, provider_id, package_id)
         selection = ProviderSelectedPackageRepository.get_provider_package(db, provider_id, package.package_id)
-        return package_dict(
+        data = package_dict(
             package,
             daily_capacity=selection.daily_capacity if selection else None,
             is_offered=selection is not None,
         )
+        # this package's own rating from this kitchen's customers, and its latest reviews
+        data.update(ratings.get(ratings.for_offers(db, [(package.package_id, provider_id)]), package.package_id, provider_id))
+        data["reviews"] = ratings.recent_reviews(db, package.package_id, provider_id, limit=5)
+        return data
 
     @staticmethod
     def list_provider_packages(db: Session, provider_id: str):
         capacities = ProviderSelectedPackageRepository.get_capacities_for_provider(db, provider_id)
         packages = MenuRepository.list_provider_packages(db, provider_id)
+        stats = ratings.for_offers(db, ((p.package_id, provider_id) for p in packages))
         return [
-            package_dict(
-                p,
-                daily_capacity=capacities.get(str(p.package_id)),
-                is_offered=str(p.package_id) in capacities,
-            )
+            {
+                **package_dict(
+                    p,
+                    daily_capacity=capacities.get(str(p.package_id)),
+                    is_offered=str(p.package_id) in capacities,
+                ),
+                **ratings.get(stats, p.package_id, provider_id),
+            }
             for p in packages
         ]
 

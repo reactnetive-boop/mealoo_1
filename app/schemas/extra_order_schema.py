@@ -108,6 +108,9 @@ class PlaceOrderResponse(BaseModel):
 
     wallet_balance_after: Decimal
 
+    # True when the kitchen's delivery partner got the order; False: it waits for one (flagged for Orleeno)
+    delivery_partner_assigned: Optional[bool] = None
+
     orders: List[ExtraOrderResponse]
 
 

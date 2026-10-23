@@ -72,7 +72,6 @@ class DeliveryBoyProfileResponse(BaseModel):
     vehicle_type: Optional[str]
     vehicle_number: Optional[str]
     profile_image: Optional[str]
-    assigned_provider_reference_id: Optional[UUID]
     approval_status: str = "pending"
     approval_note: Optional[str] = None
     created_at: Optional[datetime]

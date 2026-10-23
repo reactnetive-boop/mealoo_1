@@ -211,7 +211,7 @@ def test_invalid_partner_or_subscription_is_rejected(client, db, customer_cancel
     other_kitchen, _ = f.provider(db)
     dedicated, _ = f.delivery_boy(db, kitchen=other_kitchen)
     r = _assign(client, admin_hdr, sub_id, dedicated)
-    assert r.status_code == 400 and "another kitchen" in r.json()["message"]
+    assert r.status_code == 400 and "other kitchens" in r.json()["message"]
 
     r = client.put(f"{A}/subscriptions/{sub_id}/assign-delivery-boy", headers=admin_hdr,
                    json={"delivery_boy_id": "00000000-0000-0000-0000-000000000000"})

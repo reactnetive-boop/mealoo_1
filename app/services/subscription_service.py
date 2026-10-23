@@ -46,6 +46,8 @@ from app.domain.pricing import (
 from app.domain.slots import (
     delivery_window,
     expand_plan_slot,
+    normalize_plan_slot,
+    plan_slot_for,
     package_serves,
     earliest_service_date,
     is_before_cutoff,
@@ -59,6 +61,7 @@ from app.models.subscription_model import Subscription
 from app.models.subscription_package_model import SubscriptionPackage
 from app.models.subscription_plan_model import SubscriptionPlan
 from app.models.user_address_model import UserAddress
+from app.models.user_model import User
 from app.repositories.cart_repository import CartRepository
 from app.repositories.subscription_plan_repository import SubscriptionPlanRepository
 from app.repositories.subscription_repository import SubscriptionRepository
@@ -164,6 +167,8 @@ def subscription_view(db: Session, sub: Subscription) -> dict:
         ) if p),
         "status": sub.status,
         "meal_slot": sub.meal_slot,
+        # the meals chosen together, e.g. ["lunch", "dinner"]: one delivery each per day
+        "meal_slots": expand_plan_slot(sub.meal_slot),
         "subscription_type": sub.subscription_type,
         "start_date": sub.start_date,
         "end_date": sub.end_date,
@@ -219,28 +224,79 @@ class SubscriptionService:
         }
 
     @staticmethod
-    def list_plans(db: Session, meal_slot: str = None, subscription_type: str = None):
-        plans = SubscriptionPlanRepository.get_all_active(db, meal_slot=meal_slot, subscription_type=subscription_type)
+    def list_plans(db: Session, meal_slot: str = None, subscription_type: str = None, meal_slots: str = None,
+                   package_id=None, provider_id=None, quantity: int = 1):
+        """
+        Plans for one meal or any combination of meals (breakfast + lunch,
+        lunch + dinner, all three, ...). With a package, every plan is priced
+        by the pricing engine: meals x per-meal price, then the plan discount
+        (e.g. 5%) taken once off that total.
+        """
+        wanted = None
+        try:
+            if meal_slots:
+                wanted = plan_slot_for(meal_slots.split(","))
+            elif meal_slot:
+                wanted = normalize_plan_slot(meal_slot)
+        except ValueError as exc:
+            raise DomainError(str(exc), 422) from None
+        wanted_meals = expand_plan_slot(wanted) if wanted else None
+
+        package = None
+        if package_id is not None:
+            if provider_id is None:
+                raise DomainError("provider_id is required to price plans for a package", 422)
+            _, package = assert_sellable(db, provider_id=provider_id, package_id=package_id, for_subscription=True)
+            if wanted_meals and not package_serves(package.meal_type, wanted_meals):
+                raise DomainError(
+                    f"'{package.package_name}' is not served for {' + '.join(wanted_meals)}", code="MEAL_NOT_SERVED",
+                )
+        components = current_components(db) if package is not None else None
+
+        plans = [
+            p for p in SubscriptionPlanRepository.get_all_active(db, subscription_type=subscription_type)
+            if expand_plan_slot(p.meal_slot) and (wanted_meals is None or expand_plan_slot(p.meal_slot) == wanted_meals)
+        ]
+        rows = []
+        for p in plans:
+            slots = expand_plan_slot(p.meal_slot)
+            row = {
+                "subscription_plan_id": p.subscription_plan_id,
+                "subscription_type": p.subscription_type,
+                "meal_slot": p.meal_slot,
+                "meal_slots": slots,
+                "duration_days": p.duration_days,
+                "is_custom": is_custom_plan(p),
+                "custom_min_days": CUSTOM_PLAN_MIN_DAYS if is_custom_plan(p) else None,
+                "custom_max_days": CUSTOM_PLAN_MAX_DAYS if is_custom_plan(p) else None,
+                "free_skips": p.free_skips or 0,
+                "discount_percent": p.discount_percent,
+                "earliest_start_date": earliest_service_date(slots),
+            }
+            if package is not None and not is_custom_plan(p) and package_serves(package.meal_type, slots):
+                snapshot = build_quote(
+                    components, kind="subscription", base_unit_price=subscription_unit_price(package),
+                    quantity=quantity, deliveries=int(p.duration_days) * len(slots),
+                    discount_percent=p.discount_percent,
+                )
+                row["pricing"] = {
+                    "meals": snapshot["deliveries"],
+                    "unit_price": snapshot["base_unit_price"],
+                    "quantity": quantity,
+                    "original_amount": snapshot["base_amount"],
+                    "discount_percent": snapshot["discount_percent"],
+                    "discount_amount": snapshot["discount_amount"],
+                    "food_amount": snapshot["food_amount"],
+                    "charges_amount": snapshot["charges_amount"],
+                    "total_payable": snapshot["total_payable"],
+                }
+            rows.append(row)
         return {
             "success": True,
-            "total": len(plans),
-            "plans": [
-                {
-                    "subscription_plan_id": p.subscription_plan_id,
-                    "subscription_type": p.subscription_type,
-                    "meal_slot": p.meal_slot,
-                    "meal_slots": expand_plan_slot(p.meal_slot),
-                    "duration_days": p.duration_days,
-                    "is_custom": is_custom_plan(p),
-                    "custom_min_days": CUSTOM_PLAN_MIN_DAYS if is_custom_plan(p) else None,
-                    "custom_max_days": CUSTOM_PLAN_MAX_DAYS if is_custom_plan(p) else None,
-                    "free_skips": p.free_skips or 0,
-                    "discount_percent": p.discount_percent,
-                    "earliest_start_date": earliest_service_date(expand_plan_slot(p.meal_slot)),
-                }
-                for p in plans
-                if expand_plan_slot(p.meal_slot)
-            ],
+            "total": len(rows),
+            "meal_slot": wanted,
+            "meal_slots": wanted_meals or [],
+            "plans": rows,
         }
 
     @staticmethod
@@ -599,12 +655,71 @@ class SubscriptionService:
     # ── Skip ──────────────────────────────────────────────────
 
     @staticmethod
+    def _skip_result(db: Session, user_id: str, sub: Subscription, order: Order, *, message: str,
+                     refund, not_free_reason, already: bool) -> dict:
+        return {
+            "success": True,
+            "message": message,
+            "order_id": order.order_id,
+            "status": order.status,
+            "already_skipped": already,
+            "is_free_skip": order.is_free_skip,
+            "not_free_reason": not_free_reason,
+            "skip_deadline": order.skip_deadline,
+            "refund_amount": refund,
+            "wallet_balance_after": ledger.customer_balance(db, user_id),
+            "free_skips_total": sub.free_skips_total or 0,
+            "free_skips_used": sub.free_skips_used or 0,
+            "free_skips_remaining": (sub.free_skips_total or 0) - (sub.free_skips_used or 0),
+        }
+
+    @staticmethod
+    def _notify_kitchen_of_skip(db: Session, sub: Subscription, order: Order) -> None:
+        """
+        One notice to the kitchen that cooks this meal, written in the same
+        transaction as the skip (so it exists exactly when the skip was saved)
+        and keyed by the meal, so a retried request cannot add a second one.
+        The push to the kitchen's phones goes after commit; if it fails the
+        skip and the in-app notice stay (app.core.push logs and retries).
+        """
+        packages = (
+            db.query(MenuPackage.package_name, SubscriptionPackage.quantity)
+            .join(SubscriptionPackage, SubscriptionPackage.package_reference_id == MenuPackage.package_id)
+            .filter(SubscriptionPackage.subscription_reference_id == sub.subscription_id)
+            .all()
+        )
+        names = [name for name, _ in packages]
+        user = db.query(User).filter(User.user_id == sub.user_reference_id).first()
+        # first name and a short reference only: no phone or address
+        customer = (user.full_name or "").split()[0] if user and user.full_name else "Customer"
+        customer_ref = str(sub.user_reference_id)[-4:].upper()
+        day = order.order_date.strftime("%d %B %Y").lstrip("0")
+        meal = order.meal_slot.replace("_", " ")
+        body = (
+            f"A customer has skipped their {meal} meal scheduled for {day}. "
+            "Please exclude this meal from preparation and delivery for that date."
+        )
+        if len(names) > 1:
+            body += f" Packages: {', '.join(names)}."
+        notify.kitchen(
+            db, order.vendor_reference_id, "meal_skipped", "Meal Skipped by Customer", body,
+            {
+                "subscription_id": str(sub.subscription_id),
+                "order_id": str(order.order_id),
+                "meal_slot": order.meal_slot,
+                "meal_date": order.order_date.isoformat(),
+                "package_names": names,
+                "customer_name": customer,
+                "customer_ref": customer_ref,
+                "skipped_at": (order.skip_requested_at or now_utc()).isoformat(),
+            },
+            dedupe_key=f"meal_skipped:{order.order_id}",
+        )
+
+    @staticmethod
     def skip_order(db: Session, user_id: str, subscription_id, order_id):
 
         sub = owned_subscription(db, user_id, subscription_id, lock=True)
-        if sub.status != "active":
-            raise DomainError(f"Cannot skip meals of a subscription that is {sub.status}")
-
         order = (
             db.query(Order)
             .filter(Order.order_id == order_id, Order.subscription_reference_id == sub.subscription_id)
@@ -613,6 +728,15 @@ class SubscriptionService:
         )
         if not order:
             raise DomainError("Order not found", 404)
+        if order.status == "skipped":
+            # a retried / repeated request: the skip is already saved, nothing more to do
+            db.rollback()
+            return SubscriptionService._skip_result(
+                db, user_id, sub, order, message="This meal is already skipped",
+                refund=order.refund_amount or ZERO, not_free_reason=None, already=True,
+            )
+        if sub.status != "active":
+            raise DomainError(f"Cannot skip meals of a subscription that is {sub.status}")
         if order.status != "scheduled":
             raise DomainError(f"Only scheduled meals can be skipped. This meal is {order.status.replace('_', ' ')}")
         if order.order_date < today_local():
@@ -646,16 +770,8 @@ class SubscriptionService:
             f"The {order.meal_slot} delivery on {order.order_date} was skipped by the customer.",
             {"order_id": str(order.order_id), "kind": "subscription"},
         )
-        if order.order_date == today_local():
-            # later days show up in the kitchen's schedule; today's prep may already be planned
-            notify.kitchen(
-                db, sub.vendor_reference_id, "meal_skipped", "Today's meal skipped",
-                f"A customer skipped today's {order.meal_slot}. Prepare one less.",
-                {"subscription_id": str(sub.subscription_id), "order_id": str(order.order_id)},
-            )
+        SubscriptionService._notify_kitchen_of_skip(db, sub, order)
         db.commit()
-
-        balance = ledger.customer_balance(db, user_id)
 
         cutoff_label = SLOT_CUTOFFS[order.meal_slot].strftime("%I:%M %p").lstrip("0")
         if is_free:
@@ -665,20 +781,9 @@ class SubscriptionService:
         else:
             message = "Meal skipped. No free skips left on this subscription, so no refund was issued"
 
-        return {
-            "success": True,
-            "message": message,
-            "order_id": order.order_id,
-            "status": order.status,
-            "is_free_skip": is_free,
-            "not_free_reason": not_free_reason,
-            "skip_deadline": order.skip_deadline,
-            "refund_amount": refund,
-            "wallet_balance_after": balance,
-            "free_skips_total": sub.free_skips_total or 0,
-            "free_skips_used": sub.free_skips_used or 0,
-            "free_skips_remaining": (sub.free_skips_total or 0) - (sub.free_skips_used or 0),
-        }
+        return SubscriptionService._skip_result(
+            db, user_id, sub, order, message=message, refund=refund, not_free_reason=not_free_reason, already=False,
+        )
 
     # ── Cancel ────────────────────────────────────────────────
 

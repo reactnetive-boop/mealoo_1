@@ -58,3 +58,4 @@ from .user_payout_model import *
 from .subscription_delivery_assignment_model import *
 from .provider_pickup_code_model import *
 from .provider_notification_model import *
+from .delivery_partner_vendor_model import *

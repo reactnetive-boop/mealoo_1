@@ -18,6 +18,11 @@ subscription and its meals row-locked):
 Meals generated later (midnight job, resume, renewal of the period) inherit
 the subscription's partner. Meals cancelled by a pause are not assigned; they
 pick up the current partner if the subscription is resumed.
+
+A partner can serve a subscription when they serve its kitchen
+(app/domain/vendor_partner.py): it is one of their kitchens, or they have
+no kitchens (shared pool). New subscriptions are given the kitchen's partner
+automatically (vendor_partner.ensure_subscription_partner).
 """
 
 from sqlalchemy import func
@@ -26,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit, business_event
 from app.core.clock import now_utc, today_local
 from app.core.errors import DomainError
-from app.domain import notify, partner_leave
+from app.domain import notify, partner_leave, vendor_partner
 from app.domain.status import SUB_UNPICKED_STATUSES, IN_HAND_STATUSES
 from app.models.delivery_boy_model import DeliveryBoy
 from app.models.order_model import Order
@@ -38,7 +43,7 @@ from app.models.user_model import User
 ASSIGNABLE_SUBSCRIPTION_STATUSES = ("active", "paused")
 
 
-def partner_block_reason(boy: DeliveryBoy | None, provider_id) -> str | None:
+def partner_block_reason(db: Session, boy: DeliveryBoy | None, provider_id) -> str | None:
     """Why this partner cannot serve this kitchen's subscriptions (None = can)."""
     if boy is None:
         return "not found"
@@ -46,8 +51,8 @@ def partner_block_reason(boy: DeliveryBoy | None, provider_id) -> str | None:
         return "deactivated"
     if boy.approval_status != "approved":
         return "not approved yet"
-    if boy.assigned_provider_reference_id is not None and str(boy.assigned_provider_reference_id) != str(provider_id):
-        return "dedicated to another kitchen"
+    if not vendor_partner.serves(db, boy.delivery_boy_id, provider_id):
+        return "serves other kitchens"
     return None
 
 
@@ -56,7 +61,7 @@ def inherited_partner(db: Session, sub: Subscription):
     if not sub.delivery_boy_reference_id:
         return None
     boy = db.query(DeliveryBoy).filter(DeliveryBoy.delivery_boy_id == sub.delivery_boy_reference_id).first()
-    if partner_block_reason(boy, sub.vendor_reference_id):
+    if partner_block_reason(db, boy, sub.vendor_reference_id):
         return None
     return boy.delivery_boy_id
 
@@ -112,12 +117,14 @@ def assign(
     actor_type: str = "admin",
     note: str | None = None,
     ip: str | None = None,
+    notify_parties: bool = True,
 ) -> dict:
     """
     Give `sub` and its open meals to `boy`. `sub` must already be row-locked.
 
     Safe to repeat: assigning the partner a subscription already has only
-    picks up open meals that are still missing a partner.
+    picks up open meals that are still missing a partner. notify_parties=False
+    when the caller sends one summary for many subscriptions (kitchen moves).
     """
 
     if sub.status not in ASSIGNABLE_SUBSCRIPTION_STATUSES:
@@ -126,7 +133,7 @@ def assign(
             409,
             code="SUBSCRIPTION_NOT_ASSIGNABLE",
         )
-    reason = partner_block_reason(boy, sub.vendor_reference_id)
+    reason = partner_block_reason(db, boy, sub.vendor_reference_id)
     if reason:
         raise DomainError(f"This delivery partner cannot take this subscription: {reason}.", code="PARTNER_NOT_ELIGIBLE")
 
@@ -194,14 +201,16 @@ def assign(
         row.orders_assigned = assigned_total
 
     customer, kitchen = _labels(db, sub)
-    if action != "unchanged" or newly or moved:
+    if not notify_parties:
+        others_notified = set()
+    if notify_parties and (action != "unchanged" or newly or moved):
         notify.delivery_partner(
             db, boy.delivery_boy_id, "subscription_assigned", "New subscription assigned",
             f"{customer}'s {sub.meal_slot.replace('_', ' ')} subscription from {kitchen}: "
             f"{assigned_total} upcoming deliveries are now yours.",
             {"subscription_id": str(sub.subscription_id), "kind": "subscription_assignment"},
         )
-    if action != "unchanged":
+    if notify_parties and action != "unchanged":
         notify.kitchen(
             db, sub.vendor_reference_id, "partner_assigned",
             "Delivery partner changed" if action == "reassigned" else "Delivery partner assigned",
@@ -209,7 +218,7 @@ def assign(
             f"subscription ({assigned_total} upcoming meals).",
             {"subscription_id": str(sub.subscription_id)},
         )
-    if previous_id and not same_partner:
+    if notify_parties and previous_id and not same_partner:
         notify.delivery_partner(
             db, previous_id, "subscription_unassigned", "Subscription reassigned",
             f"{customer}'s subscription from {kitchen} moved to another partner. "
@@ -303,16 +312,20 @@ def unassign(db: Session, sub: Subscription, *, actor_id, actor_type: str = "adm
     }
 
 
-def release_partner_subscriptions(db: Session, delivery_boy_id, *, reason: str, actor_id, actor_type: str, keep_provider_id=None) -> int:
+def release_partner_subscriptions(db: Session, delivery_boy_id, *, reason: str, actor_id, actor_type: str,
+                                  keep_provider_id=None, only_provider_id=None) -> int:
     """
-    End this partner's subscription assignments (all of them, or those of
-    kitchens other than `keep_provider_id`) and free their open meals.
-    Used when a partner is deactivated, rejected or dedicated to one kitchen.
+    End this partner's subscription assignments (all of them, those of
+    kitchens other than `keep_provider_id`, or only those of
+    `only_provider_id`) and free their open meals. Used when a partner is
+    deactivated or rejected, or a kitchen is added to / removed from them.
     """
 
     q = db.query(Subscription).filter(Subscription.delivery_boy_reference_id == delivery_boy_id)
     if keep_provider_id is not None:
         q = q.filter(Subscription.vendor_reference_id != keep_provider_id)
+    if only_provider_id is not None:
+        q = q.filter(Subscription.vendor_reference_id == only_provider_id)
     subs = q.with_for_update().all()
     for sub in subs:
         _end(active_assignment(db, sub.subscription_id, lock=True), reason=reason, actor_id=actor_id, actor_type=actor_type)
@@ -342,8 +355,8 @@ def carry_over(db: Session, old_sub: Subscription, new_sub: Subscription) -> Non
     _end(active_assignment(db, old_sub.subscription_id, lock=True), reason="subscription_switched", actor_id=None, actor_type="system")
     old_sub.delivery_boy_reference_id = None
     boy = db.query(DeliveryBoy).filter(DeliveryBoy.delivery_boy_id == boy_id).first()
-    if partner_block_reason(boy, new_sub.vendor_reference_id):
-        return
+    if partner_block_reason(db, boy, new_sub.vendor_reference_id):
+        return  # the new kitchen's own partner takes it (vendor_partner.ensure_subscription_partner)
     new_sub.delivery_boy_reference_id = boy_id
     _start(
         db, new_sub, boy_id, actor_id=None, actor_type="system",

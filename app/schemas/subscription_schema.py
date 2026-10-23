@@ -45,12 +45,46 @@ class SubscriptionPlanResponse(BaseModel):
 
     earliest_start_date: Optional[date] = None
 
+    # Only when a package was given: the plan priced by the server for it
+    pricing: Optional["PlanPricing"] = None
+
+
+class PlanPricing(BaseModel):
+    """What this plan costs for one package: the discount is taken once, off the whole total."""
+
+    meals: int
+
+    unit_price: Decimal
+
+    quantity: int
+
+    # every meal of the plan at the per-meal price
+    original_amount: Decimal
+
+    discount_percent: Decimal
+
+    discount_amount: Decimal
+
+    food_amount: Decimal
+
+    charges_amount: Decimal
+
+    total_payable: Decimal
+
+
+SubscriptionPlanResponse.model_rebuild()
+
 
 class SubscriptionPlanListResponse(BaseModel):
 
     success: bool
 
     total: int
+
+    # the meal combination the plans were filtered by, e.g. "lunch_dinner"
+    meal_slot: Optional[str] = None
+
+    meal_slots: List[str] = []
 
     plans: List[SubscriptionPlanResponse]
 
@@ -143,6 +177,9 @@ class SubscriptionResponse(BaseModel):
     status: str
 
     meal_slot: str
+
+    # The meals chosen together, e.g. ["lunch", "dinner"]
+    meal_slots: List[str] = []
 
     subscription_type: str
 
@@ -451,6 +488,9 @@ class SkipOrderResponse(BaseModel):
     order_id: UUID
 
     status: str
+
+    # True when the meal was skipped by an earlier request (a retry): nothing changed
+    already_skipped: bool = False
 
     # True when a free skip was consumed and the meal amount refunded
     is_free_skip: bool

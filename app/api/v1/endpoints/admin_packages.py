@@ -1,7 +1,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -147,6 +147,57 @@ def set_package_subscription(
     return AdminPackageService.set_subscription_availability(
         db, str(package_id), payload, current["admin_id"], client_ip(request)
     )
+
+
+@router.post(
+    "/{package_id}/images",
+    summary="Upload a Package Photo (Admin)",
+    description=(
+        "JPEG, PNG or WEBP up to the upload limit (`multipart/form-data`, field `file`). The first photo, or "
+        "`make_primary=true`, becomes the cover. Same photos the kitchen manages in its app."
+    ),
+)
+def upload_package_image(
+    package_id: UUID,
+    request: Request,
+    file: UploadFile = File(...),
+    make_primary: bool = Form(False),
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin),
+):
+    return AdminPackageService.upload_image(
+        db, str(package_id), file, current["admin_id"], client_ip(request), make_primary=make_primary,
+    )
+
+
+@router.put(
+    "/{package_id}/images/{image_id}",
+    summary="Replace a Package Photo (Admin)",
+    description="Uploads a new file in place of this photo (it keeps its position and cover status).",
+)
+def replace_package_image(
+    package_id: UUID,
+    image_id: UUID,
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current=Depends(get_current_admin),
+):
+    return AdminPackageService.replace_image(db, str(package_id), image_id, file, current["admin_id"], client_ip(request))
+
+
+@router.put("/{package_id}/images/{image_id}/primary", summary="Make a Photo the Cover (Admin)")
+def set_primary_package_image(
+    package_id: UUID, image_id: UUID, request: Request, db: Session = Depends(get_db), current=Depends(get_current_admin),
+):
+    return AdminPackageService.set_primary_image(db, str(package_id), image_id, current["admin_id"], client_ip(request))
+
+
+@router.delete("/{package_id}/images/{image_id}", summary="Remove a Package Photo (Admin)")
+def delete_package_image(
+    package_id: UUID, image_id: UUID, request: Request, db: Session = Depends(get_db), current=Depends(get_current_admin),
+):
+    return AdminPackageService.delete_image(db, str(package_id), image_id, current["admin_id"], client_ip(request))
 
 
 @router.delete(
