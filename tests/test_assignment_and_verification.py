@@ -337,11 +337,31 @@ def test_kitchen_sees_its_daily_code_and_nobody_else_does(client, db):
     row = db.query(ProviderPickupCode).one()
     assert body["pickup_code"] not in (row.code_seed or "")
 
-    other_kitchen, other_hdr = f.provider(db)
-    assert client.get("/api/v1/provider/pickup-code", headers=other_hdr).json()["pickup_code"] != body["pickup_code"]
+    w2, _ = _second_kitchen_subscription(client, db, w)
+    assert client.get("/api/v1/provider/pickup-code", headers=w2["kitchen_auth"]).json()["pickup_code"] != body["pickup_code"]
     for hdr in (boy_auth, w["user_auth"], admin_hdr):
         assert client.get("/api/v1/provider/pickup-code", headers=hdr).status_code in (401, 403)
     assert db.query(AuditLog).filter(AuditLog.table_name == "provider.provider_pickup_codes").count() >= 1
+
+
+def test_no_pickup_code_until_the_kitchen_has_an_order(client, db):
+    w = f.world(db, balance="5000")
+    url = "/api/v1/provider/pickup-code"
+
+    # a freshly registered kitchen with no orders: nothing generated or stored
+    for r in (client.get(url, headers=w["kitchen_auth"]), client.post(f"{url}/regenerate", headers=w["kitchen_auth"])):
+        assert r.status_code == 404 and r.json()["code"] == "NO_PICKUP_CODE", r.text
+    jobs.pickup_codes_job()
+    assert db.query(ProviderPickupCode).count() == 0
+    assert db.query(AuditLog).filter(AuditLog.table_name == "provider.provider_pickup_codes").count() == 0
+
+    # the first order creates exactly one code; every later use returns the same one
+    _subscribe(client, w)
+    code = client.get(url, headers=w["kitchen_auth"]).json()["pickup_code"]
+    assert code and len(code) == 6
+    jobs.pickup_codes_job()
+    assert client.get(url, headers=w["kitchen_auth"]).json()["pickup_code"] == code
+    assert db.query(ProviderPickupCode).count() == 1
 
 
 def test_daily_job_generates_codes_for_kitchens_with_orders(client, db):

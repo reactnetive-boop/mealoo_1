@@ -192,7 +192,9 @@ def list_delivery_partners(db: Session = Depends(get_db), current_provider=Depen
     description=(
         "The kitchen's 6-digit pickup code for today (business date). Read it out to the delivery "
         "partner when handing over today's orders; the partner enters it to record the pickup. It "
-        "works only for this kitchen and only today, and it is never shown to partners or customers."
+        "works only for this kitchen and only today, and it is never shown to partners or customers. "
+        "A code is generated only once the kitchen has an order for today; until then this returns "
+        "404 with code NO_PICKUP_CODE and nothing is stored."
     ),
 )
 def get_pickup_code(db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):

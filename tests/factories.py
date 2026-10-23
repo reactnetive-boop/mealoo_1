@@ -201,12 +201,20 @@ def delivery_code(order) -> str:
 
 
 def pickup_code(db, kitchen, on=None) -> str:
-    """The kitchen's pickup code for `on` (default today), as the kitchen app shows it."""
+    """
+    The kitchen's pickup code for `on` (default today), as the kitchen app shows it.
+    A kitchen with no orders that day has no code; for those this returns a code
+    that kitchen could have had, without storing anything (for negative tests).
+    """
     from app.core.clock import today_local
-    from app.domain.verification import pickup_code_row, pickup_code_value
+    from app.domain.verification import new_seed, pickup_code_row, pickup_code_value
+    from app.models.provider_pickup_code_model import ProviderPickupCode
     provider_id = getattr(kitchen, "provider_id", kitchen)
-    row = pickup_code_row(db, provider_id, on or today_local())
+    on = on or today_local()
+    row = pickup_code_row(db, provider_id, on)
     db.commit()
+    if row is None:
+        row = ProviderPickupCode(provider_reference_id=provider_id, code_date=on, code_seed=new_seed())
     return pickup_code_value(row)
 
 

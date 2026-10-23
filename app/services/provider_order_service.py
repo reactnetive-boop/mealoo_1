@@ -28,7 +28,9 @@ from app.domain.status import (
     assert_sub_order_transition, assert_extra_order_transition, allowed_next,
     SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES, IN_HAND_STATUSES,
 )
-from app.domain.verification import pickup_code_row, pickup_code_value, regenerate_pickup_code
+from app.domain.verification import (
+    NO_PICKUP_CODE_MESSAGE, pickup_code_row, pickup_code_value, regenerate_pickup_code,
+)
 from app.models.delivery_boy_model import DeliveryBoy
 from app.models.extra_order_model import ExtraOrder
 from app.models.menu_package_item_model import MenuPackageItem
@@ -495,6 +497,9 @@ class ProviderOrderService:
     @staticmethod
     def get_pickup_code(db: Session, vendor_id: str):
         row = pickup_code_row(db, vendor_id, today_local())
+        if row is None:
+            # nothing to hand over today, so no code is generated or stored
+            raise DomainError(NO_PICKUP_CODE_MESSAGE, 404, code="NO_PICKUP_CODE")
         view = ProviderOrderService._pickup_code_view(db, vendor_id, row)
         db.commit()
         return view

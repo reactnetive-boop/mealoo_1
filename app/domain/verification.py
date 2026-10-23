@@ -4,7 +4,9 @@ Hand-over verification codes.
 pickup    One 6-digit code per kitchen per business day. The kitchen reads it
           to the delivery partner when handing over food; the partner enters
           it to record the pickup. A code only ever works for its own kitchen
-          and its own day.
+          and its own day, and it only comes into being once the kitchen has
+          an order to hand over that day (never at sign-up, never on an empty
+          day).
 delivery  One 6-digit code per order. The customer reads it to the partner at
           the door; the partner enters it to complete the delivery. A code
           only ever works for its own order.
@@ -30,9 +32,15 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit, business_event
 from app.core.clock import now_utc, now_local, local_datetime
 from app.core.config import DELIVERY_CODE_GRACE_HOURS, JWT_SECRET_KEY, VERIFICATION_CODE_SECRET
+from app.core.errors import DomainError
+from app.domain.status import SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES
+from app.models.extra_order_model import ExtraOrder
+from app.models.order_model import Order
 from app.models.provider_pickup_code_model import ProviderPickupCode
 
 CODE_LENGTH = 6
+
+NO_PICKUP_CODE_MESSAGE = "No orders for today yet. Your pickup code appears here once an order comes in."
 
 
 def new_seed() -> str:
@@ -103,14 +111,50 @@ def pickup_code_value(row: ProviderPickupCode) -> str:
     return derive("pickup", _subject(row.provider_reference_id, row.code_date), row.code_seed)
 
 
-def pickup_code_row(db: Session, provider_id, on: date, *, lock: bool = False) -> ProviderPickupCode:
-    """
-    The kitchen's code row for `on`, created on first use.
+def has_orders_to_hand_over(db: Session, provider_id, on: date) -> bool:
+    """The kitchen has at least one order for `on` that is still waiting to be picked up."""
+    return db.query(
+        db.query(Order.order_id).filter(
+            Order.vendor_reference_id == provider_id,
+            Order.order_date == on,
+            Order.status.in_(SUB_UNPICKED_STATUSES),
+        ).exists()
+    ).scalar() or db.query(
+        db.query(ExtraOrder.extra_order_id).filter(
+            ExtraOrder.vendor_reference_id == provider_id,
+            ExtraOrder.delivery_date == on,
+            ExtraOrder.status.in_(EXTRA_UNPICKED_STATUSES),
+        ).exists()
+    ).scalar()
 
-    Creation is INSERT ... ON CONFLICT DO NOTHING, so concurrent first uses
-    (kitchen opening the app, a partner verifying, the daily job) all end up
-    with the same single row.
+
+def find_pickup_code_row(db: Session, provider_id, on: date, *, lock: bool = False) -> ProviderPickupCode | None:
+    """The kitchen's existing code row for `on`; never creates one."""
+    q = db.query(ProviderPickupCode).filter(
+        ProviderPickupCode.provider_reference_id == provider_id,
+        ProviderPickupCode.code_date == on,
+    )
+    if lock:
+        q = q.with_for_update()
+    return q.one_or_none()
+
+
+def pickup_code_row(db: Session, provider_id, on: date, *, lock: bool = False) -> ProviderPickupCode | None:
     """
+    The kitchen's code row for `on`, created on first use - but only once the
+    kitchen has an order to hand over that day. A kitchen with no orders gets
+    no row (None), so nothing is generated at sign-up or on an empty day.
+
+    Creation is INSERT ... ON CONFLICT DO NOTHING on (kitchen, day), so
+    concurrent first uses (kitchen opening the app, a partner verifying, the
+    daily job) all end up with the same single row and never a duplicate.
+    """
+
+    row = find_pickup_code_row(db, provider_id, on, lock=lock)
+    if row is not None:
+        return row
+    if not has_orders_to_hand_over(db, provider_id, on):
+        return None
 
     inserted = db.execute(
         pg_insert(ProviderPickupCode)
@@ -134,21 +178,17 @@ def pickup_code_row(db: Session, provider_id, on: date, *, lock: bool = False) -
         )
         business_event("pickup_code.generated", provider_id=provider_id, code_date=on)
 
-    q = db.query(ProviderPickupCode).filter(
-        ProviderPickupCode.provider_reference_id == provider_id,
-        ProviderPickupCode.code_date == on,
-    )
-    if lock:
-        q = q.with_for_update()
-    return q.one()
+    return find_pickup_code_row(db, provider_id, on, lock=lock)
 
 
-def pickup_code_usable(row: ProviderPickupCode, on: date) -> bool:
-    return row.status == "active" and row.code_date == on and now_local() < row.expires_at
+def pickup_code_usable(row: ProviderPickupCode | None, on: date) -> bool:
+    return row is not None and row.status == "active" and row.code_date == on and now_local() < row.expires_at
 
 
 def regenerate_pickup_code(db: Session, provider_id, on: date, *, actor_id, actor_type: str, ip: str | None = None) -> ProviderPickupCode:
     row = pickup_code_row(db, provider_id, on, lock=True)
+    if row is None:
+        raise DomainError(NO_PICKUP_CODE_MESSAGE, 404, code="NO_PICKUP_CODE")
     row.code_seed = new_seed()
     row.version = (row.version or 1) + 1
     row.status = "active"
