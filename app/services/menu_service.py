@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import now_utc, today_local
 from app.core.errors import DomainError
-from app.domain import capacity
+from app.domain import capacity, item_quantity
 from app.domain import package_revision as revision
 from app.domain.pricing import validate_package_prices, package_price_view
 from app.models.menu_category_model import MenuCategory
@@ -123,7 +123,7 @@ def package_dict(package: MenuPackage, *, daily_capacity=None, is_offered=None) 
         "image_url": next((i.image_url for i in package.images if i.is_primary), None)
         or (package.images[0].image_url if package.images else None),
         "items": [
-            {"item_id": i.item_id, "item_name": i.item_name, "quantity": i.quantity, "item_order": i.item_order}
+            {"item_id": i.item_id, "item_name": i.item_name, "item_order": i.item_order, **item_quantity.of(i)}
             for i in sorted(package.items, key=lambda i: i.item_order or 0)
         ],
         "images": [
@@ -180,8 +180,8 @@ class MenuService:
             MenuRepository.create_package_item(db, {
                 "package_reference_id": package.package_id,
                 "item_name": item.item_name,
-                "quantity": item.quantity,
                 "item_order": order,
+                **item_quantity.from_request(item),
             })
 
         db.commit()

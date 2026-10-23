@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.utils.meal_type import normalize_meal_type, normalize_food_type
 from app.schemas.menu_schema import _zero_is_none
+from app.schemas.package_item_schema import ItemQuantityFields
 
 
 # ── Auth ──────────────────────────────────────────────────
@@ -159,7 +160,7 @@ class AdminDocumentReviewRequest(BaseModel):
 
 # ── Package Management ────────────────────────────────────
 
-class AdminPackageItemRequest(BaseModel):
+class AdminPackageItemRequest(ItemQuantityFields):
     item_name: str = Field(..., min_length=1, max_length=255)
     quantity: Optional[str] = Field(None, max_length=50)
 

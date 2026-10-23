@@ -23,7 +23,7 @@ from app.core.audit import business_event
 from app.core.clock import today_local
 from app.core.config import PICKUP_CODE_MAX_ATTEMPTS
 from app.core.errors import DomainError
-from app.domain import checkout, notify, orders as meals, partner_leave
+from app.domain import checkout, item_quantity, notify, orders as meals, partner_leave
 from app.domain.status import (
     assert_sub_order_transition, assert_extra_order_transition, allowed_next,
     SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES, IN_HAND_STATUSES,
@@ -526,7 +526,14 @@ class ProviderOrderService:
         sub_orders = sub_q.all()
 
         tally: dict = defaultdict(lambda: defaultdict(int))
+        measures: dict = {}  # (item name, label) -> quantity fields, for the totals
         meal_counts: dict = defaultdict(int)
+
+        def count(item, servings):
+            label = item.quantity or ""
+            tally[item.item_name][label] += servings
+            if not measures.get((item.item_name, label), {}).get("quantity_unit"):
+                measures[(item.item_name, label)] = item_quantity.of(item)
 
         if sub_orders:
             sub_ids = list({o.subscription_reference_id for o in sub_orders})
@@ -543,7 +550,7 @@ class ProviderOrderService:
                 for pkg_id, qty in sub_pkg_map[order.subscription_reference_id]:
                     meal_counts[pkg_id] += qty
                     for item in item_map[pkg_id]:
-                        tally[item.item_name][item.quantity or ""] += qty
+                        count(item, qty)
 
         extra_q = db.query(ExtraOrder).filter(
             ExtraOrder.vendor_reference_id == vendor_id,
@@ -562,7 +569,7 @@ class ProviderOrderService:
             for eo in extra_orders:
                 meal_counts[eo.package_reference_id] += eo.quantity
                 for item in item_map[eo.package_reference_id]:
-                    tally[item.item_name][item.quantity or ""] += eo.quantity
+                    count(item, eo.quantity)
 
         packages = _lookup(db, MenuPackage, "package_id", meal_counts.keys())
         return {
@@ -577,7 +584,12 @@ class ProviderOrderService:
                 for pid, n in meal_counts.items()
             ],
             "items": [
-                {"item_name": name, "quantity_per_serving": qty_desc, "total_servings": total}
+                {
+                    "item_name": name,
+                    "quantity_per_serving": qty_desc,
+                    "total_servings": total,
+                    "total_quantity": item_quantity.total(measures[(name, qty_desc)], total),
+                }
                 for name in sorted(tally.keys())
                 for qty_desc, total in tally[name].items()
             ],

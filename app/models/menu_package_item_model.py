@@ -4,6 +4,7 @@ from sqlalchemy import (
     Column,
     String,
     Integer,
+    Numeric,
     ForeignKey,
     TIMESTAMP
 )
@@ -50,8 +51,33 @@ class MenuPackageItem(Base):
         nullable=False
     )
 
+    # Display label, e.g. "400 g", "4 pcs", "1 bowl (300 g)". Built from the
+    # fields below when a unit is given (app/domain/item_quantity.py); free
+    # text from older app versions otherwise.
     quantity = Column(
         String(100)
+    )
+
+    # Amount in `quantity_unit`: g | kg | pcs | bowl | ml | l
+    quantity_value = Column(
+        Numeric(10, 2),
+        nullable=True
+    )
+
+    quantity_unit = Column(
+        String(10),
+        nullable=True
+    )
+
+    # What one bowl holds (bowls only), in `bowl_capacity_unit`: g | ml
+    bowl_capacity = Column(
+        Numeric(10, 2),
+        nullable=True
+    )
+
+    bowl_capacity_unit = Column(
+        String(5),
+        nullable=True
     )
 
     item_order = Column(

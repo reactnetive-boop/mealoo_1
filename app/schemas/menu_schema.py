@@ -10,6 +10,7 @@ from uuid import UUID
 
 from decimal import Decimal
 
+from app.schemas.package_item_schema import ItemQuantityFields
 from app.utils.meal_type import normalize_meal_type, normalize_food_type
 
 class MenuCategoryResponse(
@@ -32,12 +33,10 @@ class GetMenuCategoryListResponse(
     ]
 
 class PackageItemRequest(
-    BaseModel
+    ItemQuantityFields
 ):
 
     item_name: str = Field(..., min_length=1, max_length=255)
-
-    quantity: Optional[str] = Field(None, max_length=100)
 
 
 def _zero_is_none(value):
@@ -132,6 +131,14 @@ class PackageItemResponse(
     item_name: str
 
     quantity: Optional[str] = None
+
+    quantity_value: Optional[float] = None
+
+    quantity_unit: Optional[str] = None
+
+    bowl_capacity: Optional[float] = None
+
+    bowl_capacity_unit: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

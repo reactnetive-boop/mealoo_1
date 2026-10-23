@@ -10,7 +10,8 @@ it. Packages that are not live yet (pending / rejected) are edited directly.
 
 pending_changes = {
     "fields": {field: value, ...},                  # only fields that differ
-    "items": [{item_id, item_name, quantity, item_order}, ...],  # full new list, if changed
+    "items": [{item_id, item_name, item_order, quantity, quantity_value,  # full new list, if changed
+               quantity_unit, bowl_capacity, bowl_capacity_unit}, ...],
 }
 """
 
@@ -21,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import now_utc
 from app.core.errors import DomainError
+from app.domain import item_quantity
 from app.models.menu_package_item_model import MenuPackageItem
 from app.models.menu_package_model import MenuPackage
 
@@ -70,7 +72,7 @@ def propose_fields(package: MenuPackage, changes: dict) -> bool:
 
 def live_items(package: MenuPackage) -> list[dict]:
     return [
-        {"item_id": str(i.item_id), "item_name": i.item_name, "quantity": i.quantity, "item_order": i.item_order}
+        {"item_id": str(i.item_id), "item_name": i.item_name, "item_order": i.item_order, **item_quantity.of(i)}
         for i in sorted(package.items, key=lambda i: i.item_order or 0)
     ]
 
@@ -91,8 +93,10 @@ def propose_items(package: MenuPackage, items: list[dict]) -> None:
     _store(package, pending)
 
 
-def new_item(item_name: str, quantity, item_order: int) -> dict:
-    return {"item_id": str(uuid.uuid4()), "item_name": item_name, "quantity": quantity, "item_order": item_order}
+def new_item(item_name: str, quantity: dict, item_order: int) -> dict:
+    """`quantity`: the item's quantity fields (item_quantity.from_request)."""
+    return {"item_id": str(uuid.uuid4()), "item_name": item_name, "item_order": item_order,
+            **item_quantity.as_json(quantity)}
 
 
 def find_item(package: MenuPackage, item_id) -> dict | None:
@@ -112,7 +116,7 @@ def apply(db: Session, package: MenuPackage) -> None:
         for i in items:
             db.add(MenuPackageItem(
                 item_id=uuid.UUID(i["item_id"]), package_reference_id=package.package_id,
-                item_name=i["item_name"], quantity=i["quantity"], item_order=i["item_order"],
+                item_name=i["item_name"], item_order=i["item_order"], **item_quantity.to_model(i),
             ))
     discard(package)
     db.flush()

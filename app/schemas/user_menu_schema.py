@@ -13,7 +13,16 @@ class UserPackageItemResponse(BaseModel):
 
     item_name: str
 
+    # display label, e.g. "400 g", "4 pcs", "1 bowl (300 g)"
     quantity: Optional[str]
+
+    quantity_value: Optional[float] = None
+
+    quantity_unit: Optional[str] = None
+
+    bowl_capacity: Optional[float] = None
+
+    bowl_capacity_unit: Optional[str] = None
 
     item_order: int
 

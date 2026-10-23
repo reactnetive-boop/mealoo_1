@@ -150,6 +150,8 @@ class FoodSummaryItemResponse(BaseModel):
     item_name: str
     quantity_per_serving: str
     total_servings: int
+    # what to cook in all, e.g. "4 kg" (null for items without a unit)
+    total_quantity: Optional[str] = None
 
 
 class FoodSummaryPackageResponse(BaseModel):

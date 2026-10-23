@@ -7,7 +7,7 @@ stays on sale until Orleeno reviews the change.
 from sqlalchemy.orm import Session
 
 from app.core.errors import DomainError
-from app.domain import package_revision as revision
+from app.domain import item_quantity, package_revision as revision
 from app.models.menu_package_item_model import MenuPackageItem
 from app.models.menu_package_model import MenuPackage
 from app.repositories.package_item_repository import PackageItemRepository
@@ -42,7 +42,9 @@ class PackageItemService:
 
         if revision.is_live(package):
             items = revision.editable_items(package)
-            entry = revision.new_item(request.item_name, request.quantity, request.item_order or len(items) + 1)
+            entry = revision.new_item(
+                request.item_name, item_quantity.from_request(request), request.item_order or len(items) + 1
+            )
             revision.propose_items(package, items + [entry])
             db.commit()
             return {
@@ -57,8 +59,8 @@ class PackageItemService:
         item = MenuPackageItem(
             package_reference_id=package.package_id,
             item_name=request.item_name,
-            quantity=request.quantity,
             item_order=request.item_order or len(package.items) + 1,
+            **item_quantity.from_request(request),
         )
         db.add(item)
         reapproval = mark_changed(package)
@@ -74,7 +76,9 @@ class PackageItemService:
     @staticmethod
     def update_package_item(db: Session, provider_id: str, item_id, request):
         package, item = _locate(db, provider_id, item_id)
-        updates = {f: getattr(request, f) for f in ("item_name", "quantity", "item_order") if getattr(request, f) is not None}
+        updates = {f: getattr(request, f) for f in ("item_name", "item_order") if getattr(request, f) is not None}
+        # a new quantity replaces all quantity fields (amount, unit, bowl size, label)
+        quantity = item_quantity.from_request(request) if item_quantity.sent(request) else {}
 
         if revision.is_live(package):
             items = revision.editable_items(package)
@@ -82,6 +86,8 @@ class PackageItemService:
             if entry is None:
                 raise DomainError("Package item not found", 404)
             entry.update(updates)
+            if quantity:
+                entry.update(item_quantity.as_json(quantity))
             revision.propose_items(package, items)
             db.commit()
             pending = bool(package.pending_changes)
@@ -94,7 +100,7 @@ class PackageItemService:
         if item is None:
             raise DomainError("Package item not found", 404)
         changed = False
-        for field, value in updates.items():
+        for field, value in {**updates, **quantity}.items():
             if getattr(item, field) != value:
                 setattr(item, field, value)
                 changed = changed or field != "item_order"

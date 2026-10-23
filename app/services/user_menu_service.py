@@ -11,6 +11,7 @@ from app.domain.eligibility import (
     is_on_holiday,
     kitchens_on_holiday,
 )
+from app.domain import item_quantity
 from app.domain.pricing import package_price_view
 from app.domain.slots import package_slots
 from app.models.menu_package_model import MenuPackage
@@ -119,7 +120,7 @@ class UserMenuService:
         view = _offer_view(package, provider, not is_on_holiday(db, provider.provider_id, today_local()))
         view["description"] = package.description
         view["items"] = [
-            {"item_id": i.item_id, "item_name": i.item_name, "quantity": i.quantity, "item_order": i.item_order or 0}
+            {"item_id": i.item_id, "item_name": i.item_name, "item_order": i.item_order or 0, **item_quantity.of(i)}
             for i in sorted(package.items, key=lambda i: i.item_order or 0)
         ]
         view["images"] = [

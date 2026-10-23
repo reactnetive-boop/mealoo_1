@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.clock import now_utc
 from app.core.errors import DomainError
-from app.domain import notify
+from app.domain import item_quantity, notify
 from app.domain import package_revision as revision
 from app.domain.pricing import validate_package_prices
 from app.domain.status import EXTRA_OPEN_STATUSES
@@ -78,8 +78,8 @@ class AdminPackageService:
             MenuRepository.create_package_item(db, {
                 "package_reference_id": package.package_id,
                 "item_name": item.item_name,
-                "quantity": item.quantity,
                 "item_order": order,
+                **item_quantity.from_request(item),
             })
         _audit_package(db, package, None, admin_id, ip, operation="I")
         db.commit()
