@@ -115,6 +115,10 @@ class UpdateOrderStatusResponse(BaseModel):
     message: str
     order_id: UUID
     status: str
+    # Ready for pickup was already set (a repeated tap): nothing changed, nobody notified again
+    already_done: bool = False
+    # other lines of the same one-time checkout marked ready with this one
+    also_updated: list[str] = []
 
 
 # ── One-time orders ───────────────────────────────────────

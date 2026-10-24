@@ -161,6 +161,8 @@ class DeliverySubscriptionOrderResponse(BaseModel):
     delivery_area: Optional[str] = None
     delivery_address_short: Optional[str] = None
     pickup_status: Optional[str] = None
+    # True once the kitchen marked it Ready for Pickup (today, not locked): the only time pickup is accepted
+    can_pickup: bool = False
     delivery_status: Optional[str] = None
     # True after too many wrong kitchen codes; admin must resolve
     pickup_locked: bool = False
@@ -237,6 +239,8 @@ class DeliveryExtraOrderResponse(BaseModel):
     delivery_area: Optional[str] = None
     delivery_address_short: Optional[str] = None
     pickup_status: Optional[str] = None
+    # True once the kitchen marked it Ready for Pickup (today, not locked): the only time pickup is accepted
+    can_pickup: bool = False
     delivery_status: Optional[str] = None
     # True after too many wrong kitchen codes; admin must resolve
     pickup_locked: bool = False

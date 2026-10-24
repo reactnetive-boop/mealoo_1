@@ -77,8 +77,9 @@ def _give_kitchen(client, admin_hdr, boy, kitchen, note=None):
 
 def _deliver_meal(client, db, kitchen_auth, kitchen, meal, boy_auth):
     oid = str(meal.order_id)
-    r = client.put(f"{K}/subscription-orders/{oid}/status", headers=kitchen_auth, json={"status": "preparing"})
-    assert r.status_code == 200, r.text
+    for status in ("preparing", "ready_for_pickup"):
+        r = client.put(f"{K}/subscription-orders/{oid}/status", headers=kitchen_auth, json={"status": status})
+        assert r.status_code == 200, r.text
     r = client.put(f"{D}/orders/{oid}/pickup", headers=boy_auth, json={"pickup_code": f.pickup_code(db, kitchen)})
     assert r.status_code == 200, r.text
     return client.put(f"{D}/orders/{oid}/deliver", headers=boy_auth, json={"otp": f.delivery_code(meal)})
@@ -331,7 +332,7 @@ def test_moving_a_kitchen_moves_work_not_yet_picked_up(client, db):
     assert all(m.delivery_boy_reference_id == a.delivery_boy_id for m in meals)
 
     today = meals[0]
-    r = client.put(f"{K}/subscription-orders/{today.order_id}/status", headers=w["kitchen_auth"], json={"status": "preparing"})
+    r = client.put(f"{K}/subscription-orders/{today.order_id}/status", headers=w["kitchen_auth"], json={"status": "ready_for_pickup"})
     assert r.status_code == 200
     assert client.put(f"{D}/orders/{today.order_id}/pickup", headers=a_hdr,
                       json={"pickup_code": f.pickup_code(db, w["kitchen"])}).status_code == 200
@@ -465,7 +466,7 @@ def test_failed_and_cancelled_deliveries_pay_the_partner_nothing(client, db):
     sub_id = _subscribe(client, w)
     meal = _meals(db, sub_id)[0]
     oid = str(meal.order_id)
-    client.put(f"{K}/subscription-orders/{oid}/status", headers=w["kitchen_auth"], json={"status": "preparing"})
+    client.put(f"{K}/subscription-orders/{oid}/status", headers=w["kitchen_auth"], json={"status": "ready_for_pickup"})
     client.put(f"{D}/orders/{oid}/pickup", headers=boy_hdr, json={"pickup_code": f.pickup_code(db, w["kitchen"])})
     client.put(f"{D}/orders/{oid}/arrived", headers=boy_hdr)
     clock.freeze(datetime(2026, 10, 5, 5, 11))
@@ -499,7 +500,7 @@ def test_one_time_checkout_is_one_paid_trip(client, db):
     assert placed.status_code == 200, placed.text
     first_id = placed.json()["orders"][0]["extra_order_id"]
     for line in placed.json()["orders"]:
-        for status in ("confirmed", "preparing"):
+        for status in ("confirmed", "preparing", "ready_for_pickup"):
             assert client.put(f"{K}/extra/{line['extra_order_id']}/status", headers=w["kitchen_auth"],
                               json={"status": status}).status_code == 200
     assert client.put(f"{D}/extra-orders/{first_id}/pickup", headers=boy_hdr,

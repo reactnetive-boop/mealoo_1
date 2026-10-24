@@ -1,8 +1,8 @@
 """
 Delivery partner hand-over actions.
 
-pickup:   only the assigned partner, on the order's date, once the kitchen
-          is preparing it (or marked it ready), with the kitchen's pickup
+pickup:   only the assigned partner, on the order's date, only once the
+          kitchen marked it Ready for Pickup, with the kitchen's pickup
           code for that day. Wrong codes are counted per order (locks after
           PICKUP_CODE_MAX_ATTEMPTS) and per partner per day
           (PICKUP_CODE_DAILY_FAILURE_LIMIT), and every attempt is audited.
@@ -38,6 +38,7 @@ from app.domain.status import (
     assert_sub_order_transition,
     assert_extra_order_transition,
     IN_HAND_STATUSES,
+    PICKUP_NOT_READY_MESSAGE,
     PICKUP_READY_STATUSES,
 )
 from app.domain.verification import (
@@ -56,7 +57,9 @@ from app.models.order_model import Order
 
 from app.services.delivery_views import _pickup_locked
 
-_NOT_STARTED = ("scheduled", "pending", "confirmed")
+# still with the kitchen and not marked ready: nothing to collect yet
+_NOT_STARTED = ("scheduled", "pending", "confirmed", "preparing")
+_GONE = ("cancelled", "skipped", "delivery_failed")
 
 FAILURE_REASONS = {
     "customer_unavailable": "customer not reachable",
@@ -160,9 +163,15 @@ class DeliveryHandoverService:
         if day != today:
             raise DomainError("Orders can only be picked up on their delivery date", code="NOT_PICKUP_DAY")
         if order.status in _NOT_STARTED:
-            raise DomainError("The kitchen has not started preparing this order yet", code="NOT_READY_FOR_PICKUP")
+            # the kitchen's "Ready for pickup" is the only way to a pickup
+            raise DomainError(PICKUP_NOT_READY_MESSAGE, 409, code="NOT_READY_FOR_PICKUP")
+        if order.status in _GONE:
+            raise DomainError(
+                f"This order was {order.status.replace('_', ' ')}; there is nothing to pick up.", 409,
+                code="ORDER_NOT_ACTIVE",
+            )
         if order.status not in PICKUP_READY_STATUSES:
-            _assert(kind, order.status, "picked_up")  # cancelled / skipped: explains why
+            _assert(kind, order.status, "picked_up")
 
         attempts = order.pickup_code_attempts or 0
         if attempts >= PICKUP_CODE_MAX_ATTEMPTS:

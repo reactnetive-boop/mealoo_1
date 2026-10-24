@@ -8,9 +8,15 @@ rejected, so no client can set an arbitrary status.
 Hand-over chain for both order kinds:
 
     ... -> preparing -> ready_for_pickup -> picked_up -> out_for_delivery -> delivered
-           (kitchen)    (kitchen, optional)  (partner +     (partner,          (partner +
+           (kitchen)    (kitchen, REQUIRED)  (partner +     (partner,          (partner +
                                               kitchen's      "start delivery")  customer's
                                               daily code)                       order code)
+
+No pickup without the kitchen's "Ready for pickup": the only way to
+picked_up is from ready_for_pickup, and only the kitchen (or an admin
+correcting a stuck order) can move a meal to ready_for_pickup. The kitchen
+may mark a meal ready straight from scheduled / confirmed, on its delivery
+date; skipped, cancelled and finished meals can never become ready.
 
 Pickup and delivery verification are actions, not stored statuses: the code
 is checked and the status moves in the same locked transaction.
@@ -40,8 +46,13 @@ EXTRA_UNPICKED_STATUSES = ("pending", "confirmed", "preparing", "ready_for_picku
 # The kitchen has handed the food to this partner
 IN_HAND_STATUSES = ("picked_up", "out_for_delivery")
 
-# The partner may verify pickup from these
-PICKUP_READY_STATUSES = ("preparing", "ready_for_pickup")
+# The partner may verify pickup only once the kitchen marked the meal ready
+PICKUP_READY_STATUSES = ("ready_for_pickup",)
+
+# The kitchen may mark a meal ready for pickup from these
+KITCHEN_READY_FROM = ("scheduled", "confirmed", "preparing")
+
+PICKUP_NOT_READY_MESSAGE = "Pickup is not allowed until the vendor marks the meal as Ready for Pickup."
 
 # Live orders count against capacity and show the customer's delivery code
 SUB_OPEN_STATUSES = SUB_UNPICKED_STATUSES + IN_HAND_STATUSES
@@ -55,8 +66,8 @@ SUBSCRIPTION_STATUSES = ("active", "paused", "cancelled", "switched", "expired")
 _SUB_ORDER_TRANSITIONS: dict[tuple[str, str], set[str]] = {
     ("scheduled", "preparing"): {"provider"},
     ("preparing", "ready_for_pickup"): {"provider"},
-    # pickup with the kitchen's daily code; marking "ready" is optional for the kitchen
-    ("preparing", "picked_up"): {"delivery_boy"},
+    ("scheduled", "ready_for_pickup"): {"provider"},
+    # pickup with the kitchen's daily code, only after the kitchen marked it ready
     ("ready_for_pickup", "picked_up"): {"delivery_boy"},
     ("picked_up", "out_for_delivery"): {"delivery_boy"},
     # delivery with the customer's code; from picked_up "start delivery" is implied
@@ -91,8 +102,8 @@ _EXTRA_ORDER_TRANSITIONS: dict[tuple[str, str], set[str]] = {
     ("pending", "cancelled"): {"provider", "customer", "system", "admin"},
     ("confirmed", "preparing"): {"provider"},
     ("preparing", "ready_for_pickup"): {"provider"},
+    ("confirmed", "ready_for_pickup"): {"provider"},
     ("confirmed", "cancelled"): {"system", "admin"},
-    ("preparing", "picked_up"): {"delivery_boy"},
     ("ready_for_pickup", "picked_up"): {"delivery_boy"},
     ("picked_up", "out_for_delivery"): {"delivery_boy"},
     ("out_for_delivery", "delivered"): {"delivery_boy", "admin"},

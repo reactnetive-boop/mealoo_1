@@ -13,6 +13,7 @@ from app.core.errors import DomainError
 from app.domain.slots import SLOTS, delivery_window
 from app.domain.status import (
     IN_HAND_STATUSES,
+    PICKUP_READY_STATUSES,
 )
 from app.domain.verification import (
     order_day,
@@ -72,6 +73,7 @@ def _delivery_locked(o) -> bool:
 
 
 def _pickup_status(o) -> str:
+    """not_started (waiting for the kitchen) | preparing | ready | locked | picked_up | cancelled"""
     if o.status in ("cancelled", "skipped"):
         return "cancelled"
     if o.status in IN_HAND_STATUSES or o.status == "delivered":
@@ -83,6 +85,11 @@ def _pickup_status(o) -> str:
     if o.status == "preparing":
         return "preparing"
     return "not_started"
+
+
+def _can_pickup(o) -> bool:
+    """The server will accept a pickup now: the kitchen marked it ready, today, and it is not locked."""
+    return o.status in PICKUP_READY_STATUSES and order_day(o) == today_local() and not _pickup_locked(o)
 
 
 def _delivery_status(o) -> str:
@@ -124,6 +131,7 @@ def _common(o, address_id, lk: _Lookups) -> dict:
         "delivery_area": f"{address.city} {address.pin_code}" if address else None,
         "delivery_address_short": _short_address(address),
         "pickup_status": _pickup_status(o),
+        "can_pickup": _can_pickup(o),
         "delivery_status": _delivery_status(o),
         "pickup_locked": _pickup_locked(o),
         "delivery_locked": _delivery_locked(o),
@@ -152,7 +160,7 @@ def _sub_view(o: Order, lk: _Lookups | None = None) -> dict:
         view.update(_common(o, o.delivery_address_reference_id, lk))
     else:
         view.update({
-            "pickup_status": _pickup_status(o), "delivery_status": _delivery_status(o),
+            "pickup_status": _pickup_status(o), "can_pickup": _can_pickup(o), "delivery_status": _delivery_status(o),
             "pickup_locked": _pickup_locked(o), "delivery_locked": _delivery_locked(o),
             "picked_up_at": o.picked_up_at, "out_for_delivery_at": o.out_for_delivery_at,
             "arrived_at": o.arrived_at, "delivered_at": o.delivered_at,
@@ -180,7 +188,7 @@ def _extra_view(o: ExtraOrder, lk: _Lookups | None = None) -> dict:
         view["package_name"] = pkg.package_name if pkg else None
     else:
         view.update({
-            "pickup_status": _pickup_status(o), "delivery_status": _delivery_status(o),
+            "pickup_status": _pickup_status(o), "can_pickup": _can_pickup(o), "delivery_status": _delivery_status(o),
             "pickup_locked": _pickup_locked(o), "delivery_locked": _delivery_locked(o),
             "picked_up_at": o.picked_up_at, "out_for_delivery_at": o.out_for_delivery_at,
             "arrived_at": o.arrived_at, "delivered_at": o.delivered_at,

@@ -10,7 +10,8 @@ Kitchens may only: start preparing a meal and mark it ready for pickup;
 confirm, start preparing, mark ready or reject (refunded) a one-time order;
 assign a delivery partner to an order that has none. Changing an existing
 assignment is Orleeno's job (admin). Pickup and delivery are recorded by the
-delivery partner.
+delivery partner, and a partner can pick up ONLY after the kitchen marked
+the order Ready for Pickup (see _mark_ready).
 """
 
 from collections import defaultdict
@@ -27,8 +28,10 @@ from app.domain import checkout, delivery_assignment, item_quantity, notify, ord
 from app.domain.slots import expand_plan_slot
 from app.domain.status import (
     assert_sub_order_transition, assert_extra_order_transition, allowed_next,
-    SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES, IN_HAND_STATUSES,
+    SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES, IN_HAND_STATUSES, KITCHEN_READY_FROM,
 )
+from app.domain.vendor_partner import kitchen_address
+from app.models.provider_model import Provider
 from app.domain.verification import (
     NO_PICKUP_CODE_MESSAGE, pickup_code_row, pickup_code_value, regenerate_pickup_code,
 )
@@ -49,6 +52,14 @@ def _first_name(user: User | None) -> str | None:
     if user is None or not user.full_name:
         return None
     return user.full_name.split()[0]
+
+
+def _kitchen_actions(kind: str, status: str, day: date) -> list[str]:
+    """What the kitchen can do now: preparing and ready for pickup only on the delivery date."""
+    return [
+        a for a in allowed_next(kind, status, "provider")
+        if a not in ("preparing", "ready_for_pickup") or day == today_local()
+    ]
 
 
 def _sub_order_view(o: Order, packages, user, address, boy) -> dict:
@@ -72,7 +83,7 @@ def _sub_order_view(o: Order, packages, user, address, boy) -> dict:
         "customer_name": _first_name(user),
         "delivery_area": f"{address.city} {address.pin_code}" if address else None,
         "packages": packages,
-        "next_actions": allowed_next("subscription", o.status, "provider"),
+        "next_actions": _kitchen_actions("subscription", o.status, o.order_date),
         "created_at": o.created_at,
     }
 
@@ -99,7 +110,7 @@ def _extra_order_view(o: ExtraOrder, package, user, address, boy) -> dict:
         "delivery_boy_name": boy.full_name if boy else None,
         "customer_name": _first_name(user),
         "delivery_area": f"{address.city} {address.pin_code}" if address else None,
-        "next_actions": allowed_next("extra", o.status, "provider"),
+        "next_actions": _kitchen_actions("extra", o.status, o.delivery_date),
         "created_at": o.created_at,
     }
 
@@ -163,6 +174,84 @@ def _subscription_views(db: Session, subs) -> list[dict]:
         })
         out.append(view)
     return out
+
+
+_NOT_READY_REASONS = {
+    "skipped": "The customer skipped this meal; it cannot be marked ready for pickup.",
+    "cancelled": "This order is cancelled; it cannot be marked ready for pickup.",
+    "delivered": "This order is already delivered.",
+    "delivery_failed": "This order's delivery has already been attempted.",
+    "picked_up": "The delivery partner has already picked this order up.",
+    "out_for_delivery": "The delivery partner has already picked this order up.",
+    "pending": "Confirm the order first, then mark it ready for pickup.",
+}
+
+
+def _mark_ready(db: Session, vendor_id, order, kind: str) -> dict:
+    """
+    The kitchen confirms the food is packed: the only way an order becomes
+    collectable. Runs on the row-locked order; marking an order that is
+    already ready again changes nothing and notifies nobody, so repeated taps
+    and retried requests are safe. A one-time checkout is one trip, so its
+    other lines still at the kitchen are marked ready with it.
+    """
+    is_sub = kind == "subscription"
+    day = order.order_date if is_sub else order.delivery_date
+    ref = order.order_id if is_sub else order.extra_order_id
+    if order.status == "ready_for_pickup":
+        return {"already": True, "lines": [order]}
+    if order.status not in KITCHEN_READY_FROM:
+        raise DomainError(
+            _NOT_READY_REASONS.get(order.status, f"An order that is {order.status} cannot be marked ready."),
+            409, code="NOT_ELIGIBLE_FOR_PICKUP",
+        )
+    if day != today_local():
+        raise DomainError("An order can only be marked ready for pickup on its delivery date", code="NOT_DELIVERY_DAY")
+    (assert_sub_order_transition if is_sub else assert_extra_order_transition)(order.status, "ready_for_pickup", "provider")
+
+    lines = [order]
+    if not is_sub:
+        lines += [
+            line for line in checkout.siblings(db, order, statuses=KITCHEN_READY_FROM)
+            if str(line.vendor_reference_id) == str(vendor_id)
+        ]
+    for line in lines:
+        line.status = "ready_for_pickup"
+
+    # what the partner needs at the kitchen door
+    kitchen = db.query(Provider).filter(Provider.provider_id == vendor_id).first()
+    if is_sub:
+        names = [
+            name for (name,) in db.query(MenuPackage.package_name)
+            .join(SubscriptionPackage, SubscriptionPackage.package_reference_id == MenuPackage.package_id)
+            .filter(SubscriptionPackage.subscription_reference_id == order.subscription_reference_id)
+        ]
+    else:
+        names = [
+            name for (name,) in db.query(MenuPackage.package_name)
+            .filter(MenuPackage.package_id.in_([line.package_reference_id for line in lines]))
+        ]
+    where = kitchen_address(kitchen) or "the kitchen"
+    kitchen_name = (kitchen.business_name if kitchen else None) or "The kitchen"
+    reference = (
+        f"subscription #{str(order.subscription_reference_id)[:8].upper()}" if is_sub
+        else f"order #{str(order.checkout_id or ref)[:8].upper()}"
+    )
+    notify.delivery_partner(
+        db, order.delivery_boy_reference_id, "order_ready", "Ready for pickup",
+        f"{', '.join(names) or 'The order'} ({order.meal_slot}, {reference}) is packed at {kitchen_name}, {where}. "
+        "Collect it with today's pickup code.",
+        {
+            "order_id": str(ref), "kind": "subscription" if is_sub else "extra",
+            "subscription_id": str(order.subscription_reference_id) if is_sub else None,
+            "provider_id": str(vendor_id), "package_names": names, "meal_slot": order.meal_slot,
+            "pickup_address": where, "kitchen_name": kitchen_name,
+        },
+    )
+    _pickup_pending_without_partner(db, order, kind)
+    business_event("order.ready_for_pickup", order_id=ref, kind=kind, lines=len(lines),
+                   delivery_boy_id=order.delivery_boy_reference_id)
+    return {"already": False, "lines": lines}
 
 
 class ProviderOrderService:
@@ -286,6 +375,18 @@ class ProviderOrderService:
         if not order:
             raise DomainError("Order not found", 404)
 
+        if new_status == "ready_for_pickup":
+            result = _mark_ready(db, vendor_id, order, "subscription")
+            db.commit()
+            return {
+                "success": True,
+                "message": "Already marked ready for pickup" if result["already"]
+                else "Marked ready for pickup; the delivery partner can collect it now",
+                "order_id": str(order.order_id),
+                "status": order.status,
+                "already_done": result["already"],
+            }
+
         assert_sub_order_transition(order.status, new_status, "provider")
         if order.order_date > today_local():
             raise DomainError("Meals can only be prepared on their delivery date")
@@ -297,13 +398,6 @@ class ProviderOrderService:
                 f"Your {order.meal_slot} for {order.order_date} is being prepared.",
                 {"order_id": str(order.order_id), "kind": "subscription"},
             )
-        elif new_status == "ready_for_pickup":
-            notify.delivery_partner(
-                db, order.delivery_boy_reference_id, "order_ready", "Order ready for pickup",
-                f"A {order.meal_slot} order is packed and ready at the kitchen. Ask for today's pickup code.",
-                {"order_id": str(order.order_id), "kind": "subscription"},
-            )
-            _pickup_pending_without_partner(db, order, "subscription")
         db.commit()
         return {
             "success": True,
@@ -366,19 +460,25 @@ class ProviderOrderService:
         if not order:
             raise DomainError("Extra order not found", 404)
 
+        if new_status == "ready_for_pickup":
+            result = _mark_ready(db, vendor_id, order, "extra")
+            db.commit()
+            return {
+                "success": True,
+                "message": "Already marked ready for pickup" if result["already"]
+                else "Marked ready for pickup; the delivery partner can collect it now",
+                "order_id": str(order.extra_order_id),
+                "status": order.status,
+                "already_done": result["already"],
+                "also_updated": [str(line.extra_order_id) for line in result["lines"][1:]],
+            }
+
         assert_extra_order_transition(order.status, new_status, "provider")
         if new_status == "preparing" and order.delivery_date > today_local():
             raise DomainError("Orders can only be prepared on their delivery date")
 
         order.status = new_status
-        if new_status == "ready_for_pickup":
-            notify.delivery_partner(
-                db, order.delivery_boy_reference_id, "order_ready", "Order ready for pickup",
-                f"A one-time {order.meal_slot} order is packed and ready at the kitchen. Ask for today's pickup code.",
-                {"order_id": str(order.extra_order_id), "kind": "extra"},
-            )
-            _pickup_pending_without_partner(db, order, "extra")
-        elif new_status == "cancelled":
+        if new_status == "cancelled":
             order.cancel_reason = "rejected_by_kitchen"
             refund = meals.refund_extra_order(
                 db, order, reason="order_rejected_refund", description="Refund - order declined by the kitchen"

@@ -71,11 +71,12 @@ def _second_kitchen_subscription(client, db, w):
 
 
 def _ready_meal(client, db, w, sub_id, boy, admin_hdr):
-    """Assign the subscription and let the kitchen start today's meal."""
+    """Assign the subscription and let the kitchen prepare today's meal and mark it ready for pickup."""
     assert _assign(client, admin_hdr, sub_id, boy).status_code == 200
     meal = _meals(db, sub_id)[0]
-    r = client.put(f"{K}/subscription-orders/{meal.order_id}/status", headers=w["kitchen_auth"], json={"status": "preparing"})
-    assert r.status_code == 200, r.text
+    for status in ("preparing", "ready_for_pickup"):
+        r = client.put(f"{K}/subscription-orders/{meal.order_id}/status", headers=w["kitchen_auth"], json={"status": status})
+        assert r.status_code == 200, r.text
     return meal
 
 
@@ -418,7 +419,7 @@ def test_wrong_expired_or_other_kitchen_codes_fail(client, db):
     row.status = "revoked"
     db.commit()
     assert client.put(url, headers=boy_auth, json={"pickup_code": code}).status_code == 400
-    assert _meals(db, sub_id)[0].status == "preparing"
+    assert _meals(db, sub_id)[0].status == "ready_for_pickup"
     assert _meals(db, sub_id)[0].pickup_code_attempts >= 2
 
     # malformed codes never reach the check
@@ -443,9 +444,13 @@ def test_pickup_needs_a_started_meal_and_the_assigned_partner(client, db):
     meal = _meals(db, sub_id)[0]
     code = f.pickup_code(db, w["kitchen"])
     r = client.put(f"{D}/orders/{meal.order_id}/pickup", headers=boy_auth, json={"pickup_code": code})
-    assert r.status_code == 400 and r.json()["code"] == "NOT_READY_FOR_PICKUP"
+    assert r.status_code == 409 and r.json()["code"] == "NOT_READY_FOR_PICKUP"
 
+    # preparing is not enough: only the kitchen's "Ready for pickup" opens the pickup
     client.put(f"{K}/subscription-orders/{meal.order_id}/status", headers=w["kitchen_auth"], json={"status": "preparing"})
+    r = client.put(f"{D}/orders/{meal.order_id}/pickup", headers=boy_auth, json={"pickup_code": code})
+    assert r.status_code == 409 and r.json()["code"] == "NOT_READY_FOR_PICKUP"
+    assert r.json()["message"] == "Pickup is not allowed until the vendor marks the meal as Ready for Pickup."
     client.put(f"{K}/subscription-orders/{meal.order_id}/status", headers=w["kitchen_auth"], json={"status": "ready_for_pickup"})
     assert db.query(DeliveryBoyNotification).filter(DeliveryBoyNotification.type == "order_ready").count() == 1
 
@@ -489,7 +494,7 @@ def test_daily_pickup_failure_limit_blocks_guessing_across_orders(client, db):
         extra, sub2 = _second_kitchen_subscription(client, db, w)
         assert _assign(client, admin_hdr, sub2, boy).status_code == 200
         m2 = _meals(db, sub2)[0]
-        client.put(f"{K}/subscription-orders/{m2.order_id}/status", headers=extra["kitchen_auth"], json={"status": "preparing"})
+        client.put(f"{K}/subscription-orders/{m2.order_id}/status", headers=extra["kitchen_auth"], json={"status": "ready_for_pickup"})
         db.expire_all()
         m2 = _meals(db, sub2)[0]
         m2.pickup_code_attempts = attempts

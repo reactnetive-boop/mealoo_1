@@ -45,6 +45,7 @@ def _ready(client, db, *, set_pricing=None):
     meal = _today_meal(db, sub_id)
     oid = str(meal.order_id)
     assert client.put(f"{K}/subscription-orders/{oid}/status", headers=w["kitchen_auth"], json={"status": "preparing"}).status_code == 200
+    assert client.put(f"{K}/subscription-orders/{oid}/status", headers=w["kitchen_auth"], json={"status": "ready_for_pickup"}).status_code == 200
     r = client.put(f"{K}/subscription-orders/{oid}/assign-delivery-boy", headers=w["kitchen_auth"],
                    json={"delivery_boy_id": str(boy.delivery_boy_id)})
     assert r.status_code == 200, r.text
