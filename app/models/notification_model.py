@@ -5,7 +5,8 @@ from sqlalchemy import (
     Text,
     DateTime,
     ForeignKey,
-    Index
+    Index,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
@@ -19,6 +20,7 @@ class Notification(Base):
     __table_args__ = (
         Index("idx_notifications_user", "user_reference_id"),
         Index("idx_notifications_unread", "user_reference_id", "is_read"),
+        Index("uq_notifications_dedupe", "dedupe_key", unique=True, postgresql_where=text("dedupe_key IS NOT NULL")),
         {"schema": "auth"},
     )
 
@@ -54,6 +56,9 @@ class Notification(Base):
     read_at = Column(DateTime(timezone=True))
 
     sent_at = Column(DateTime(timezone=True))
+
+    # one notice per business event (e.g. one per holiday-affected meal)
+    dedupe_key = Column(String(150), nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),

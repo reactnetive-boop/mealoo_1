@@ -22,13 +22,13 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import DomainError
+from app.domain import holidays
 from app.domain.status import EXTRA_OPEN_STATUSES
 from app.models.extra_order_model import ExtraOrder
 from app.models.menu_package_model import MenuPackage
 from app.models.provider_model import Provider
 from app.models.provider_selected_package_model import ProviderSelectedPackage
 from app.models.provider_service_area_model import ProviderServiceArea
-from app.models.provider_unavailability_model import ProviderUnavailability
 from app.models.serviceable_pincode_model import ServiceablePincode
 from app.models.subscription_model import Subscription
 
@@ -167,30 +167,13 @@ def offering(db: Session, provider_id, package_id) -> ProviderSelectedPackage | 
 
 
 def is_on_holiday(db: Session, provider_id, on: date) -> bool:
-    return (
-        db.query(ProviderUnavailability.provider_unavailability_id)
-        .filter(
-            ProviderUnavailability.provider_reference_id == provider_id,
-            ProviderUnavailability.unavailable_date == on,
-        )
-        .first()
-        is not None
-    )
+    """Closed on `on` by any holiday (planned or emergency): nothing new may land on that date."""
+    return holidays.is_closed(db, provider_id, on)
 
 
 def kitchens_on_holiday(db: Session, provider_ids, on: date) -> set:
     """The subset of `provider_ids` closed on `on` (one query for a whole list)."""
-    if not provider_ids:
-        return set()
-    rows = (
-        db.query(ProviderUnavailability.provider_reference_id)
-        .filter(
-            ProviderUnavailability.provider_reference_id.in_(list(provider_ids)),
-            ProviderUnavailability.unavailable_date == on,
-        )
-        .all()
-    )
-    return {r[0] for r in rows}
+    return holidays.closed_kitchens(db, provider_ids, on)
 
 
 def assert_sellable(

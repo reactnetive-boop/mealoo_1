@@ -54,9 +54,13 @@ COMPONENT_KEYS = (
     "delivery_charge",
     "platform_commission",
     "delivery_partner_payout",
+    "gst",
 )
 
 PARTNER_PAYOUT_KEY = "delivery_partner_payout"
+
+# Components that are taxes: shown as "GST 5%" lines in the price breakup
+TAX_KEYS = ("gst",)
 
 
 def money(value) -> Decimal:

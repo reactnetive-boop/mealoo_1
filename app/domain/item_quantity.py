@@ -31,7 +31,7 @@ def _dec(value) -> Decimal | None:
     try:
         return Decimal(str(value))
     except InvalidOperation:
-        raise ValueError("Quantity must be a number")
+        raise ValueError("Quantity must be a number") from None
 
 
 def _num(value: Decimal) -> str:

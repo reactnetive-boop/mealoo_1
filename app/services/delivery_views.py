@@ -10,6 +10,7 @@ from app.core.config import (
     PICKUP_CODE_MAX_ATTEMPTS,
 )
 from app.core.errors import DomainError
+from app.domain.meal_views import MealContext, on_route
 from app.domain.slots import SLOTS, delivery_window
 from app.domain.status import (
     IN_HAND_STATUSES,
@@ -118,6 +119,8 @@ class _Lookups:
             [o.delivery_address_reference_id for o in subs] + [o.address_reference_id for o in extras],
         )
         self.packages = _lookup(db, MenuPackage, "package_id", (o.package_reference_id for o in extras))
+        # what changed about each meal (skip, switch, holiday) and what the kitchen packs for it
+        self.meals = MealContext(db, subs)
 
 
 def _common(o, address_id, lk: _Lookups) -> dict:
@@ -140,6 +143,16 @@ def _common(o, address_id, lk: _Lookups) -> dict:
         "arrived_at": o.arrived_at,
         "delivered_at": o.delivered_at,
         "delivery_window": delivery_window(o.meal_slot),
+        # skipped / cancelled / finished meals are shown greyed out and are not on the route
+        "on_route": on_route(o),
+    }
+
+
+def _changes(o: Order, lk: _Lookups) -> dict:
+    return {
+        "change_tags": lk.meals.tags(o),
+        "holiday_outcome": lk.meals.holiday_outcome(o),
+        "packages": lk.meals.packages(o),
     }
 
 
@@ -158,12 +171,13 @@ def _sub_view(o: Order, lk: _Lookups | None = None) -> dict:
     }
     if lk is not None:
         view.update(_common(o, o.delivery_address_reference_id, lk))
+        view.update(_changes(o, lk))
     else:
         view.update({
             "pickup_status": _pickup_status(o), "can_pickup": _can_pickup(o), "delivery_status": _delivery_status(o),
             "pickup_locked": _pickup_locked(o), "delivery_locked": _delivery_locked(o),
             "picked_up_at": o.picked_up_at, "out_for_delivery_at": o.out_for_delivery_at,
-            "arrived_at": o.arrived_at, "delivered_at": o.delivered_at,
+            "arrived_at": o.arrived_at, "delivered_at": o.delivered_at, "on_route": on_route(o),
         })
     return view
 
@@ -212,6 +226,11 @@ def _card(o, kind: str, lk: _Lookups) -> dict:
         pkg = lk.packages.get(o.package_reference_id)
         card["package_name"] = pkg.package_name if pkg else None
         card["quantity"] = o.quantity
+        card["change_tags"] = []
+    else:
+        card.update(_changes(o, lk))
+        names = [p["package_name"] for p in card["packages"] if p.get("package_name")]
+        card["package_name"] = ", ".join(names) or None
     return card
 
 

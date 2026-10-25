@@ -216,6 +216,10 @@ def test_withdrawal_hold_paid_and_rejected(client, db):
 
 
 def test_holiday_reassignment_moves_meal(client, db):
+    """Manual holiday cover still works for a meal the holiday workflow left at the closed kitchen."""
+
+    from app.models.vendor_holiday_model import VendorHoliday
+
     _, hdr = f.admin(db)
     w = f.world(db, balance="5000")
     sub_id = _sub(client, w)
@@ -224,10 +228,28 @@ def test_holiday_reassignment_moves_meal(client, db):
     body = {"new_provider_id": str(other.provider_id), "reason": "holiday cover"}
     # current kitchen must be on holiday first
     assert client.put(f"{A}/orders/subscription-orders/{meal.order_id}/reassign-provider", headers=hdr, json=body).status_code == 400
-    assert client.post(f"{A}/providers/{w['kitchen'].provider_id}/unavailability", headers=hdr,
-                       json={"date": str(meal.order_date), "reason": "closed"}).status_code == 200
+    db.add(VendorHoliday(provider_reference_id=w["kitchen"].provider_id, holiday_type="emergency", rule_type="dates",
+                         dates=[meal.order_date], start_date=meal.order_date, end_date=meal.order_date))
+    db.commit()
     r = client.put(f"{A}/orders/subscription-orders/{meal.order_id}/reassign-provider", headers=hdr, json=body)
     assert r.status_code == 200, r.text
+
+
+def test_admin_holiday_today_is_an_emergency(client, db):
+    """Orleeno marking a kitchen closed today runs the emergency workflow for that day's meals."""
+    _, hdr = f.admin(db)
+    w = f.world(db, balance="5000")
+    sub_id = _sub(client, w)
+    r = client.post(f"{A}/providers/{w['kitchen'].provider_id}/unavailability", headers=hdr,
+                    json={"date": "2026-10-05", "reason": "gas leak"})
+    assert r.status_code == 200, r.text
+    assert r.json()["holiday"]["holiday_type"] == "emergency"
+    db.expire_all()
+    today_meal = db.query(Order).filter(Order.subscription_reference_id == sub_id,
+                                        Order.order_date == "2026-10-05").one()
+    assert today_meal.status == "cancelled" and today_meal.cancel_reason == "vendor_emergency_holiday"
+    listed = client.get(f"{A}/providers/{w['kitchen'].provider_id}/unavailability", headers=hdr).json()
+    assert listed["records"][0]["holiday_type"] == "emergency"
 
 
 def test_admin_order_lists_show_names_filters_and_lock_flags(client, db):

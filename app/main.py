@@ -40,6 +40,7 @@ def _schedule_jobs() -> None:
     scheduler.add_job(jobs.stale_sweep_job, CronTrigger(hour=0, minute=10), id="stale_sweep", replace_existing=True)
     scheduler.add_job(jobs.cutoff_sweep_job, IntervalTrigger(minutes=15), id="cutoff_sweep", replace_existing=True)
     scheduler.add_job(jobs.maintenance_job, CronTrigger(hour=3, minute=30), id="maintenance", replace_existing=True)
+    scheduler.add_job(jobs.holiday_retry_job, IntervalTrigger(minutes=10), id="holiday_retry", replace_existing=True)
 
 
 @asynccontextmanager

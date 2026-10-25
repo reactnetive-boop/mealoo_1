@@ -25,6 +25,9 @@ keys.
                           created on first use, so this only front-loads them)
   maintenance             daily 03:30: money / pipeline reconciliation (logged
                           at ERROR when anything is off) and data retention
+  holiday_retry           every 10 min: finishes emergency-holiday meals that
+                          failed or were interrupted and re-sends unsent
+                          customer notices (never repeats money movements)
 """
 
 import logging
@@ -37,14 +40,13 @@ from app.core.audit import business_event
 from app.core.clock import today_local
 from app.core.config import STALE_SWEEP_LOOKBACK_DAYS
 from app.core.database import SessionLocal
-from app.domain import maintenance, notify
+from app.domain import emergency_holiday, holidays, maintenance, notify
 from app.domain import orders as meals
 from app.domain.slots import SLOTS, is_before_cutoff
 from app.domain.status import SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES, IN_HAND_STATUSES
 from app.domain.verification import pickup_code_row
 from app.models.extra_order_model import ExtraOrder
 from app.models.order_model import Order
-from app.models.provider_unavailability_model import ProviderUnavailability
 from app.models.subscription_model import Subscription
 
 logger = logging.getLogger("app.jobs")
@@ -56,6 +58,7 @@ LOCK_CUTOFF = 7_303
 LOCK_STALE = 7_304
 LOCK_PICKUP_CODES = 7_305
 LOCK_MAINTENANCE = 7_306
+LOCK_HOLIDAY_RETRY = 7_307
 
 
 def _locked(db: Session, key: int) -> bool:
@@ -161,12 +164,17 @@ def _cutoff(db: Session) -> dict:
     if not passed:
         return {"slots": []}
 
-    holiday_kitchens = [
-        r.provider_reference_id
-        for r in db.query(ProviderUnavailability.provider_reference_id).filter(
-            ProviderUnavailability.unavailable_date == today
-        )
-    ]
+    # safety net: meals the holiday workflows did not move or re-plan (normally none)
+    kitchens_today = {
+        r[0] for r in db.query(Order.vendor_reference_id).filter(
+            Order.order_date == today, Order.status == "scheduled",
+        ).distinct()
+    } | {
+        r[0] for r in db.query(ExtraOrder.vendor_reference_id).filter(
+            ExtraOrder.delivery_date == today, ExtraOrder.status.in_(("pending", "confirmed")),
+        ).distinct()
+    }
+    holiday_kitchens = list(holidays.closed_kitchens(db, kitchens_today, today))
 
     holiday_meals = holiday_extras = unconfirmed = 0
     if holiday_kitchens:
@@ -323,6 +331,30 @@ def _maintenance(db: Session) -> dict:
 
 def maintenance_job() -> None:
     _run("maintenance", LOCK_MAINTENANCE, _maintenance)
+
+
+# ── Emergency holiday retries ─────────────────────────────────
+
+def holiday_retry_job() -> None:
+    db = SessionLocal()
+    try:
+        if not _locked(db, LOCK_HOLIDAY_RETRY):
+            logger.info("[holiday_retry] another instance is running it; skipped")
+            return
+        # each meal commits on its own, so the advisory lock is held on a separate session
+        work = SessionLocal()
+        try:
+            result = emergency_holiday.retry_pending(work)
+        finally:
+            work.close()
+        if result["holidays"]:
+            logger.info("[holiday_retry] done %s", result)
+    except Exception:
+        db.rollback()
+        logger.exception("[holiday_retry] failed")
+    finally:
+        db.rollback()
+        db.close()
 
 
 def startup_catch_up() -> None:

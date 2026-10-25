@@ -229,13 +229,12 @@ class DeliveryBoyOrderService(DeliveryHandoverService):
         if not row:
             raise DomainError("Order not found", 404)
         order, user, address, subscription, vendor = row
-        packages = [
-            {"package_id": mp.package_id, "package_name": mp.package_name, "quantity": sp.quantity}
-            for sp, mp in Repo.get_subscription_packages_for_order(db, subscription.subscription_id)
-        ]
+        lk = _Lookups(db, [order], [])
+        # the package actually packed (a holiday replacement kitchen cooks its own)
+        packages = lk.meals.packages(order)
         return {
             "success": True,
-            "order": _sub_view(order, _Lookups(db, [order], [])),
+            "order": _sub_view(order, lk),
             "user": user,
             "delivery_address": address,
             "packages": packages,

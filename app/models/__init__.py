@@ -59,3 +59,5 @@ from .subscription_delivery_assignment_model import *
 from .provider_pickup_code_model import *
 from .provider_notification_model import *
 from .delivery_partner_vendor_model import *
+from .vendor_holiday_model import *
+from .skip_credit_model import *

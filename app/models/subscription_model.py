@@ -146,6 +146,13 @@ class Subscription(Base):
         nullable=True
     )
 
+    # Kitchen holidays inside the subscription's span, ISO dates: no meal and
+    # no charge on those days (app/domain/holidays.py)
+    holiday_dates = Column(
+        JSONB,
+        nullable=True
+    )
+
     # Total returned to the wallet (skips, cancellation, switch)
     refunded_amount = Column(
         Numeric(10, 2),

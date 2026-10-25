@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from app.core import clock
 from app.models.extra_order_model import ExtraOrder
-from app.models.provider_unavailability_model import ProviderUnavailability
+from app.models.vendor_holiday_model import VendorHoliday
 from app.models.wallet_model import Wallet
 from app.schedulers import jobs
 from tests import factories as f
@@ -58,7 +58,8 @@ def test_slot_must_be_served_by_package(client, db):
 
 def test_holiday_blocks_orders(client, db):
     w = f.world(db, balance="5000")
-    db.add(ProviderUnavailability(provider_reference_id=w["kitchen"].provider_id, unavailable_date=date(2026, 10, 6)))
+    db.add(VendorHoliday(provider_reference_id=w["kitchen"].provider_id, holiday_type="casual", rule_type="dates",
+                         dates=[date(2026, 10, 6)], start_date=date(2026, 10, 6), end_date=date(2026, 10, 6)))
     db.commit()
     r = client.post(E, headers=w["user_auth"], json=_body(w, day="2026-10-06"))
     assert r.status_code == 400 and r.json()["code"] == "KITCHEN_HOLIDAY"
@@ -105,7 +106,11 @@ def test_unconfirmed_orders_cancelled_at_cutoff(client, db):
     assert str(order.extra_order_id) == oid
 
 
-def test_holiday_sweep_cancels_unmoved_meals(client, db):
+def test_planned_holiday_moves_the_meal_to_the_end_of_the_plan(client, db):
+    """A holiday planned after the sale: that day's meal is made up after the end date, not refunded."""
+    from app.models.order_model import Order
+    from app.models.subscription_model import Subscription
+
     w = f.world(db, balance="5000")
     sub = client.post("/api/v1/user/subscription", headers=w["user_auth"], json={
         "vendor_id": str(w["kitchen"].provider_id), "plan_id": str(w["plan"].subscription_plan_id),
@@ -118,7 +123,12 @@ def test_holiday_sweep_cancels_unmoved_meals(client, db):
     assert r.status_code == 200, r.text
     clock.freeze(datetime(2026, 10, 6, 9, 1))
     jobs.cutoff_sweep_job()
-    assert _balance(db, w["user"]) == before + Decimal("180.00")
+    db.expire_all()
+    assert _balance(db, w["user"]) == before  # nothing lost, nothing refunded twice
+    s = db.query(Subscription).one()
+    assert s.end_date == date(2026, 10, 14) and s.holiday_dates == ["2026-10-06"]
+    meals = db.query(Order).filter(Order.status == "scheduled").all()
+    assert len(meals) == 7 and min(m.order_date for m in meals) == date(2026, 10, 7)
 
 
 def test_stale_sweep_refunds_past_unfulfilled(client, db):

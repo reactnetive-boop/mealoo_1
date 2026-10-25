@@ -12,6 +12,12 @@ Unused Service Value Method:
 The switch takes effect from tomorrow (or from the start date when the plan
 has not started). The new subscription stores what was actually paid, so its
 own skips and cancellation refunds stay exact.
+
+Kitchen holidays: the remaining meal days are the old plan's days from the
+effective date that are not its holidays; the new plan delivers that many
+days at the new kitchen, after ITS holidays (they are not charged and are
+listed in the breakup). Switching to another kitchen's package is a kitchen
+(vendor) switch: same rules, and the delivery side shows VENDOR CHANGED.
 """
 
 import uuid
@@ -24,7 +30,7 @@ from app.core.audit import business_event
 from app.core.clock import today_local
 from app.core.errors import DomainError
 from app.domain.delivery_assignment import carry_over as carry_over_delivery_partner
-from app.domain import capacity, ledger, notify, orders as meals
+from app.domain import capacity, holidays, ledger, notify, orders as meals, price_breakup
 from app.domain.eligibility import assert_sellable
 from app.domain.pricing import build_quote, current_components, subscription_unit_price, money, floor_money, ZERO
 from app.domain.slots import expand_plan_slot, package_serves
@@ -35,7 +41,8 @@ from app.models.subscription_model import Subscription
 from app.models.subscription_package_model import SubscriptionPackage
 from app.models.subscription_plan_model import SubscriptionPlan
 from app.models.user_address_model import UserAddress
-from app.services.subscription_service import owned_subscription
+from app.models.provider_model import Provider
+from app.services.subscription_service import assert_expected_total, owned_subscription, plan_name
 
 WHOLE_RUPEE = Decimal("1")
 
@@ -90,7 +97,11 @@ class PackageSwitchService:
 
         today = today_local()
         effective = max(today + timedelta(days=1), sub.start_date)
-        remaining_days = (sub.end_date - effective).days
+        old_holidays = holidays.sub_holidays(sub)
+        remaining_days = sum(
+            1 for i in range((sub.end_date - effective).days)
+            if effective + timedelta(days=i) not in old_holidays
+        )
         if remaining_days < 1:
             raise DomainError(
                 "Package switch is not allowed on the last day of the subscription. "
@@ -114,6 +125,8 @@ class PackageSwitchService:
             plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.subscription_plan_id == sub.plan_reference_id).first()
             discount = plan.discount_percent if plan else 0
 
+        # the same number of meal days at the new kitchen, after its holidays
+        schedule = holidays.plan_days(db, provider.provider_id, effective, remaining_days)
         quote = build_quote(
             current_components(db),
             kind="subscription",
@@ -134,8 +147,11 @@ class PackageSwitchService:
         else:
             payment, credit, action = ZERO, ZERO, "no_adjustment"
 
-        total_days = (sub.end_date - sub.start_date).days
+        total_days = (sub.end_date - sub.start_date).days - len(
+            [d for d in old_holidays if sub.start_date <= d < sub.end_date]
+        )
         return {
+            "schedule": schedule,
             "subscription": sub,
             "old_sub_pkg": old_pkg,
             "new_package": new_package,
@@ -159,6 +175,27 @@ class PackageSwitchService:
         }
 
     @staticmethod
+    def _breakup(db: Session, calc: dict, wallet_balance) -> dict:
+        sub = calc["subscription"]
+        old_package = db.query(MenuPackage).filter(MenuPackage.package_id == calc["old_sub_pkg"].package_reference_id).first()
+        old_kitchen = db.query(Provider).filter(Provider.provider_id == sub.vendor_reference_id).first()
+        used = db.query(Order).filter(
+            Order.subscription_reference_id == sub.subscription_id,
+            Order.order_date < calc["effective_date"],
+            Order.status.notin_(("cancelled", "skipped")),
+        ).count()
+        return price_breakup.switch(
+            calc, slots=calc["slots"], new_package_name=calc["new_package"].package_name,
+            plan_name=plan_name(sub.subscription_type), paid_amount=sub.final_amount,
+            meals_total=meals.total_deliveries(sub), meals_used=used, old_meal_value=meals.meal_value(sub),
+            holiday_dates=calc["schedule"].holiday_dates, wallet_balance=wallet_balance,
+            vendor_changed=str(calc["new_provider"].provider_id) != str(sub.vendor_reference_id),
+            old_vendor_name=old_kitchen.business_name if old_kitchen else None,
+            new_vendor_name=calc["new_provider"].business_name,
+            old_package_name=old_package.package_name if old_package else None,
+        )
+
+    @staticmethod
     def _calculation(calc: dict) -> dict:
         keys = (
             "switch_request_date", "effective_date", "total_days", "used_days", "remaining_days",
@@ -173,8 +210,13 @@ class PackageSwitchService:
         sub = calc["subscription"]
         old_package = db.query(MenuPackage).filter(MenuPackage.package_id == calc["old_sub_pkg"].package_reference_id).first()
         balance = ledger.customer_balance(db, user_id)
+        breakup = PackageSwitchService._breakup(db, calc, balance)
         return {
             "success": True,
+            "price_breakup": breakup,
+            "vendor_changed": breakup["vendor_changed"],
+            "old_provider_name": breakup["old_vendor_name"],
+            "new_provider_name": breakup["new_vendor_name"],
             "old_package_id": calc["old_sub_pkg"].package_reference_id,
             "old_package_name": old_package.package_name if old_package else "",
             "old_provider_id": sub.vendor_reference_id,
@@ -192,7 +234,10 @@ class PackageSwitchService:
         new_package = calc["new_package"]
         provider = calc["new_provider"]
         effective = calc["effective_date"]
-        new_end = effective + timedelta(days=calc["remaining_days"])
+        new_end = calc["schedule"].end
+        breakup = PackageSwitchService._breakup(db, calc, ledger.customer_balance(db, user_id))
+        # what the customer confirmed (pay > 0, refund < 0) is what is moved
+        assert_expected_total(getattr(payload, "expected_total", None), breakup)
 
         capacity.assert_room(
             db,
@@ -234,6 +279,9 @@ class PackageSwitchService:
         snapshot["settlement"]["customer_payable_per_delivery"] = str(floor_money(paid / deliveries))
         snapshot["switched_from"] = str(sub.subscription_id)
         snapshot["plan"] = (sub.pricing_snapshot or {}).get("plan")
+        snapshot["meal_days"] = calc["remaining_days"]
+        snapshot["holiday_dates"] = [d.isoformat() for d in calc["schedule"].holiday_dates]
+        snapshot["price_breakup"] = price_breakup.paid_copy(breakup)
         if paid <= ZERO:
             raise DomainError("This switch cannot be priced. Please contact support.")
 
@@ -256,6 +304,7 @@ class PackageSwitchService:
             final_amount=paid,
             pricing_snapshot=snapshot,
         )
+        holidays.set_sub_holidays(new_sub, calc["schedule"].holiday_dates)
         db.add(new_sub)
         db.flush()
         db.add(SubscriptionPackage(
@@ -358,4 +407,5 @@ class PackageSwitchService:
             "wallet_credit_amount": calc["wallet_credit_amount"],
             "wallet_balance_after": balance,
             "new_orders_created": created,
+            "price_breakup": snapshot["price_breakup"],
         }

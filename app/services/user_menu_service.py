@@ -11,7 +11,7 @@ from app.domain.eligibility import (
     is_on_holiday,
     kitchens_on_holiday,
 )
-from app.domain import item_quantity, ratings
+from app.domain import holidays, ratings
 from app.domain.pricing import (
     build_quote, current_components, package_price_view, selling_price, subscription_unit_price,
 )
@@ -120,9 +120,10 @@ def _primary_image(package) -> str | None:
 
 
 def _offer_view(package: MenuPackage, provider: Provider, kitchen_open_today: bool,
-                rating: dict | None = None, pincodes: list | None = None) -> dict:
+                rating: dict | None = None, pincodes: list | None = None, vendor_holidays: dict | None = None) -> dict:
     return {
         **(rating or ratings.empty()),
+        "vendor_holidays": vendor_holidays,
         # pincodes this kitchen delivers to: the app checks the address before ordering
         "service_pincodes": pincodes or ([str(provider.pincode)] if provider.pincode else []),
         "package_id": package.package_id,
@@ -195,10 +196,12 @@ class UserMenuService:
         closed_today = kitchens_on_holiday(db, set(providers), today_local())
         stats = ratings.for_offers(db, ((package.package_id, provider.provider_id) for _, package, provider in offerings))
         pincodes = kitchen_pincodes(db, providers.values())
+        closures = holidays.public_view(db, providers)
         result = [
             _offer_view(
                 package, provider, provider.provider_id not in closed_today,
                 ratings.get(stats, package.package_id, provider.provider_id), pincodes.get(provider.provider_id),
+                closures.get(provider.provider_id),
             )
             for _, package, provider in offerings
         ]
@@ -232,13 +235,15 @@ class UserMenuService:
         view = _offer_view(
             package, provider, not is_on_holiday(db, provider.provider_id, today_local()),
             rating, kitchen_pincodes(db, [provider]).get(provider.provider_id),
+            holidays.public_view(db, [provider.provider_id]).get(provider.provider_id),
         )
         view["description"] = package.description
         # this package's own reviews (never the kitchen's other packages)
         view["reviews"] = ratings.recent_reviews(db, package.package_id, provider.provider_id, limit=5)
         view["review_total"] = ratings.review_count(db, package.package_id, provider.provider_id)
+        # names only: kitchens no longer give units, so none are shown to customers
         view["items"] = [
-            {"item_id": i.item_id, "item_name": i.item_name, "item_order": i.item_order or 0, **item_quantity.of(i)}
+            {"item_id": i.item_id, "item_name": i.item_name, "item_order": i.item_order or 0}
             for i in sorted(package.items, key=lambda i: i.item_order or 0)
         ]
         view["images"] = [

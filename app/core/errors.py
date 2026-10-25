@@ -9,6 +9,7 @@ stack traces, SQL and exception text stay in the server log only.
 import logging
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -22,20 +23,24 @@ class DomainError(Exception):
     """A business rule was violated; `message` is shown to the caller."""
 
     def __init__(self, message: str, status_code: int = 400, code: str | None = None,
-                 headers: dict[str, str] | None = None):
+                 headers: dict[str, str] | None = None, extra: dict | None = None):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.code = code
         self.headers = headers
+        # extra JSON for the caller, e.g. the new price breakup on PRICE_CHANGED
+        self.extra = extra
 
 
-def _body(detail, code: str | None = None):
+def _body(detail, code: str | None = None, extra: dict | None = None):
     body = {"success": False, "detail": detail}
     if isinstance(detail, str):
         body["message"] = detail
     if code:
         body["code"] = code
+    if extra:
+        body.update({k: v for k, v in extra.items() if k not in body})
     return body
 
 
@@ -43,7 +48,10 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(DomainError)
     async def _domain(request: Request, exc: DomainError):
-        return JSONResponse(status_code=exc.status_code, content=_body(exc.message, exc.code), headers=exc.headers)
+        return JSONResponse(
+            status_code=exc.status_code, content=jsonable_encoder(_body(exc.message, exc.code, exc.extra)),
+            headers=exc.headers,
+        )
 
     @app.exception_handler(HTTPException)
     async def _http(request: Request, exc: HTTPException):

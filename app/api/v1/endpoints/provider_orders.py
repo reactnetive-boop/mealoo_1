@@ -17,6 +17,8 @@ from app.schemas.provider_order_schema import (
     UpdateOrderStatusResponse,
     ProviderExtraOrderListResponse,
     DailyFoodSummaryResponse,
+    BatchStatusRequest,
+    ReadyTodayRequest,
 )
 from app.schemas.delivery_boy_schema import AssignDeliveryBoyRequest
 
@@ -197,4 +199,60 @@ def get_daily_food_summary(
         vendor_id=current_provider["provider_id"],
         summary_date=summary_date or today_local(),
         meal_slot=meal_slot,
+    )
+
+
+# ── Kitchen Home: next delivery batch and bulk Ready for Pickup ──
+
+@router.get(
+    "/next-batch",
+    summary="Next Delivery Batch",
+    description=(
+        "The next batch (date + meal) with food still to prepare: delivery window, order counts, what to cook "
+        "and the batch state. Skipped, cancelled and holiday meals are not counted (shown under `excluded`). "
+        "A batch whose delivery window ended today is listed under `overdue_batches`."
+    ),
+)
+def next_batch(db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
+    return ProviderOrderService.next_batch(db, current_provider["provider_id"])
+
+
+@router.put(
+    "/batch/status",
+    summary="Start Preparing / Mark Ready a Batch",
+    description=(
+        "Moves every eligible order of the batch at once, on its delivery date: `preparing` (scheduled / "
+        "confirmed orders) or `ready_for_pickup` (scheduled / confirmed / preparing). Atomic and idempotent: "
+        "a repeat changes nothing and notifies nobody. Returns the refreshed next batch."
+    ),
+)
+def update_batch(payload: BatchStatusRequest, db: Session = Depends(get_db),
+                 current_provider=Depends(get_current_provider)):
+    return ProviderOrderService.update_batch(
+        db, current_provider["provider_id"], payload.order_date, payload.meal_slot, payload.status,
+    )
+
+
+@router.get(
+    "/ready-today",
+    summary="Preview: Mark All of Today's Orders Ready",
+    description="The exact number of today's orders that 'Mark all ready' would change, per meal.",
+)
+def ready_today_preview(db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
+    return ProviderOrderService.ready_today_preview(db, current_provider["provider_id"])
+
+
+@router.post(
+    "/ready-today",
+    summary="Mark All of Today's Orders Ready for Pickup",
+    description=(
+        "Every eligible order of today (scheduled / confirmed / preparing) becomes Ready for Pickup in one "
+        "transaction. Skipped, cancelled, delivered, holiday and unconfirmed orders are left alone. Repeating "
+        "it changes nothing and sends no notification; each assigned delivery partner gets one notice."
+    ),
+)
+def ready_today(payload: ReadyTodayRequest | None = None, db: Session = Depends(get_db),
+                current_provider=Depends(get_current_provider)):
+    return ProviderOrderService.ready_today(
+        db, current_provider["provider_id"], payload.expected_count if payload else None,
     )

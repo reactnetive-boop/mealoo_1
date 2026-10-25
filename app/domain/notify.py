@@ -13,8 +13,14 @@ from app.models.delivery_boy_notification_model import DeliveryBoyNotification
 from app.models.provider_notification_model import ProviderNotification
 
 
-def customer(db: Session, user_id, type: str, title: str, body: str, data: dict | None = None) -> None:
-    db.add(Notification(user_reference_id=user_id, type=type, title=title, body=body, data=data))
+def customer(db: Session, user_id, type: str, title: str, body: str, data: dict | None = None,
+             dedupe_key: str | None = None) -> None:
+    """dedupe_key: one notice per business event; a second call with the same key does nothing."""
+    if dedupe_key is not None:
+        pending = any(isinstance(o, Notification) and o.dedupe_key == dedupe_key for o in db.new)
+        if pending or db.query(Notification.notification_id).filter(Notification.dedupe_key == dedupe_key).first():
+            return
+    db.add(Notification(user_reference_id=user_id, type=type, title=title, body=body, data=data, dedupe_key=dedupe_key))
     push.queue(db, "customer", user_id, title, body, {**(data or {}), "type": type})
 
 

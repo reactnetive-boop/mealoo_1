@@ -12,6 +12,13 @@ Money: the full plan price (pricing engine, frozen in pricing_snapshot) is
 debited from the wallet up front. Free skips and cancellations return the
 value of each cancelled meal (snapshot per-meal price) to the wallet, once
 per meal.
+
+Kitchen holidays (app/domain/holidays.py): a fixed-length plan has its
+number of meal days and moves its end date past the kitchen's holidays; a
+custom plan is charged only for the open days in the chosen range. The
+customer never pays for a meal on a holiday; the dates are listed in the
+price breakup (app/domain/price_breakup.py), which is what the payment
+charges - a changed price is refused with PRICE_CHANGED until confirmed.
 """
 
 import uuid
@@ -30,7 +37,8 @@ from app.core.config import (
 from app.core.errors import DomainError
 from app.domain.cancellation import assert_customer_can_cancel, customer_cancellation_enabled
 from app.core.paging import FIRST_PAGE, Paging
-from app.domain import capacity, ledger, notify, orders as meals, partner_leave
+from app.domain import capacity, holidays, ledger, notify, orders as meals, partner_leave, price_breakup
+from app.domain.meal_views import MealContext
 from app.domain.delivery_assignment import inherited_partner
 from app.domain.status import SUB_OPEN_STATUSES
 from app.domain.verification import delivery_code, delivery_code_expired
@@ -56,6 +64,7 @@ from app.domain.slots import (
 )
 from app.models.menu_package_model import MenuPackage
 from app.models.order_model import Order
+from app.models.package_switch_log_model import PackageSwitchLog
 from app.models.provider_model import Provider
 from app.models.subscription_model import Subscription
 from app.models.subscription_package_model import SubscriptionPackage
@@ -103,7 +112,7 @@ def owned_subscription(db: Session, user_id: str, subscription_id, lock: bool = 
 
 
 def resolve_term(plan: SubscriptionPlan, start_date: date, end_date: date | None) -> tuple[date, int]:
-    """(exclusive end date, number of days) for a plan starting on start_date."""
+    """(exclusive end date, number of days) for a plan starting on start_date, ignoring holidays."""
 
     if is_custom_plan(plan):
         if end_date is None:
@@ -116,6 +125,59 @@ def resolve_term(plan: SubscriptionPlan, start_date: date, end_date: date | None
     else:
         days = int(plan.duration_days)
     return start_date + timedelta(days=days), days
+
+
+def plan_schedule(db: Session, plan: SubscriptionPlan, provider_id, start_date: date,
+                  end_date: date | None) -> holidays.Schedule:
+    """
+    Meal days of a new plan at this kitchen. Fixed plans keep their number of
+    meal days and end after the kitchen's holidays; custom plans are the open
+    days of the chosen range.
+    """
+    _, days = resolve_term(plan, start_date, end_date)
+    if is_custom_plan(plan):
+        return holidays.plan_range(db, provider_id, start_date, end_date)
+    return holidays.plan_days(db, provider_id, start_date, days)
+
+
+def plan_name(plan_or_type) -> str:
+    kind = plan_or_type if isinstance(plan_or_type, str) else (plan_or_type.subscription_type if plan_or_type else "")
+    return f"{(kind or 'subscription').replace('_', ' ').title()} plan discount"
+
+
+def assert_expected_total(expected, breakup: dict, message: str | None = None) -> None:
+    """The customer confirmed `expected`; refuse to charge anything else."""
+    if expected is None:
+        return
+    if money(expected) != money(breakup["total"]):
+        raise DomainError(
+            message or "The price has changed since you last saw it. Please check the new price and confirm again.",
+            409, code="PRICE_CHANGED",
+            extra={"price_breakup": breakup, "expected_total": str(money(expected)), "new_total": breakup["total"]},
+        )
+
+
+def stored_breakup(db: Session, sub: Subscription) -> dict | None:
+    """The breakup shown at purchase (rebuilt from the snapshot for plans bought before it was stored)."""
+    snapshot = sub.pricing_snapshot or {}
+    if snapshot.get("price_breakup"):
+        return snapshot["price_breakup"]
+    if not snapshot.get("base_unit_price") or snapshot.get("switched_from"):
+        return None
+    package = (
+        db.query(MenuPackage.package_name)
+        .join(SubscriptionPackage, SubscriptionPackage.package_reference_id == MenuPackage.package_id)
+        .filter(SubscriptionPackage.subscription_reference_id == sub.subscription_id)
+        .scalar()
+    )
+    try:
+        return price_breakup.paid_copy(price_breakup.subscription(
+            snapshot, slots=expand_plan_slot(sub.meal_slot), package_name=package,
+            plan_name=plan_name(sub.subscription_type), holiday_dates=holidays.sub_holidays(sub),
+            start_date=sub.start_date, end_date=sub.end_date,
+        ))
+    except (AssertionError, KeyError, ValueError):
+        return None
 
 
 def validate_start(slots: list[str], start_date: date) -> None:
@@ -151,6 +213,27 @@ def subscription_view(db: Session, sub: Subscription) -> dict:
         .first()
     )
     plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.subscription_plan_id == sub.plan_reference_id).first()
+    switched_from = None
+    if (sub.pricing_snapshot or {}).get("switched_from"):
+        log = db.query(PackageSwitchLog).filter(
+            PackageSwitchLog.new_subscription_reference_id == sub.subscription_id
+        ).first()
+        if log is not None:
+            names = dict(db.query(MenuPackage.package_id, MenuPackage.package_name).filter(
+                MenuPackage.package_id.in_([log.old_package_reference_id, log.new_package_reference_id])))
+            kitchens = dict(db.query(Provider.provider_id, Provider.business_name).filter(
+                Provider.provider_id.in_([log.old_provider_reference_id, log.new_provider_reference_id])))
+            switched_from = {
+                "subscription_id": log.old_subscription_reference_id,
+                "effective_date": log.effective_date,
+                "old_package_name": names.get(log.old_package_reference_id),
+                "new_package_name": names.get(log.new_package_reference_id),
+                "old_vendor_name": kitchens.get(log.old_provider_reference_id),
+                "new_vendor_name": kitchens.get(log.new_provider_reference_id),
+                "vendor_changed": log.old_provider_reference_id != log.new_provider_reference_id,
+                "payment_amount": log.payment_amount,
+                "wallet_credit_amount": log.wallet_credit_amount,
+            }
 
     return {
         "subscription_id": sub.subscription_id,
@@ -192,6 +275,10 @@ def subscription_view(db: Session, sub: Subscription) -> dict:
         "unit_price": package_row[0].unit_price if package_row else None,
         "meal_value": meals.meal_value(sub),
         "price_breakdown": quote_view(sub.pricing_snapshot) if sub.pricing_snapshot else None,
+        "price_breakup": stored_breakup(db, sub),
+        "holiday_dates": sorted(holidays.sub_holidays(sub)),
+        "vendor_holidays": holidays.public_view(db, [sub.vendor_reference_id]).get(sub.vendor_reference_id),
+        "switched_from": switched_from,
         "next_meal": {
             "order_id": next_meal.order_id,
             "order_date": next_meal.order_date,
@@ -356,7 +443,8 @@ class SubscriptionService:
 
         start = payload.start_date or earliest_service_date(slots)
         validate_start(slots, start)
-        end, days = resolve_term(plan, start, payload.end_date)
+        schedule = plan_schedule(db, plan, provider.provider_id, start, payload.end_date)
+        end, days = schedule.end, schedule.meal_days
 
         snapshot = build_quote(
             current_components(db),
@@ -369,6 +457,11 @@ class SubscriptionService:
 
         balance = ledger.customer_balance(db, user_id)
         total = Decimal(snapshot["total_payable"])
+        breakup = price_breakup.subscription(
+            snapshot, slots=slots, package_name=package.package_name, plan_name=plan_name(plan),
+            holiday_dates=schedule.holiday_dates, wallet_balance=balance, start_date=start, end_date=end,
+            meal_days=days,
+        )
 
         return {
             "success": True,
@@ -388,7 +481,11 @@ class SubscriptionService:
             "free_skips": plan.free_skips or 0,
             "earliest_start_date": earliest_service_date(slots),
             "breakdown": quote_view(snapshot),
+            "price_breakup": breakup,
+            "holiday_dates": schedule.holiday_dates,
+            "vendor_holidays": holidays.public_view(db, [provider.provider_id]).get(provider.provider_id),
             "total_payable": total,
+            "expected_total": breakup["total"],
             "wallet_balance": balance,
             "shortfall": max(ZERO, total - balance),
         }
@@ -429,7 +526,8 @@ class SubscriptionService:
             raise DomainError(f"'{package.package_name}' is not served for {', '.join(slots)}")
 
         validate_start(slots, payload.start_date)
-        end_date, days = resolve_term(plan, payload.start_date, payload.end_date)
+        schedule = plan_schedule(db, plan, provider.provider_id, payload.start_date, payload.end_date)
+        end_date, days = schedule.end, schedule.meal_days
 
         capacity.assert_room(
             db,
@@ -462,6 +560,16 @@ class SubscriptionService:
         total = Decimal(snapshot["total_payable"])
         if total <= ZERO:
             raise DomainError("This plan cannot be priced. Please contact support.")
+        breakup = price_breakup.subscription(
+            snapshot, slots=slots, package_name=package.package_name, plan_name=plan_name(plan),
+            holiday_dates=schedule.holiday_dates, wallet_balance=ledger.customer_balance(db, user_id),
+            start_date=payload.start_date, end_date=end_date, meal_days=days,
+        )
+        # what the customer confirmed is what is charged
+        assert_expected_total(getattr(payload, "expected_total", None), breakup)
+        snapshot["meal_days"] = days
+        snapshot["holiday_dates"] = [d.isoformat() for d in schedule.holiday_dates]
+        snapshot["price_breakup"] = price_breakup.paid_copy(breakup)
 
         wallet = ledger.lock_customer_wallet(db, user_id)
         if txn_key:
@@ -494,6 +602,7 @@ class SubscriptionService:
             final_amount=total,
             pricing_snapshot=snapshot,
         )
+        holidays.set_sub_holidays(subscription, schedule.holiday_dates)
         db.add(subscription)
         db.flush()
         db.add(SubscriptionPackage(
@@ -555,6 +664,8 @@ class SubscriptionService:
             "final_amount": sub.final_amount,
             "wallet_balance_after": balance_after,
             "price_breakdown": quote_view(sub.pricing_snapshot) if sub.pricing_snapshot else None,
+            "price_breakup": (sub.pricing_snapshot or {}).get("price_breakup"),
+            "holiday_dates": sorted(holidays.sub_holidays(sub)),
         }
 
     # ── Read ──────────────────────────────────────────────────
@@ -573,7 +684,25 @@ class SubscriptionService:
         return subscription_view(db, owned_subscription(db, user_id, subscription_id))
 
     @staticmethod
-    def _meal_view(order: Order, sub: Subscription) -> dict:
+    def _skip_blocked_reason(order: Order, sub: Subscription) -> str | None:
+        """Why this meal cannot be skipped right now, in words the customer understands."""
+        if order.status == "skipped":
+            return None
+        if order.status == "cancelled":
+            if order.cancel_reason in ("vendor_holiday", "vendor_emergency_holiday", "vendor_holiday_not_owed"):
+                return "No delivery on this day: the kitchen is on holiday"
+            return "This meal is cancelled"
+        if order.order_date < today_local():
+            return "Past meals cannot be skipped"
+        if sub.status != "active":
+            return f"Your plan is {sub.status}"
+        if order.status != "scheduled":
+            return (f"The kitchen has already started preparing your {order.meal_slot}, "
+                    "so it can no longer be skipped")
+        return None
+
+    @staticmethod
+    def _meal_view(order: Order, sub: Subscription, ctx: MealContext | None = None) -> dict:
         today = today_local()
         # The hand-over code is shown only on the day of the meal, until it is delivered
         show_code = (
@@ -605,6 +734,10 @@ class SubscriptionService:
             "can_skip": can_skip,
             "delivery_window": delivery_window(order.meal_slot),
             "skip_will_refund": can_skip and free_skips_left > 0 and is_before_cutoff(order.order_date, order.meal_slot),
+            "skip_blocked_reason": SubscriptionService._skip_blocked_reason(order, sub),
+            "vendor_name": ctx.kitchen_name(order.vendor_reference_id) if ctx else None,
+            "holiday_outcome": ctx.holiday_outcome(order) if ctx else None,
+            "change_tags": ctx.tags(order) if ctx else [],
             "created_at": order.created_at,
             "updated_at": order.updated_at,
         }
@@ -616,13 +749,18 @@ class SubscriptionService:
         summary: dict = {}
         for o in orders:
             summary[o.status] = summary.get(o.status, 0) + 1
+        ctx = MealContext(db, orders)
         return {
             "success": True,
             "subscription_id": sub.subscription_id,
             "subscription_status": sub.status,
             "total": len(orders),
             "status_summary": summary,
-            "orders": [SubscriptionService._meal_view(o, sub) for o in orders],
+            "orders": [SubscriptionService._meal_view(o, sub, ctx) for o in orders],
+            "holiday_dates": [
+                {"date": d, "label": holidays.CASUAL_LABEL, "holiday_type": holidays.CASUAL}
+                for d in sorted(holidays.sub_holidays(sub))
+            ],
         }
 
     @staticmethod
@@ -643,9 +781,25 @@ class SubscriptionService:
                 "unit_price": sub_pkg.unit_price,
                 "primary_image": next((i.image_url for i in pkg.images if i.is_primary), None),
             })
+        ctx = MealContext(db, [order])
+        if order.replacement_package_reference_id:
+            # a holiday replacement: the other kitchen cooks its own package, at the price already paid
+            replacement = db.query(MenuPackage).filter(
+                MenuPackage.package_id == order.replacement_package_reference_id
+            ).first()
+            if replacement is not None:
+                packages = [{
+                    "package_id": replacement.package_id,
+                    "package_name": replacement.package_name,
+                    "meal_type": replacement.meal_type,
+                    "food_type": replacement.food_type,
+                    "quantity": packages[0]["quantity"] if packages else 1,
+                    "unit_price": packages[0]["unit_price"] if packages else ZERO,
+                    "primary_image": next((i.image_url for i in replacement.images if i.is_primary), None),
+                }]
         return {
             "success": True,
-            "order": SubscriptionService._meal_view(order, sub),
+            "order": SubscriptionService._meal_view(order, sub, ctx),
             "delivery_address": address,
             "packages": packages,
             "vendor": vendor,
@@ -737,10 +891,11 @@ class SubscriptionService:
             )
         if sub.status != "active":
             raise DomainError(f"Cannot skip meals of a subscription that is {sub.status}")
-        if order.status != "scheduled":
-            raise DomainError(f"Only scheduled meals can be skipped. This meal is {order.status.replace('_', ' ')}")
         if order.order_date < today_local():
-            raise DomainError("Past meals cannot be skipped")
+            raise DomainError("Past meals cannot be skipped", code="SKIP_NOT_ALLOWED")
+        if order.status != "scheduled":
+            # the kitchen started cooking (or the meal is closed): a skip can no longer stop it
+            raise DomainError(SubscriptionService._skip_blocked_reason(order, sub), code="SKIP_NOT_ALLOWED")
 
         before_cutoff = is_before_cutoff(order.order_date, order.meal_slot)
         free_left = (sub.free_skips_total or 0) - (sub.free_skips_used or 0)
@@ -886,8 +1041,26 @@ class SubscriptionService:
         resume_date = today_local() + timedelta(days=1)
         days_paused = max(0, (resume_date - sub.pause_start_date).days)
         old_end = sub.end_date
-        new_end = old_end + timedelta(days=days_paused)
         slots = expand_plan_slot(sub.meal_slot)
+        # meal days missed while paused (kitchen holidays were never meal days) come back
+        # after the end date, past any holidays there
+        known = holidays.sub_holidays(sub)
+        missed = sum(1 for i in range(days_paused) if sub.pause_start_date + timedelta(days=i) not in known)
+        # meals coming back on a day the kitchen is now closed are made up at the end as well
+        closed_now = holidays.closed_dates(db, sub.vendor_reference_id, resume_date, old_end) - known
+        if closed_now:
+            missed += db.query(Order.order_date).filter(
+                Order.subscription_reference_id == sub.subscription_id,
+                Order.order_date.in_(sorted(closed_now)),
+                Order.status == "cancelled",
+                Order.cancel_reason == "paused",
+            ).distinct().count()
+            known |= closed_now
+        new_end = old_end
+        if missed:
+            extension = holidays.extend(db, sub.vendor_reference_id, old_end, missed, skip=known)
+            known |= set(extension.holiday_dates)
+            new_end = extension.end
 
         # Lock the kitchen and check room on the dates coming back
         db.query(Provider).filter(Provider.provider_id == sub.vendor_reference_id).with_for_update().first()
@@ -922,6 +1095,9 @@ class SubscriptionService:
             partner_leave.leave_dates(db, partner_id, resume_date, new_end) if partner_id is not None else set()
         )
         for meal in restored:
+            if meal.order_date in known:
+                meal.cancel_reason = "vendor_holiday"  # closed that day: made up at the end
+                continue
             meal.status = "scheduled"
             meal.cancel_reason = None
             # the subscription may have been (re)assigned while paused
@@ -941,6 +1117,7 @@ class SubscriptionService:
         # subscription is extended by exactly that many days instead.
         sub.status = "active"
         sub.end_date = new_end
+        holidays.set_sub_holidays(sub, known)
         sub.total_days_paused = (sub.total_days_paused or 0) + days_paused
         sub.pause_start_date = None
         created = meals.generate_meals(db, sub, from_date=resume_date)

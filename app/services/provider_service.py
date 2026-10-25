@@ -1,15 +1,13 @@
-from datetime import date as date_type, timedelta
+from datetime import date as date_type
 
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.clock import today_local
 from app.core.errors import DomainError
-from app.domain import capacity, vendor_partner
+from app.domain import capacity, holidays, vendor_partner
 from app.domain.eligibility import assert_pincode_can_change, serviceable_pincode, parse_pincode
-from app.domain.slots import SLOTS, is_before_cutoff
 from app.models.delivery_boy_model import DeliveryBoy
-from app.models.provider_unavailability_model import ProviderUnavailability
 from app.repositories.provider_repository import ProviderRepository
 from app.utils.file_helper import save_profile_image, delete_upload
 
@@ -92,10 +90,7 @@ class ProviderService:
             "approval_status": provider.approval_status,
             "approval_note": provider.approval_note,
             "is_accepting_orders": bool(provider.is_accepting_orders),
-            "is_holiday_today": db.query(ProviderUnavailability).filter(
-                ProviderUnavailability.provider_reference_id == provider.provider_id,
-                ProviderUnavailability.unavailable_date == today_local(),
-            ).first() is not None,
+            "is_holiday_today": holidays.is_closed(db, provider.provider_id, today_local()),
             "next_step": next_step,
         }
 
@@ -207,58 +202,6 @@ class ProviderService:
             "message": "You are accepting new orders" if accepting else "New orders are paused",
             "is_accepting_orders": provider.is_accepting_orders,
         }
-
-    # ── Holidays (kitchen self-service) ───────────────────────
-
-    @staticmethod
-    def list_holidays(db, provider_id: str):
-        rows = (
-            db.query(ProviderUnavailability)
-            .filter(
-                ProviderUnavailability.provider_reference_id == provider_id,
-                ProviderUnavailability.unavailable_date >= today_local() - timedelta(days=30),
-            )
-            .order_by(ProviderUnavailability.unavailable_date.asc())
-            .all()
-        )
-        return {"success": True, "total": len(rows), "holidays": rows}
-
-    @staticmethod
-    def add_holiday(db, provider_id: str, on: date_type, reason: str | None):
-        if on < today_local() or (on == today_local() and not all(is_before_cutoff(on, s) for s in SLOTS)):
-            raise DomainError("A holiday must be marked before that day's first meal cut-off")
-        exists = db.query(ProviderUnavailability).filter(
-            ProviderUnavailability.provider_reference_id == provider_id,
-            ProviderUnavailability.unavailable_date == on,
-        ).first()
-        if exists:
-            raise DomainError(f"{on} is already marked as a holiday", 409)
-        record = ProviderUnavailability(provider_reference_id=provider_id, unavailable_date=on, reason=reason)
-        db.add(record)
-        db.commit()
-        db.refresh(record)
-        return {
-            "success": True,
-            "message": (
-                f"Holiday marked for {on}. Orleeno may move that day's orders to another kitchen; "
-                "orders that cannot be moved are cancelled and refunded at the cut-off."
-            ),
-            "holiday": record,
-        }
-
-    @staticmethod
-    def remove_holiday(db, provider_id: str, on: date_type):
-        record = db.query(ProviderUnavailability).filter(
-            ProviderUnavailability.provider_reference_id == provider_id,
-            ProviderUnavailability.unavailable_date == on,
-        ).first()
-        if not record:
-            raise DomainError("Holiday not found", 404)
-        if on < today_local():
-            raise DomainError("Past holidays cannot be removed")
-        db.delete(record)
-        db.commit()
-        return {"success": True, "message": f"Holiday on {on} removed"}
 
     # ── Delivery partners this kitchen may assign ─────────────
 

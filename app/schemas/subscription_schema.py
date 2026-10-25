@@ -123,6 +123,11 @@ class CreateSubscriptionRequest(BaseModel):
         max_length=1
     )
 
+    # The total the customer saw in the price breakup (quote). When given and
+    # the price has changed since, nothing is charged: 409 PRICE_CHANGED with
+    # the new breakup, for the customer to confirm again.
+    expected_total: Optional[Decimal] = Field(None, ge=0)
+
 
 class SubscriptionQuoteRequest(BaseModel):
 
@@ -228,6 +233,17 @@ class SubscriptionResponse(BaseModel):
 
     price_breakdown: Optional[dict] = None
 
+    # The full breakup shown at purchase (every line, holidays, wallet)
+    price_breakup: Optional[dict] = None
+
+    # Kitchen holidays inside the plan: no meal and no charge
+    holiday_dates: List[date] = []
+
+    vendor_holidays: Optional[dict] = None
+
+    # This plan replaced another one (package / kitchen switch)
+    switched_from: Optional[dict] = None
+
     next_meal: Optional[dict] = None
 
     can_pause: bool = False
@@ -264,6 +280,10 @@ class CreateSubscriptionResponse(BaseModel):
     wallet_balance_after: Decimal
 
     price_breakdown: Optional[dict] = None
+
+    price_breakup: Optional[dict] = None
+
+    holiday_dates: List[date] = []
 
 
 class SubscriptionListResponse(BaseModel):
@@ -366,6 +386,17 @@ class UserSubscriptionOrderResponse(BaseModel):
 
     skip_will_refund: bool = False
 
+    # Why a skip is not possible right now (shown as is), e.g. the kitchen started cooking
+    skip_blocked_reason: Optional[str] = None
+
+    # Kitchen cooking it (a replacement kitchen on a holiday) and its holiday outcome
+    vendor_name: Optional[str] = None
+
+    holiday_outcome: Optional[dict] = None
+
+    # SKIPPED | PACKAGE_SWITCHED | VENDOR_CHANGED | NOT_DELIVERABLE_VENDOR_HOLIDAY
+    change_tags: List[dict] = []
+
     created_at: Optional[datetime]
 
     updated_at: Optional[datetime]
@@ -385,6 +416,9 @@ class UserSubscriptionOrderListResponse(BaseModel):
     status_summary: dict
 
     orders: List[UserSubscriptionOrderResponse]
+
+    # Kitchen holidays inside the plan: [{date, label, holiday_type}]
+    holiday_dates: List[dict] = []
 
 
 class UserOrderAddressInfo(BaseModel):
@@ -525,6 +559,10 @@ class PackageSwitchRequest(BaseModel):
     # Required only when the subscription holds more than one package
     old_package_id: Optional[UUID] = None
 
+    # The final amount the customer saw in the switch breakup: positive =
+    # pay, negative = refund. When given and it changed, 409 PRICE_CHANGED.
+    expected_total: Optional[Decimal] = None
+
 
 class PackageSwitchCalculation(BaseModel):
     """Unused Service Value Method breakdown (Package Switch Policy §4/§16)."""
@@ -580,6 +618,14 @@ class PackageSwitchPreviewResponse(BaseModel):
 
     wallet_balance: Decimal
 
+    price_breakup: Optional[dict] = None
+
+    vendor_changed: bool = False
+
+    old_provider_name: Optional[str] = None
+
+    new_provider_name: Optional[str] = None
+
 
 class PackageSwitchResponse(BaseModel):
 
@@ -604,3 +650,5 @@ class PackageSwitchResponse(BaseModel):
     wallet_balance_after: Decimal
 
     new_orders_created: int
+
+    price_breakup: Optional[dict] = None

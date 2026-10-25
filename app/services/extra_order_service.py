@@ -22,7 +22,7 @@ from app.core.config import EXTRA_ORDER_MAX_DAYS_AHEAD
 from app.core.errors import DomainError
 from app.domain.cancellation import assert_customer_can_cancel, customer_cancellation_enabled
 from app.core.paging import FIRST_PAGE, Paging
-from app.domain import capacity, checkout, ledger, notify, orders as meals, vendor_partner
+from app.domain import capacity, checkout, ledger, notify, orders as meals, price_breakup, vendor_partner
 from app.domain.eligibility import assert_sellable, is_on_holiday
 from app.domain.pricing import build_quote, current_components, quote_view, selling_price, money, ZERO
 from app.domain.slots import package_serves, is_before_cutoff, SLOT_CUTOFFS, delivery_window
@@ -33,7 +33,7 @@ from app.models.menu_package_model import MenuPackage
 from app.models.provider_model import Provider
 from app.repositories.cart_repository import CartRepository
 from app.repositories.extra_order_repository import ExtraOrderRepository
-from app.services.subscription_service import owned_address
+from app.services.subscription_service import assert_expected_total, owned_address
 
 
 def _merge_items(items) -> list[tuple]:
@@ -80,6 +80,8 @@ def order_view(order: ExtraOrder, package: MenuPackage | None = None, provider: 
         "charges_amount": order.charges_amount,
         "total_price": order.total_price,
         "price_breakdown": quote_view(order.pricing_snapshot) if order.pricing_snapshot else None,
+        # the whole checkout's breakup is kept on its first line
+        "price_breakup": (order.pricing_snapshot or {}).get("price_breakup"),
         "delivery_date": order.delivery_date,
         "meal_slot": order.meal_slot,
         "status": order.status,
@@ -137,9 +139,13 @@ class ExtraOrderService:
         _, slot, provider, priced = ExtraOrderService._price(db, user_id, payload, lock=False)
         total = sum((Decimal(s["total_payable"]) for _, _, s in priced), ZERO)
         balance = ledger.customer_balance(db, user_id)
+        breakup = price_breakup.extra_order(priced, wallet_balance=balance, delivery_date=payload.delivery_date,
+                                            meal_slot=slot)
         return {
             "success": True,
             "kind": "extra_order",
+            "price_breakup": breakup,
+            "expected_total": breakup["total"],
             "provider_id": provider.provider_id,
             "provider_name": provider.business_name,
             "delivery_date": payload.delivery_date,
@@ -184,6 +190,9 @@ class ExtraOrderService:
         )
 
         total = sum((Decimal(s["total_payable"]) for _, _, s in priced), ZERO)
+        breakup = price_breakup.extra_order(priced, wallet_balance=ledger.customer_balance(db, user_id),
+                                            delivery_date=payload.delivery_date, meal_slot=slot)
+        assert_expected_total(getattr(payload, "expected_total", None), breakup)
         wallet = ledger.lock_customer_wallet(db, user_id)
         if txn_key:
             # re-check under the wallet lock: a concurrent retry may have just paid
@@ -204,7 +213,10 @@ class ExtraOrderService:
         checkout_id = uuid.uuid4()
         codes = meals.new_codes(shared=True)  # one delivery, one code for every line
         created = []
-        for package, qty, snapshot in priced:
+        stored = price_breakup.paid_copy(breakup)
+        for index, (package, qty, snapshot) in enumerate(priced):
+            if index == 0:
+                snapshot = {**snapshot, "price_breakup": stored}  # the checkout's breakup, kept on its first line
             order = ExtraOrder(
                 extra_order_id=uuid.uuid4(),
                 checkout_id=checkout_id,
@@ -263,6 +275,7 @@ class ExtraOrderService:
             "wallet_balance_after": txn.balance_after,
             "delivery_partner_assigned": partner is not None,
             "orders": [order_view(o, p, provider) for o, p in created],
+            "price_breakup": stored,
         }
 
     @staticmethod

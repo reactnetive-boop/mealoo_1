@@ -12,18 +12,8 @@ class UserPackageItemResponse(BaseModel):
 
     item_id: UUID
 
+    # what is in the package; kitchens no longer give units, so none are sent
     item_name: str
-
-    # display label, e.g. "400 g", "4 pcs", "1 bowl (300 g)"
-    quantity: Optional[str]
-
-    quantity_value: Optional[float] = None
-
-    quantity_unit: Optional[str] = None
-
-    bowl_capacity: Optional[float] = None
-
-    bowl_capacity_unit: Optional[str] = None
 
     item_order: int
 
@@ -106,6 +96,10 @@ class UserPackageListItemResponse(BaseModel):
 
     # Pincodes the kitchen delivers to (its own + service areas)
     service_pincodes: List[str] = []
+
+    # The kitchen's holidays: regular ones ("Closed every Sunday") and closed
+    # dates in the next 30 days ({date, type, label})
+    vendor_holidays: Optional[dict] = None
 
 
 class OfferPackageBrief(BaseModel):

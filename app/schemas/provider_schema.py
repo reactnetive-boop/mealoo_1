@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import List, Optional
+import datetime as _dt
 from datetime import date
 from uuid import UUID
 from enum import Enum as PyEnum
@@ -178,5 +179,29 @@ class AcceptingOrdersRequest(BaseModel):
 
 
 class HolidayRequest(BaseModel):
-    date: date
+    """
+    A planned (casual) holiday, from tomorrow on. Older apps send only `date`.
+    preset: every_sunday | weekends; rule_type: weekly (weekdays 1=Mon..7=Sun)
+    | dates | range (start_date..end_date) | monthly (month_days 1..31).
+    """
+    date: Optional[_dt.date] = None
+    rule_type: Optional[str] = Field(None, pattern="^(weekly|dates|range|monthly)$")
+    preset: Optional[str] = Field(None, pattern="^(every_sunday|weekends)$")
+    dates: Optional[List[_dt.date]] = Field(None, max_length=60)
+    weekdays: Optional[List[int]] = Field(None, max_length=7)
+    month_days: Optional[List[int]] = Field(None, max_length=31)
+    start_date: Optional[_dt.date] = None
+    end_date: Optional[_dt.date] = None
+    reason: Optional[str] = Field(None, max_length=500)
+
+    def rule(self) -> dict:
+        data = self.model_dump(exclude_none=True)
+        if not data.get("rule_type") and not data.get("preset"):
+            data["rule_type"] = "dates"
+        return data
+
+
+class EmergencyHolidayRequest(BaseModel):
+    """Declared for today unless a later date is given (never the past)."""
+    date: Optional[_dt.date] = None
     reason: Optional[str] = Field(None, max_length=500)

@@ -44,6 +44,9 @@ class PlaceExtraOrderRequest(BaseModel):
         description="At least one package item required"
     )
 
+    # The total shown in the quote's price breakup; a changed price is refused (409 PRICE_CHANGED)
+    expected_total: Optional[Decimal] = Field(None, ge=0)
+
 
 class ExtraOrderResponse(BaseModel):
 
@@ -76,6 +79,8 @@ class ExtraOrderResponse(BaseModel):
     total_price: Decimal
 
     price_breakdown: Optional[dict] = None
+
+    price_breakup: Optional[dict] = None
 
     delivery_date: date
 
@@ -112,6 +117,8 @@ class PlaceOrderResponse(BaseModel):
     delivery_partner_assigned: Optional[bool] = None
 
     orders: List[ExtraOrderResponse]
+
+    price_breakup: Optional[dict] = None
 
 
 class ExtraOrderListResponse(BaseModel):

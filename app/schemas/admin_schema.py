@@ -374,6 +374,8 @@ class AdminReassignProviderRequest(BaseModel):
 class AdminMarkUnavailabilityRequest(BaseModel):
     date: date
     reason: Optional[str] = Field(None, max_length=500)
+    # emergency: replacement / compensation per meal (always for today); casual: planned holiday
+    holiday_type: Optional[str] = Field(None, pattern="^(casual|emergency)$")
 
 
 # ── Serviceable Pincodes ──────────────────────────────────

@@ -23,6 +23,7 @@ class Order(Base):
         Index("idx_orders_user", "user_reference_id"),
         Index("idx_orders_vendor", "vendor_reference_id"),
         Index("idx_orders_date_status", "order_date", "status"),
+        Index("idx_orders_vendor_date", "vendor_reference_id", "order_date"),
         {"schema": "subscription"},
     )
 
@@ -182,7 +183,9 @@ class Order(Base):
     failure_reason = Column(String(40), nullable=True)
 
     # Why the order was cancelled: paused | subscription_cancelled |
-    # switched | kitchen_holiday | rejected_by_kitchen | customer | admin
+    # switched | kitchen_holiday | vendor_holiday (planned holiday, made up
+    # at the end of the plan) | vendor_emergency_holiday (not deliverable,
+    # compensated) | rejected_by_kitchen | customer | admin
     cancel_reason = Column(
         String(50),
         nullable=True
@@ -202,5 +205,28 @@ class Order(Base):
     # Set once kitchen / partner / platform earnings are booked
     settled_at = Column(
         DateTime(timezone=True),
+        nullable=True
+    )
+
+    # The kitchen this meal was sold by, when a holiday moved it to another
+    # kitchen (vendor_reference_id is then the kitchen cooking it)
+    original_vendor_reference_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("provider.providers.provider_id", name="orders_original_vendor_id_fkey"),
+        nullable=True
+    )
+
+    # What the replacement kitchen cooks when it is not the subscription's
+    # own package (NULL: the subscription's package)
+    replacement_package_reference_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("master.menu_packages.package_id", name="orders_replacement_package_id_fkey"),
+        nullable=True
+    )
+
+    # The kitchen holiday that moved or cancelled this meal
+    vendor_holiday_reference_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("provider.vendor_holidays.vendor_holiday_id", name="orders_vendor_holiday_id_fkey"),
         nullable=True
     )

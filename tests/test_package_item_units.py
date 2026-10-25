@@ -105,13 +105,11 @@ def test_package_items_are_saved_with_units_and_shown_everywhere(client, db):
         "bowl_capacity": 300.0, "bowl_capacity_unit": "g",
     }
 
-    # customer sees the same measurements once the package is approved
+    # units are no longer shown to customers (2026-10-25): the stored values stay, only names go out
     assert client.put(f"{ADMIN}/{package_id}/approve", headers=admin_hdr, json={}).status_code == 200
     seen = client.get(f"{CUSTOMER_MENU}/{package_id}", headers=w["user_auth"]).json()
-    assert [(i["item_name"], i["quantity"]) for i in seen["items"]] == [
-        ("Rice", "400 g"), ("Chicken", "4 pcs"), ("Roti", "4 pcs"), ("Sabji", "1 bowl (300 g)"), ("Daal", "250 ml"),
-    ]
-    assert seen["items"][0]["quantity_value"] == 400.0 and seen["items"][0]["quantity_unit"] == "g"
+    assert [i["item_name"] for i in seen["items"]] == ["Rice", "Chicken", "Roti", "Sabji", "Daal"]
+    assert all("quantity_unit" not in i and "quantity" not in i for i in seen["items"])
 
 
 def test_bad_quantities_are_rejected_and_old_apps_still_work(client, db):
@@ -185,7 +183,7 @@ def test_item_with_unit_on_a_live_package_goes_through_review(client, db):
 
 # ── Food summary ──────────────────────────────────────────────
 
-def test_food_summary_totals_use_the_units(client, db):
+def test_food_summary_counts_servings_without_units(client, db):
     w = f.world(db)
     item = db.query(MenuPackageItem).filter(MenuPackageItem.package_reference_id == w["package"].package_id).one()
     for field, value in item_quantity.normalize(quantity_value="400", quantity_unit="g").items():
@@ -202,6 +200,4 @@ def test_food_summary_totals_use_the_units(client, db):
     assert r.status_code == 200, r.text
 
     summary = client.get(FOOD_SUMMARY, headers=w["kitchen_auth"]).json()
-    assert summary["items"] == [
-        {"item_name": "Rice", "quantity_per_serving": "400 g", "total_servings": 3, "total_quantity": "1.2 kg"},
-    ]
+    assert summary["items"] == [{"item_name": "Rice", "total_servings": 3}]

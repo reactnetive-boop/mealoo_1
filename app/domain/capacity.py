@@ -46,7 +46,9 @@ def _subscription_demand(db: Session, provider_id, slot: str, start: date, end: 
         )
     )
     if package_id is not None:
-        q = q.filter(SubscriptionPackage.package_reference_id == package_id)
+        # a meal moved to a replacement kitchen counts against the package it cooks there
+        q = q.filter(func.coalesce(Order.replacement_package_reference_id,
+                                   SubscriptionPackage.package_reference_id) == package_id)
     if exclude_subscription_id is not None:
         q = q.filter(Order.subscription_reference_id != exclude_subscription_id)
     return {d: int(n) for d, n in q.group_by(Order.order_date).all()}

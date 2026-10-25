@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import business_event
 from app.core.clock import now_utc, today_local
-from app.domain import checkout, ledger, notify, partner_leave, vendor_partner
+from app.domain import checkout, holidays, ledger, notify, partner_leave, vendor_partner
 from app.domain.delivery_assignment import inherited_partner
 from app.domain.verification import new_seed
 from app.domain.pricing import money, ZERO, customer_payable_per_delivery, partner_payout_now
@@ -45,6 +45,13 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
     (vendor_partner.ensure_subscription_partner), so nobody has to assign
     every new meal by hand.
 
+    Kitchen holidays: no meal is ever created on a date the kitchen is
+    closed. The subscription's known holiday dates (holiday_dates) are
+    skipped; a closure found on a date that has no meal yet (e.g. a holiday
+    planned after the plan was sold) joins them and the end date moves past
+    it, so the customer keeps every meal day they paid for. Dates that already
+    have meals are re-planned by the holiday workflows, not here.
+
     Nothing is generated for a kitchen that is inactive or no longer approved
     (admins cannot get there while subscriptions run, so this only guards
     against drift; it is logged). A kitchen that merely stopped accepting NEW
@@ -72,6 +79,7 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
 
     today = today_local()
     start = max(subscription.start_date, from_date or subscription.start_date, today)
+    known = _holidays_ahead(db, subscription, start)
     end = subscription.end_date if to_date is None else min(subscription.end_date, to_date)
 
     partner_id = inherited_partner(db, subscription)
@@ -80,6 +88,9 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
     rows = []
     current = start
     while current < end:
+        if current in known:
+            current += timedelta(days=1)
+            continue
         for slot in slots:
             if current == today and not is_before_cutoff(current, slot):
                 continue
@@ -118,6 +129,31 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
     if partner_id is None:
         vendor_partner.ensure_subscription_partner(db, subscription)
     return created
+
+
+def _holidays_ahead(db: Session, subscription: Subscription, start: date) -> set:
+    """Holiday dates of the subscription from `start`, folding in closures not yet planned around."""
+    known = holidays.sub_holidays(subscription)
+    if start >= subscription.end_date:
+        return known
+    closed = holidays.closed_dates(db, subscription.vendor_reference_id, start, subscription.end_date - timedelta(days=1))
+    if not closed - known:
+        return known
+    with_meals = {
+        d for (d,) in db.query(Order.order_date).filter(
+            Order.subscription_reference_id == subscription.subscription_id, Order.order_date >= start,
+        ).distinct()
+    }
+    new = sorted(d for d in closed if d not in known and d not in with_meals)
+    if new:
+        known |= set(new)
+        extension = holidays.extend(db, subscription.vendor_reference_id, subscription.end_date, len(new), skip=known)
+        known |= set(extension.holiday_dates)
+        subscription.end_date = extension.end
+        holidays.set_sub_holidays(subscription, known)
+        business_event("meals.holidays_planned", subscription_id=subscription.subscription_id,
+                       dates=[d.isoformat() for d in new], new_end_date=subscription.end_date)
+    return known
 
 
 def total_deliveries(subscription: Subscription) -> int:

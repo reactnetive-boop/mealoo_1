@@ -16,7 +16,6 @@ from app.models.subscription_model import Subscription
 from app.models.menu_package_model import MenuPackage
 from app.models.provider_wallet_model import ProviderWallet
 from app.models.provider_wallet_transaction_model import ProviderWalletTransaction
-from app.models.provider_unavailability_model import ProviderUnavailability
 from app.services.admin_views import provider_view, package_admin_view, subscription_admin_view
 from app.services.auth_common import revoke_sessions
 from app.services.provider_service import missing_profile_fields
@@ -311,87 +310,73 @@ class AdminProviderService:
 
     @staticmethod
     def mark_unavailable(db: Session, provider_id: str, payload, admin_id: str, ip: str | None = None):
+        """
+        A holiday set by Orleeno. Today (or `holiday_type` emergency) is an
+        emergency closure: each meal of that day goes to a replacement kitchen
+        or is compensated. A later date is a planned holiday: running
+        subscriptions are re-planned around it.
+        """
+        from app.services.vendor_holiday_service import VendorHolidayService
+
         _provider(db, provider_id)
         if payload.date < today_local():
             raise DomainError("Holidays cannot be added for past dates")
-
-        existing = db.query(ProviderUnavailability).filter(
-            ProviderUnavailability.provider_reference_id == provider_id,
-            ProviderUnavailability.unavailable_date == payload.date
-        ).first()
-        if existing:
-            raise DomainError(f"Provider is already marked unavailable on {payload.date}", 409)
-
-        record = ProviderUnavailability(
-            provider_reference_id=provider_id,
-            unavailable_date=payload.date,
-            reason=payload.reason,
-        )
-        db.add(record)
-        record_audit(
-            db, table="provider.provider_unavailability", record_id=provider_id, operation="I",
-            new={"date": payload.date, "reason": payload.reason}, actor_id=admin_id, actor_type="admin", ip=ip,
-        )
+        emergency = payload.date == today_local() or getattr(payload, "holiday_type", None) == "emergency"
+        if emergency:
+            result = VendorHolidayService.declare_emergency(
+                db, provider_id, payload.date, payload.reason, actor_type="admin", actor_id=admin_id,
+            )
+        else:
+            result = VendorHolidayService.add_casual(
+                db, provider_id, {"rule_type": "dates", "dates": [payload.date], "reason": payload.reason},
+                actor_type="admin", actor_id=admin_id,
+            )
         notify.kitchen(
             db, provider_id, "holiday", "Holiday added by Orleeno",
             f"Your kitchen is marked closed on {payload.date}."
-            + (f" Reason: {payload.reason}." if payload.reason else "")
-            + " Orders for that day will be moved or refunded.",
-            {"date": str(payload.date)},
+            + (f" Reason: {payload.reason}." if payload.reason else ""),
+            {"date": str(payload.date), "holiday_id": str(result["holiday"]["holiday_id"])},
         )
         db.commit()
-        db.refresh(record)
         return {
             "success": True,
-            "message": (
-                f"Provider marked unavailable on {payload.date}. Reassign that day's orders to another "
-                "kitchen; anything left at the cut-off is cancelled and refunded automatically."
-            ),
+            "message": result["message"],
+            "holiday": result["holiday"],
             "record": {
-                "provider_unavailability_id": record.provider_unavailability_id,
-                "unavailable_date": record.unavailable_date,
-                "reason": record.reason,
+                "provider_unavailability_id": str(result["holiday"]["holiday_id"]),
+                "unavailable_date": payload.date,
+                "reason": payload.reason,
+                "holiday_type": result["holiday"]["holiday_type"],
             },
         }
 
     @staticmethod
     def remove_unavailability(db: Session, provider_id: str, unavailable_date: Date, admin_id: str, ip: str | None = None):
-        record = db.query(ProviderUnavailability).filter(
-            ProviderUnavailability.provider_reference_id == provider_id,
-            ProviderUnavailability.unavailable_date == unavailable_date
-        ).first()
-        if not record:
-            raise DomainError("Unavailability record not found", 404)
-        if unavailable_date < today_local():
-            raise DomainError("Past holidays cannot be removed")
-        db.delete(record)
-        record_audit(
-            db, table="provider.provider_unavailability", record_id=provider_id, operation="D",
-            old={"date": unavailable_date, "reason": record.reason}, actor_id=admin_id, actor_type="admin", ip=ip,
-        )
-        db.commit()
-        return {"success": True, "message": f"Unavailability removed for {unavailable_date}"}
+        from app.services.vendor_holiday_service import VendorHolidayService
+
+        return VendorHolidayService.remove_date(db, provider_id, unavailable_date, actor_type="admin", actor_id=admin_id)
 
     @staticmethod
     def list_unavailability(db: Session, provider_id: str):
+        from app.services.vendor_holiday_service import VendorHolidayService
+
         _provider(db, provider_id)
-        records = (
-            db.query(ProviderUnavailability)
-            .filter(ProviderUnavailability.provider_reference_id == provider_id)
-            .order_by(ProviderUnavailability.unavailable_date.desc())
-            .all()
-        )
+        overview = VendorHolidayService.overview(db, provider_id)
         return {
             "success": True,
-            "total": len(records),
+            "total": len(overview["calendar"]),
+            "rules": overview["rules"],
+            "emergencies": overview["emergencies"],
             "records": [
                 {
-                    "provider_unavailability_id": r.provider_unavailability_id,
-                    "unavailable_date": r.unavailable_date,
-                    "reason": r.reason,
-                    "created_at": r.created_at,
+                    "provider_unavailability_id": str(c["holiday_id"]),
+                    "unavailable_date": c["date"],
+                    "reason": c["reason"],
+                    "holiday_type": c["holiday_type"],
+                    "label": c["rule_label"],
+                    "editable": c["editable"],
                 }
-                for r in records
+                for c in reversed(overview["calendar"])
             ],
         }
 

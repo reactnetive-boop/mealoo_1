@@ -10,8 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class OrderPackageLine(BaseModel):
     package_id: UUID
-    package_name: str
+    package_name: Optional[str] = None
     quantity: int
+    # cooked here for a meal moved from a kitchen on holiday
+    is_replacement: bool = False
 
 
 class SubscriptionOrderResponse(BaseModel):
@@ -40,6 +42,12 @@ class SubscriptionOrderResponse(BaseModel):
     packages: List[OrderPackageLine] = []
     # Status changes this kitchen may make next
     next_actions: List[str] = []
+    # False for skipped / cancelled / holiday meals: not cooked, not in any count
+    on_prep_list: bool = True
+    # SKIPPED | PACKAGE_SWITCHED | VENDOR_CHANGED | NOT_DELIVERABLE_VENDOR_HOLIDAY
+    change_tags: List[dict] = []
+    holiday_outcome: Optional[dict] = None
+    original_vendor_name: Optional[str] = None
     created_at: Optional[datetime]
 
 
@@ -110,6 +118,18 @@ class UpdateOrderStatusRequest(BaseModel):
     status: str = Field(..., max_length=30)
 
 
+class BatchStatusRequest(BaseModel):
+    order_date: date
+    meal_slot: str = Field(..., pattern="^(breakfast|lunch|dinner)$")
+    # preparing | ready_for_pickup
+    status: str = Field(..., pattern="^(preparing|ready_for_pickup)$")
+
+
+class ReadyTodayRequest(BaseModel):
+    # the count shown in the confirmation dialog (informational; the server re-checks every order)
+    expected_count: Optional[int] = Field(None, ge=0)
+
+
 class UpdateOrderStatusResponse(BaseModel):
     success: bool
     message: str
@@ -159,11 +179,9 @@ class ProviderExtraOrderListResponse(BaseModel):
 # ── Daily Food Calculator ─────────────────────────────────
 
 class FoodSummaryItemResponse(BaseModel):
+    """One item and how many servings of it to cook (kitchens work without units)."""
     item_name: str
-    quantity_per_serving: str
     total_servings: int
-    # what to cook in all, e.g. "4 kg" (null for items without a unit)
-    total_quantity: Optional[str] = None
 
 
 class FoodSummaryPackageResponse(BaseModel):

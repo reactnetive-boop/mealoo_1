@@ -113,8 +113,9 @@ class OrderAddressInfo(BaseModel):
 
 class OrderPackageInfo(BaseModel):
     package_id: UUID
-    package_name: str
+    package_name: Optional[str] = None
     quantity: int
+    is_replacement: bool = False
 
 
 class OrderVendorInfo(BaseModel):
@@ -170,6 +171,13 @@ class DeliverySubscriptionOrderResponse(BaseModel):
     arrived_at: Optional[datetime] = None
     # promised delivery time, e.g. {"from": "12:00", "to": "14:30"}
     delivery_window: Optional[dict] = None
+    # False for skipped / cancelled / finished meals: shown greyed out, never on the route
+    on_route: bool = True
+    # SKIPPED | PACKAGE_SWITCHED (from -> to) | VENDOR_CHANGED (from -> to) | NOT_DELIVERABLE_VENDOR_HOLIDAY
+    change_tags: List[dict] = []
+    holiday_outcome: Optional[dict] = None
+    # what is packed for this meal (the replacement kitchen's package on a holiday move)
+    packages: List[dict] = []
     created_at: Optional[datetime]
 
 
