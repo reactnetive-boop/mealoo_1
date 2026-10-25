@@ -53,6 +53,17 @@ def test_quantity_is_saved_and_returned_everywhere(client, db):
     assert {i["item_name"]: i["quantity_count"] for i in admin_items} == {"Roti": 4, "Dal": 1}
 
 
+def test_count_sent_as_plain_text_is_read_back_as_the_count(client, db):
+    # the kitchen app sends "4" (every server version accepts it without a unit)
+    w = f.world(db)
+    pkg = _create_package(client, w, [{"item_name": "Roti", "quantity": "4"}, {"item_name": "Pickle"}])
+    rows = {i.item_name: i for i in db.query(MenuPackageItem).filter(MenuPackageItem.package_reference_id == pkg["package_id"])}
+    assert rows["Roti"].quantity == "4" and rows["Roti"].quantity_unit is None
+    view = _ok(client.get(f"{API}/menu/get/{pkg['package_id']}", headers=w["kitchen_auth"]))
+    items = view.get("items") or view.get("package", {}).get("items")
+    assert {i["item_name"]: i["quantity_count"] for i in items} == {"Roti": 4, "Pickle": None}
+
+
 def test_quantity_is_validated(client, db):
     w = f.world(db)
     pkg = _create_package(client, w, [{"item_name": "Dal", "quantity_value": 1}])  # not live yet: edits apply at once
