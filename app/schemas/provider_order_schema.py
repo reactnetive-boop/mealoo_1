@@ -179,9 +179,10 @@ class ProviderExtraOrderListResponse(BaseModel):
 # ── Daily Food Calculator ─────────────────────────────────
 
 class FoodSummaryItemResponse(BaseModel):
-    """One item and how many servings of it to cook (kitchens work without units)."""
+    """One item, how many servings of it to cook, and the total count (e.g. 40 roti) when the kitchen gave one."""
     item_name: str
     total_servings: int
+    total_quantity: Optional[int] = None
 
 
 class FoodSummaryPackageResponse(BaseModel):

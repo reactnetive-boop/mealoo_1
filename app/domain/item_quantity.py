@@ -7,6 +7,12 @@ bowl holds). The structured values are stored next to a display label in the
 item's `quantity` column, so every screen that already shows `quantity`
 (customer app, admin panel, food summary) shows the measurement as-is.
 
+Kitchens no longer pick units: the kitchen app sends a plain count
+(`quantity_value` with no unit, e.g. 4 roti), stored with the label "4".
+`count()` is that number for every screen (customer, admin, kitchen, food
+summary); items stored with a weight or volume unit have no count, so no unit
+is ever shown to customers.
+
 Older app versions send `quantity` as free text with no unit; that text is
 kept unchanged as the label and the structured fields stay empty.
 """
@@ -19,6 +25,7 @@ COUNTED_UNITS = ("pcs", "bowl")  # whole numbers only
 BOWL_CAPACITY_UNITS = ("g", "ml")
 
 MAX_VALUE = Decimal("10000")
+MAX_COUNT = 999  # a plain count with no unit (kitchen app)
 MAX_BOWL_CAPACITY = Decimal("5000")
 
 STRUCTURED_FIELDS = ("quantity_value", "quantity_unit", "bowl_capacity", "bowl_capacity_unit")
@@ -66,10 +73,15 @@ def normalize(quantity=None, quantity_value=None, quantity_unit=None,
     capacity_unit = (bowl_capacity_unit or "").strip().lower() or None
 
     if unit is None:
-        if value is not None:
-            raise ValueError("Choose a unit for the quantity")
         if capacity is not None or capacity_unit is not None:
             raise ValueError("Bowl size can only be given for items measured in bowls")
+        if value is not None:
+            # a plain count (kitchen app): how many of the item one meal has
+            if value != value.to_integral_value() or not 1 <= value <= MAX_COUNT:
+                raise ValueError(f"Quantity must be a whole number from 1 to {MAX_COUNT}")
+            value = value.to_integral_value()
+            return {"quantity": _num(value), "quantity_value": value, "quantity_unit": None,
+                    "bowl_capacity": None, "bowl_capacity_unit": None}
         text = (quantity or "").strip() or None
         return {"quantity": text, "quantity_value": None, "quantity_unit": None,
                 "bowl_capacity": None, "bowl_capacity_unit": None}
@@ -127,9 +139,9 @@ def as_json(values: dict) -> dict:
 
 
 def of(item) -> dict:
-    """JSON-safe quantity fields of a stored item (model row or revision dict)."""
+    """JSON-safe quantity fields of a stored item (model row or revision dict), with its `quantity_count`."""
     get = item.get if isinstance(item, dict) else (lambda f: getattr(item, f, None))
-    return as_json({f: get(f) for f in FIELDS})
+    return {**as_json({f: get(f) for f in FIELDS}), "quantity_count": count(item)}
 
 
 def to_model(values: dict) -> dict:
@@ -141,6 +153,24 @@ def to_model(values: dict) -> dict:
         "bowl_capacity": _dec(values.get("bowl_capacity")),
         "bowl_capacity_unit": values.get("bowl_capacity_unit"),
     }
+
+
+def count(item) -> int | None:
+    """
+    How many of the item one meal has: a plain count, or the number of pieces /
+    bowls of older items. None for items measured by weight or volume and for
+    free text that is not a number, so no unit ever reaches a customer.
+    """
+    get = item.get if isinstance(item, dict) else (lambda f: getattr(item, f, None))
+    unit = get("quantity_unit")
+    value = get("quantity_value")
+    if value is not None and (unit is None or unit in COUNTED_UNITS):
+        value = _dec(value)
+        return int(value) if value == value.to_integral_value() and value > 0 else None
+    if unit is None:
+        text = (get("quantity") or "").strip()
+        return int(text) if text.isdigit() and 0 < int(text) <= MAX_COUNT else None
+    return None
 
 
 def total(values: dict, servings: int) -> str | None:

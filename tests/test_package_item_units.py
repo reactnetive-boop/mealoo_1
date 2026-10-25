@@ -42,13 +42,16 @@ def _create(client, hdr, cat, items):
     ({"quantity_value": "1", "quantity_unit": "bowl", "bowl_capacity": "300", "bowl_capacity_unit": "g"}, "1 bowl (300 g)"),
     ({"quantity_value": "2", "quantity_unit": "bowl", "bowl_capacity": "250", "bowl_capacity_unit": "ml"}, "2 bowls (250 ml each)"),
     ({"quantity": " 2 "}, "2"),  # older app versions: free text kept as sent
+    ({"quantity_value": "4"}, "4"),  # kitchen app: a plain count, no unit
 ])
 def test_labels(fields, label):
     assert item_quantity.normalize(**fields)["quantity"] == label
 
 
 @pytest.mark.parametrize("fields", [
-    {"quantity_value": "400"},                                   # no unit
+    {"quantity_value": "1000"},                                  # a plain count is 1-999
+    {"quantity_value": "2.5"},                                   # ... and whole
+    {"quantity_value": "0"},
     {"quantity_unit": "g"},                                      # no amount
     {"quantity_value": "0", "quantity_unit": "g"},
     {"quantity_value": "400", "quantity_unit": "cups"},
@@ -115,7 +118,8 @@ def test_package_items_are_saved_with_units_and_shown_everywhere(client, db):
 def test_bad_quantities_are_rejected_and_old_apps_still_work(client, db):
     w = f.world(db)
     hdr, cat = w["kitchen_auth"], w["category"]
-    assert _create(client, hdr, cat, [{"item_name": "Rice", "quantity_value": 400}]).status_code == 422
+    assert _create(client, hdr, cat, [{"item_name": "Rice", "quantity_value": 1000}]).status_code == 422
+    assert _create(client, hdr, cat, [{"item_name": "Roti", "quantity_value": 2.5}]).status_code == 422
     assert _create(client, hdr, cat, [{"item_name": "Roti", "quantity_value": 2.5, "quantity_unit": "pcs"}]).status_code == 422
     assert _create(client, hdr, cat, [
         {"item_name": "Rice", "quantity_value": 400, "quantity_unit": "g", "bowl_capacity": 300, "bowl_capacity_unit": "g"},
@@ -200,4 +204,5 @@ def test_food_summary_counts_servings_without_units(client, db):
     assert r.status_code == 200, r.text
 
     summary = client.get(FOOD_SUMMARY, headers=w["kitchen_auth"]).json()
-    assert summary["items"] == [{"item_name": "Rice", "total_servings": 3}]
+    # a weight is never turned into a count: servings only
+    assert summary["items"] == [{"item_name": "Rice", "total_servings": 3, "total_quantity": None}]

@@ -57,13 +57,13 @@ New Remaining Cost = New Daily Cost × Remaining Days
 Adjustment         = New Remaining Cost − Remaining Value
 ```
 
-- Adjustment **> 0** (upgrade): customer pays `floor(Adjustment)` from the wallet before
+- Adjustment **> 0** (upgrade): customer pays the exact `Adjustment` from the wallet before
   the switch completes. Insufficient balance → HTTP 400, switch cancelled, nothing changes.
-- Adjustment **< 0** (downgrade): `floor(−Adjustment)` credited to the Mealoo wallet.
+- Adjustment **< 0** (downgrade): the exact `−Adjustment` is credited to the Mealoo wallet.
 - Adjustment **= 0**: switch completes with no money movement.
 
-**Rounding — Floor (Truncate) Rule.** Money moved is truncated to the nearest lower whole
-rupee (₹799.92 → ₹799, ₹1200.75 → ₹1200). The signed pre-floor adjustment is kept in the
+**Rounding — none.** Money moved is exact to the paisa (₹799.92 is paid or credited as
+₹799.92; until Oct 2026 it was truncated to whole rupees). The signed adjustment is kept in the
 audit record.
 
 **What executing a switch does.** Old subscription → `status = "switched"`, `end_date`
@@ -723,7 +723,7 @@ Uses the Unused Service Value Method: the remaining (unused) value of the curren
 - `action = wallet_credit` → downgrade: `wallet_credit_amount` will be credited
 - `action = no_adjustment` → same price: switch completes with no money movement
 
-Amounts follow the Floor (Truncate) Rule — fractional paise are discarded.
+Amounts are exact to the paisa (no rounding or truncation).
 Works for same-provider and different-provider switches alike.
 
 **When to call:** On the 'Switch Package' confirmation screen, before showing the user what they will pay or receive.

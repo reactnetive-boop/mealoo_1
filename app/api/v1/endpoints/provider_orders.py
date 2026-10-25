@@ -92,8 +92,9 @@ def list_subscription_orders(
     response_model=UpdateOrderStatusResponse,
     summary="Mark a Meal as Preparing",
     description=(
-        "The only status a kitchen sets on a subscription meal is `preparing` (from `scheduled`, "
-        "on the meal's date). Pickup and delivery are recorded by the delivery partner."
+        "A kitchen moves a subscription meal to `preparing` (from `scheduled`) and then to "
+        "`ready_for_pickup`, at any time, also before the meal's date. Pickup and delivery are "
+        "recorded by the delivery partner on the meal's date."
     ),
 )
 def update_subscription_order_status(
@@ -136,7 +137,7 @@ def list_extra_orders(
     response_model=UpdateOrderStatusResponse,
     summary="Confirm, Prepare or Decline a One-Time Order",
     description=(
-        "Allowed: pending → confirmed, confirmed → preparing (on the delivery date), "
+        "Allowed: pending → confirmed, confirmed → preparing (any time, also before the delivery date), "
         "pending → cancelled (declined; the customer is refunded in full)."
     ),
 )
@@ -221,7 +222,8 @@ def next_batch(db: Session = Depends(get_db), current_provider=Depends(get_curre
     "/batch/status",
     summary="Start Preparing / Mark Ready a Batch",
     description=(
-        "Moves every eligible order of the batch at once, on its delivery date: `preparing` (scheduled / "
+        "Moves every eligible order of the batch at once, at any time (also before its delivery date): "
+        "`preparing` (scheduled / "
         "confirmed orders) or `ready_for_pickup` (scheduled / confirmed / preparing). Atomic and idempotent: "
         "a repeat changes nothing and notifies nobody. Returns the refreshed next batch."
     ),

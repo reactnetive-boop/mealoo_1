@@ -11,7 +11,7 @@ from app.domain.eligibility import (
     is_on_holiday,
     kitchens_on_holiday,
 )
-from app.domain import holidays, ratings
+from app.domain import holidays, item_quantity, price_breakup, ratings
 from app.domain.pricing import (
     build_quote, current_components, package_price_view, selling_price, subscription_unit_price,
 )
@@ -241,15 +241,22 @@ class UserMenuService:
         # this package's own reviews (never the kitchen's other packages)
         view["reviews"] = ratings.recent_reviews(db, package.package_id, provider.provider_id, limit=5)
         view["review_total"] = ratings.review_count(db, package.package_id, provider.provider_id)
-        # names only: kitchens no longer give units, so none are shown to customers
+        # names and counts only: kitchens no longer give units, so none are shown to customers
         view["items"] = [
-            {"item_id": i.item_id, "item_name": i.item_name, "item_order": i.item_order or 0}
+            {"item_id": i.item_id, "item_name": i.item_name, "item_order": i.item_order or 0,
+             "quantity_count": item_quantity.count(i)}
             for i in sorted(package.items, key=lambda i: i.item_order or 0)
         ]
         view["images"] = [
             {"image_id": i.image_id, "image_url": i.image_url, "is_primary": bool(i.is_primary), "display_order": i.display_order or 0}
             for i in package.images
         ]
+        # one meal ordered once, at today's fees and taxes (the checkout prices the chosen day)
+        view["price_breakup"] = price_breakup.one_meal(
+            build_quote(current_components(db), kind="extra_order", base_unit_price=selling_price(package),
+                        quantity=1, deliveries=1),
+            package,
+        )
         return view
 
     @staticmethod

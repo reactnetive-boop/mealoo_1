@@ -120,10 +120,10 @@ def save_payout_details(payload: PayoutDetailsRequest, db: Session = Depends(get
 
 @router.post(
     "/withdraw",
-    summary="Withdraw Wallet Balance",
+    summary="Withdraw Wallet Balance (not available)",
     description=(
-        "Moves the amount out of the wallet into a pending request; Orleeno transfers it to the saved "
-        "bank / UPI and marks it paid, or rejects it and the money returns to the wallet."
+        "Customers cannot withdraw wallet money: the wallet pays for plans and orders. Always answers "
+        "403 `WITHDRAWAL_NOT_ALLOWED`. Earlier requests stay listed under `/withdrawals`."
     ),
     dependencies=[Depends(limit_by_ip("wallet_withdraw", 10, 3600))],
 )

@@ -24,7 +24,7 @@ from app.core.audit import business_event
 from app.core.clock import local_datetime, now_local, today_local
 from app.core.config import PICKUP_CODE_MAX_ATTEMPTS
 from app.core.errors import DomainError
-from app.domain import checkout, delivery_assignment, holidays, notify, orders as meals, partner_leave
+from app.domain import checkout, delivery_assignment, holidays, item_quantity, notify, orders as meals, partner_leave
 from app.domain.meal_views import MealContext
 from app.domain.slots import SLOTS, SLOT_WINDOWS, delivery_window, expand_plan_slot
 from app.domain.status import (
@@ -61,12 +61,13 @@ def _first_name(user: User | None) -> str | None:
     return user.full_name.split()[0]
 
 
-def _kitchen_actions(kind: str, status: str, day: date) -> list[str]:
-    """What the kitchen can do now: preparing and ready for pickup only on the delivery date."""
-    return [
-        a for a in allowed_next(kind, status, "provider")
-        if a not in ("preparing", "ready_for_pickup") or day == today_local()
-    ]
+def _kitchen_actions(kind: str, status: str) -> list[str]:
+    """
+    What the kitchen can do now. Preparing and ready for pickup are allowed at
+    any time, also before the delivery date; the partner still collects the
+    meal on its delivery date with that day's pickup code.
+    """
+    return allowed_next(kind, status, "provider")
 
 
 def _sub_order_view(o: Order, packages, user, address, boy, ctx: MealContext | None = None) -> dict:
@@ -92,7 +93,7 @@ def _sub_order_view(o: Order, packages, user, address, boy, ctx: MealContext | N
         "customer_name": _first_name(user),
         "delivery_area": f"{address.city} {address.pin_code}" if address else None,
         "packages": packages,
-        "next_actions": _kitchen_actions("subscription", o.status, o.order_date),
+        "next_actions": _kitchen_actions("subscription", o.status),
         # skipped / cancelled / holiday meals are not cooked
         "on_prep_list": o.status not in ("skipped", "cancelled"),
         "change_tags": ctx.tags(o) if ctx else [],
@@ -125,7 +126,7 @@ def _extra_order_view(o: ExtraOrder, package, user, address, boy) -> dict:
         "delivery_boy_name": boy.full_name if boy else None,
         "customer_name": _first_name(user),
         "delivery_area": f"{address.city} {address.pin_code}" if address else None,
-        "next_actions": _kitchen_actions("extra", o.status, o.delivery_date),
+        "next_actions": _kitchen_actions("extra", o.status),
         "created_at": o.created_at,
     }
 
@@ -202,6 +203,13 @@ _NOT_READY_REASONS = {
 }
 
 
+def _collect_text(day: date | None, plural: bool = False) -> str:
+    it = "them" if plural else "it"
+    if day is None or day == today_local():
+        return f"Collect {it} with today's pickup code."
+    return f"Collect {it} on {day:%d %b} with that day's pickup code."
+
+
 def _mark_ready(db: Session, vendor_id, order, kind: str, notify_people: bool = True) -> dict:
     """
     The kitchen confirms the food is packed: the only way an order becomes
@@ -220,8 +228,7 @@ def _mark_ready(db: Session, vendor_id, order, kind: str, notify_people: bool = 
             _NOT_READY_REASONS.get(order.status, f"An order that is {order.status} cannot be marked ready."),
             409, code="NOT_ELIGIBLE_FOR_PICKUP",
         )
-    if day != today_local():
-        raise DomainError("An order can only be marked ready for pickup on its delivery date", code="NOT_DELIVERY_DAY")
+    # any time, also before the delivery date: the partner collects it on that date
     (assert_sub_order_transition if is_sub else assert_extra_order_transition)(order.status, "ready_for_pickup", "provider")
 
     lines = [order]
@@ -253,7 +260,7 @@ def _mark_ready(db: Session, vendor_id, order, kind: str, notify_people: bool = 
     notify.delivery_partner(
         db, order.delivery_boy_reference_id, "order_ready", "Ready for pickup",
         f"{', '.join(names) or 'The order'} ({order.meal_slot}, {reference}) is packed at {kitchen_name}, {where}. "
-        "Collect it with today's pickup code.",
+        f"{_collect_text(day)}",
         {
             "order_id": str(ref), "kind": "subscription" if is_sub else "extra",
             "subscription_id": str(order.subscription_reference_id) if is_sub else None,
@@ -404,8 +411,6 @@ class ProviderOrderService:
             }
 
         assert_sub_order_transition(order.status, new_status, "provider")
-        if order.order_date > today_local():
-            raise DomainError("Meals can only be prepared on their delivery date")
 
         order.status = new_status
         if new_status == "preparing":
@@ -490,8 +495,6 @@ class ProviderOrderService:
             }
 
         assert_extra_order_transition(order.status, new_status, "provider")
-        if new_status == "preparing" and order.delivery_date > today_local():
-            raise DomainError("Orders can only be prepared on their delivery date")
 
         order.status = new_status
         if new_status == "cancelled":
@@ -669,10 +672,16 @@ class ProviderOrderService:
             meal_counts[eo.package_reference_id] += eo.quantity
 
         tally: dict = defaultdict(int)
+        pieces: dict = {}  # item -> total count to cook (only items with a count)
         if meal_counts:
             items = db.query(MenuPackageItem).filter(MenuPackageItem.package_reference_id.in_(list(meal_counts))).all()
             for item in items:
-                tally[item.item_name.strip()] += meal_counts[item.package_reference_id]
+                name = item.item_name.strip()
+                meals_of_item = meal_counts[item.package_reference_id]
+                tally[name] += meals_of_item
+                per_meal = item_quantity.count(item)
+                if per_meal is not None:
+                    pieces[name] = pieces.get(name, 0) + per_meal * meals_of_item
 
         packages = _lookup(db, MenuPackage, "package_id", meal_counts.keys())
         return {
@@ -686,7 +695,10 @@ class ProviderOrderService:
                 {"package_id": pid, "package_name": packages[pid].package_name if pid in packages else None, "meals": n}
                 for pid, n in meal_counts.items()
             ],
-            "items": [{"item_name": name, "total_servings": total} for name, total in sorted(tally.items())],
+            "items": [
+                {"item_name": name, "total_servings": total, "total_quantity": pieces.get(name)}
+                for name, total in sorted(tally.items())
+            ],
         }
 
     # ── Next delivery batch and bulk ready (kitchen Home) ──
@@ -757,8 +769,9 @@ class ProviderOrderService:
                 "holiday": sum(1 for s, r in gone if s == "cancelled" and r in _HOLIDAY_REASONS),
             },
             "item_summary": [{"package_name": n, "quantity": q} for n, q in sorted(items.items())],
-            "can_start_preparing": is_today and counts["to_prepare"] > 0,
-            "can_mark_ready": is_today and (counts["to_prepare"] + counts["preparing"]) > 0,
+            # any time, also before the delivery date
+            "can_start_preparing": counts["to_prepare"] > 0,
+            "can_mark_ready": (counts["to_prepare"] + counts["preparing"]) > 0,
             "is_today": is_today,
         }
 
@@ -812,9 +825,6 @@ class ProviderOrderService:
             raise DomainError(f"meal_slot must be one of: {', '.join(SLOTS)}", 422)
         if target not in ("preparing", "ready_for_pickup"):
             raise DomainError("status must be preparing or ready_for_pickup", 422)
-        if day != today_local():
-            raise DomainError("A batch can only be prepared or marked ready on its delivery date",
-                              code="NOT_DELIVERY_DAY")
         if target == "ready_for_pickup":
             result = ProviderOrderService._ready(db, vendor_id, day, slot)
         else:
@@ -861,8 +871,11 @@ class ProviderOrderService:
         assigned partner gets one notice for all their meals.
         """
         if holidays.is_closed(db, vendor_id, day):
-            raise DomainError("Your kitchen is on holiday today, so there is nothing to mark ready.",
-                              409, code="KITCHEN_HOLIDAY")
+            raise DomainError(
+                f"Your kitchen is on holiday {'today' if day == today_local() else f'on {day}'}, "
+                "so there is nothing to mark ready.",
+                409, code="KITCHEN_HOLIDAY",
+            )
         subs, extras = ProviderOrderService._batch_rows(db, vendor_id, day, slot, lock=True)
         changed = []
         for o in subs:
@@ -889,7 +902,7 @@ class ProviderOrderService:
             notify.delivery_partner(
                 db, boy, "order_ready", "Ready for pickup",
                 f"{len(rows)} order(s) ({', '.join(slots)}) are packed at {kitchen_name}, {where}. "
-                "Collect them with today's pickup code.",
+                f"{_collect_text(day, plural=True)}",
                 {
                     "provider_id": str(vendor_id), "kitchen_name": kitchen_name, "pickup_address": where,
                     "orders": [

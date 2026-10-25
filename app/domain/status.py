@@ -15,8 +15,9 @@ Hand-over chain for both order kinds:
 No pickup without the kitchen's "Ready for pickup": the only way to
 picked_up is from ready_for_pickup, and only the kitchen (or an admin
 correcting a stuck order) can move a meal to ready_for_pickup. The kitchen
-may mark a meal ready straight from scheduled / confirmed, on its delivery
-date; skipped, cancelled and finished meals can never become ready.
+may mark a meal ready straight from scheduled / confirmed, at any time (also
+before its delivery date); skipped, cancelled and finished meals can never
+become ready. The partner collects it on its delivery date.
 
 Pickup and delivery verification are actions, not stored statuses: the code
 is checked and the status moves in the same locked transaction.

@@ -7,7 +7,7 @@ Unused Service Value Method:
   new cost         = the pricing engine's price for the same number of days
                      and meals on the new package (same plan discount)
   difference       = new cost - remaining value; paid from or credited to the
-                     wallet after truncating to whole rupees (Floor Rule)
+                     wallet exactly, to the paisa (no rounding, no truncation)
 
 The switch takes effect from tomorrow (or from the start date when the plan
 has not started). The new subscription stores what was actually paid, so its
@@ -22,7 +22,7 @@ listed in the breakup). Switching to another kitchen's package is a kitchen
 
 import uuid
 from datetime import timedelta
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -44,11 +44,6 @@ from app.models.user_address_model import UserAddress
 from app.models.provider_model import Provider
 from app.services.subscription_service import assert_expected_total, owned_subscription, plan_name
 
-WHOLE_RUPEE = Decimal("1")
-
-
-def _floor_rupees(amount: Decimal) -> Decimal:
-    return amount.quantize(WHOLE_RUPEE, rounding=ROUND_FLOOR)
 
 
 class PackageSwitchService:
@@ -139,10 +134,10 @@ class PackageSwitchService:
         adjustment = new_cost - remaining_value
 
         if adjustment > 0:
-            payment, credit = _floor_rupees(adjustment), ZERO
+            payment, credit = money(adjustment), ZERO
             action = "payment_required" if payment > 0 else "no_adjustment"
         elif adjustment < 0:
-            payment, credit = ZERO, _floor_rupees(-adjustment)
+            payment, credit = ZERO, money(-adjustment)
             action = "wallet_credit" if credit > 0 else "no_adjustment"
         else:
             payment, credit, action = ZERO, ZERO, "no_adjustment"
@@ -314,7 +309,7 @@ class PackageSwitchService:
             unit_price=Decimal(snapshot["base_unit_price"]),
         ))
 
-        # 3. Move the money (Floor Rule already applied)
+        # 3. Move the money (exact to the paisa)
         log_id = uuid.uuid4()
         if calc["payment_amount"] > 0:
             ledger.post_customer(

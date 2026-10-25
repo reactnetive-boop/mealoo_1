@@ -75,14 +75,15 @@ def test_pickup_is_refused_until_the_kitchen_marks_ready(client, db):
     assert again.status_code == 200 and again.json()["already_done"] is True
 
 
-def test_kitchen_can_mark_ready_directly_but_only_eligible_meals_today(client, db):
+def test_kitchen_can_mark_ready_directly_any_day_but_only_eligible_meals(client, db):
     w, boy, boy_hdr, sub_id, meals = _setup(client, db)
     # straight from scheduled (no separate "preparing" step needed)
     assert _status(client, w, meals[0], "ready_for_pickup").status_code == 200
 
-    # tomorrow's meal: not on its delivery date
-    r = _status(client, w, meals[1], "ready_for_pickup")
-    assert r.status_code == 400 and r.json()["code"] == "NOT_DELIVERY_DAY"
+    # tomorrow's meal can be packed ahead of its date; the partner still collects it on that date
+    assert _status(client, w, meals[1], "ready_for_pickup").status_code == 200
+    r = _pickup(client, boy_hdr, meals[1], f.pickup_code(db, w["kitchen"]))
+    assert r.status_code == 400 and r.json()["code"] == "NOT_PICKUP_DAY"
 
     # a skipped meal can never be made collectable
     assert client.put(f"{S}/{sub_id}/orders/{meals[2].order_id}/skip", headers=w["user_auth"]).status_code == 200

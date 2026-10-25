@@ -29,6 +29,11 @@ from app.services.admin_views import payout_details_view
 
 MIN_WITHDRAWAL = Decimal("1.00")
 
+# Customers cannot withdraw wallet money: it pays for plans and orders only.
+# Kitchens and delivery partners withdraw as before. Requests customers made
+# earlier stay listed and can still be paid or rejected by an admin.
+WITHDRAWAL_OWNER_TYPES = ("provider", "delivery_boy")
+
 
 # owner type -> ledger poster, wallet with running totals (None: customer), notifier, (model, id, name)
 _OWNERS = {
@@ -63,6 +68,11 @@ class PayoutService:
 
     @staticmethod
     def request(db: Session, owner_type: str, owner_id: str, amount, note: str | None):
+        if owner_type not in WITHDRAWAL_OWNER_TYPES:
+            raise DomainError(
+                "Wallet withdrawals are not available. Your balance pays for plans and orders.",
+                403, code="WITHDRAWAL_NOT_ALLOWED",
+            )
         amount = money(amount)
         if amount < MIN_WITHDRAWAL:
             raise DomainError(f"Minimum withdrawal is Rs {MIN_WITHDRAWAL}")

@@ -17,7 +17,7 @@ Lines (each one shown, with Rs 0.00 where it applies but is zero):
   taxes          each tax with its rate (GST 5% ...), or "Taxes Rs 0.00"
   switch lines   amount already paid, meals used, remaining value of the
                  current plan (credited against the new cost)
-  rounding       whole-rupee rule on switches; Rs 0.00 otherwise
+  rounding       Rs 0.00: every amount is settled to the paisa
   total          the order total; then wallet applied and the amount payable,
                  or the refund and where it goes
 """
@@ -220,6 +220,90 @@ def extra_order(priced: list, *, wallet_balance=None, delivery_date=None, meal_s
                    meal_slot=meal_slot, refund=None)
 
 
+class _NamedPackage:
+    """The two fields the builders read, for a line whose package row is gone."""
+
+    def __init__(self, package_id, package_name):
+        self.package_id = package_id
+        self.package_name = package_name
+
+
+def extra_order_line(order, package=None) -> dict | None:
+    """
+    The breakup of ONE one-time order line, adding up to its `total_price`, so
+    the customer, the kitchen and the admin see the same total for the same
+    order. A one-line checkout keeps the breakup stored at payment; other lines
+    (and orders placed before breakups were stored) are rebuilt from the line's
+    own pricing snapshot, or from its stored amounts for the oldest orders.
+    """
+    snapshot = order.pricing_snapshot or {}
+    total = money(order.total_price)
+    stored = snapshot.get("price_breakup")
+    if stored and money(stored.get("total")) == total:
+        return stored
+    pkg = package or _NamedPackage(order.package_reference_id, "Package")
+    qty = int(order.quantity or 1)
+    common = {"delivery_date": order.delivery_date, "meal_slot": order.meal_slot}
+    try:
+        if snapshot.get("base_unit_price") is not None and snapshot.get("total_payable") is not None:
+            return paid_copy(extra_order([(pkg, qty, snapshot)], **common))
+    except (AssertionError, KeyError, ValueError, ArithmeticError):
+        pass  # an older snapshot shape: fall back to the stored amounts
+    unit = money(order.unit_price)
+    food = money(unit * qty)
+    charges = money(order.charges_amount)
+    lines = [
+        _line(f"item_{pkg.package_id}", pkg.package_name, food, kind="charge",
+              detail=f"{qty} × {_rupees(unit)} = {_rupees(food)}",
+              meta={"package_id": str(pkg.package_id), "quantity": qty, "unit_price": _s(unit)}),
+        _line("discount", "Discount", ZERO, kind="discount", detail="No offer applied",
+              meta={"name": None, "percent": "0", "amount": "0.00"}),
+        _line("fees", "Delivery & other charges", charges, kind="fee"),
+        _line("taxes", "Taxes", ZERO, kind="tax", detail="No tax applies to this order"),
+    ]
+    rounding = total - food - charges
+    lines.append(_line("rounding", "Rounding adjustment", rounding, kind="rounding"))
+    try:
+        return paid_copy(_finish("extra_order", lines, total, None, refund=None, **common))
+    except AssertionError:
+        return None
+
+
+def from_totals(kind: str, *, total, meals_amount=None, discount=None, charges=None,
+                carried_over: bool = False) -> dict | None:
+    """
+    A breakup from a purchase's stored totals, for records kept before
+    breakups were stored. Still adds up to what was paid; any difference the
+    old totals do not explain is shown as rounding.
+    """
+    total = money(total)
+    food = money(meals_amount) if meals_amount is not None else total
+    off = money(discount)
+    fees = money(charges)
+    lines = [
+        _line("meals", "Value carried over from your previous plan" if carried_over else "Meals", food,
+              kind="charge"),
+        _line("discount", "Discount", -off, kind="discount",
+              detail=None if off > ZERO else "No offer applied"),
+        _line("fees", "Delivery & other charges", fees, kind="fee"),
+        _line("taxes", "Taxes", ZERO, kind="tax", detail="No tax applied"),
+        _line("rounding", "Rounding adjustment", total - food + off - fees, kind="rounding"),
+    ]
+    try:
+        return paid_copy(_finish(kind, lines, total, None, refund=None))
+    except AssertionError:
+        return None
+
+
+def one_meal(snapshot: dict, package, *, meal_slot: str | None = None) -> dict:
+    """
+    What one meal of a package costs as a one-time order today: the item
+    price × 1, every fee and tax at the current rates, and the total (package
+    detail screen). The checkout builds the real breakup for the chosen day.
+    """
+    return extra_order([(package, int(snapshot.get("quantity") or 1), snapshot)], meal_slot=meal_slot)
+
+
 # ── Package / kitchen switch ──────────────────────────────────
 
 def switch(calc: dict, *, slots: list[str], new_package_name: str, plan_name: str | None,
@@ -229,7 +313,7 @@ def switch(calc: dict, *, slots: list[str], new_package_name: str, plan_name: st
     """
     Unused Service Value Method (app/services/package_switch_service.py):
     new cost of the remaining meals - remaining value of the current plan,
-    then the whole-rupee rule. Positive: payable; negative: refunded.
+    settled to the paisa. Positive: payable; negative: refunded.
     """
     quote = calc["quote"]
     info = [
@@ -264,7 +348,7 @@ def switch(calc: dict, *, slots: list[str], new_package_name: str, plan_name: st
     final = calc["payment_amount"] if calc["payment_amount"] > ZERO else -money(calc["wallet_credit_amount"])
     rounding = money(final) - difference
     lines.append(_line("rounding", "Rounding adjustment", rounding, kind="rounding",
-                       detail="Amounts are settled in whole rupees" if rounding else None))
+                       detail=None))
     refund = None
     if final < ZERO:
         refund = {"amount": _s(-final), "destination": REFUND_DESTINATION, "when": REFUND_WHEN}

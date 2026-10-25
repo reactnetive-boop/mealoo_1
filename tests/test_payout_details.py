@@ -69,27 +69,51 @@ def test_key_rotation_keeps_old_values_readable(monkeypatch):
     assert crypto.encrypt(None) is None and crypto.decrypt("plain") == "plain"
 
 
-def test_customer_withdraws_wallet_money(client, db):
+def test_customer_cannot_withdraw_wallet_money(client, db):
     from decimal import Decimal
 
+    from app.domain import ledger
+    from app.models.payout_request_model import PayoutRequest
     from app.models.wallet_model import Wallet
 
     user, _, hdr = f.customer(db, balance="500")
     W2 = "/api/v1/user/wallet"
-    r = client.post(f"{W2}/withdraw", headers=hdr, json={"amount": "200"})
-    assert r.status_code == 400 and r.json()["code"] == "PAYOUT_DETAILS_MISSING"
     assert client.put(f"{W2}/payout-details", headers=hdr, json={"upi_id": "ravi@okbank"}).status_code == 200
     r = client.post(f"{W2}/withdraw", headers=hdr, json={"amount": "200"})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 403 and r.json()["code"] == "WITHDRAWAL_NOT_ALLOWED"
     db.expire_all()
-    assert db.query(Wallet).filter(Wallet.user_reference_id == user.user_id).one().balance == Decimal("300.00")
+    assert db.query(Wallet).filter(Wallet.user_reference_id == user.user_id).one().balance == Decimal("500.00")
+    assert db.query(PayoutRequest).count() == 0
 
+    # a request made before withdrawals were turned off can still be rejected; the money comes back
+    old = PayoutRequest(owner_type="customer", owner_id=user.user_id, amount=Decimal("200.00"), status="pending")
+    db.add(old)
+    db.flush()
+    ledger.post_customer(db, user.user_id, type="debit", amount=Decimal("200.00"), reason="withdrawal_hold",
+                         idempotency_key=f"payout_hold:{old.payout_request_id}", reference_type="payout_request",
+                         reference_id=old.payout_request_id, description="Withdrawal requested")
+    db.commit()
     _, admin_hdr = f.admin(db)
     req = client.get("/api/v1/admin/payouts", headers=admin_hdr, params={"owner_type": "customer"}).json()["requests"][0]
     assert req["owner_name"] == "Ravi Kumar" and req["destination"]["upi_id"] == "ravi@okbank"
     r = client.put(f"/api/v1/admin/payouts/{req['payout_request_id']}", headers=admin_hdr,
-                   json={"action": "rejected", "admin_note": "Use the refund flow"})
+                   json={"action": "rejected", "admin_note": "Withdrawals are off"})
     assert r.status_code == 200, r.text
     db.expire_all()
     assert db.query(Wallet).filter(Wallet.user_reference_id == user.user_id).one().balance == Decimal("500.00")
     assert client.get(f"{W2}/withdrawals", headers=hdr).json()["requests"][0]["status"] == "rejected"
+
+
+def test_kitchen_withdrawals_still_work(client, db):
+    from decimal import Decimal
+
+    from app.domain import ledger
+
+    kitchen, hdr = f.provider(db)
+    ledger.post_provider(db, kitchen.provider_id, type="credit", amount=Decimal("300.50"), reason="order_earning",
+                         idempotency_key="test:earning", reference_type=None, reference_id=None,
+                         description="earning", counts_as_earning=True)
+    db.commit()
+    r = client.post(f"{W}/withdraw", headers=hdr, json={"amount": "100.25"})
+    assert r.status_code == 200, r.text
+    assert client.get(W, headers=hdr).json()["wallet"]["balance"] in ("200.25", 200.25)

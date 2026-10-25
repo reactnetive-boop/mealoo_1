@@ -80,8 +80,8 @@ def order_view(order: ExtraOrder, package: MenuPackage | None = None, provider: 
         "charges_amount": order.charges_amount,
         "total_price": order.total_price,
         "price_breakdown": quote_view(order.pricing_snapshot) if order.pricing_snapshot else None,
-        # the whole checkout's breakup is kept on its first line
-        "price_breakup": (order.pricing_snapshot or {}).get("price_breakup"),
+        # this line's breakup (adds up to total_price, as the kitchen and admin see it)
+        "price_breakup": price_breakup.extra_order_line(order, package),
         "delivery_date": order.delivery_date,
         "meal_slot": order.meal_slot,
         "status": order.status,

@@ -23,6 +23,7 @@ from app.core.errors import DomainError
 from app.domain import capacity, checkout, notify, partner_leave
 from app.domain import delivery_assignment, vendor_partner
 from app.domain import orders as meals
+from app.domain import price_breakup
 from app.domain.eligibility import is_on_holiday, kitchen_serves, parse_pincode, provider_block_reason
 from app.domain.slots import SLOTS, is_before_cutoff
 from app.domain.status import (
@@ -47,6 +48,7 @@ from app.models.subscription_package_model import SubscriptionPackage
 from app.models.subscription_plan_model import SubscriptionPlan
 from app.models.user_address_model import UserAddress
 from app.models.user_model import User
+from app.services.subscription_service import stored_breakup
 from app.services.admin_views import (
     order_admin_view, extra_order_admin_view, subscription_admin_view, address_view,
 )
@@ -207,8 +209,14 @@ class AdminOrderService:
 
         total = query.count()
         orders = query.order_by(ExtraOrder.delivery_date.desc()).offset((page - 1) * limit).limit(limit).all()
-        return {"success": True, "total": total, "page": page,
-                "orders": _with_names(db, orders, [extra_order_admin_view(o) for o in orders])}
+        packages = _lookup(db, MenuPackage, "package_id", (o.package_reference_id for o in orders))
+        views = []
+        for o in orders:
+            view = extra_order_admin_view(o)
+            # the same breakup the customer sees for this order (adds up to total_price)
+            view["price_breakup"] = price_breakup.extra_order_line(o, packages.get(o.package_reference_id))
+            views.append(view)
+        return {"success": True, "total": total, "page": page, "orders": _with_names(db, orders, views)}
 
     @staticmethod
     def list_subscriptions(db: Session, vendor_id: str = None, user_id: str = None,
@@ -350,6 +358,8 @@ class AdminOrderService:
         return {
             "success": True,
             "subscription": subscription_admin_view(sub),
+            # the breakup the customer paid (the same one their app shows)
+            "price_breakup": stored_breakup(db, sub),
             "customer": {
                 "user_id": user.user_id, "full_name": user.full_name, "phone": user.phone, "email": user.email,
             } if user else None,

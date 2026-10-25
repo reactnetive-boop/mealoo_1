@@ -162,22 +162,27 @@ def stored_breakup(db: Session, sub: Subscription) -> dict | None:
     snapshot = sub.pricing_snapshot or {}
     if snapshot.get("price_breakup"):
         return snapshot["price_breakup"]
-    if not snapshot.get("base_unit_price") or snapshot.get("switched_from"):
-        return None
-    package = (
-        db.query(MenuPackage.package_name)
-        .join(SubscriptionPackage, SubscriptionPackage.package_reference_id == MenuPackage.package_id)
-        .filter(SubscriptionPackage.subscription_reference_id == sub.subscription_id)
-        .scalar()
+    if snapshot.get("base_unit_price") and not snapshot.get("switched_from"):
+        package = (
+            db.query(MenuPackage.package_name)
+            .join(SubscriptionPackage, SubscriptionPackage.package_reference_id == MenuPackage.package_id)
+            .filter(SubscriptionPackage.subscription_reference_id == sub.subscription_id)
+            .scalar()
+        )
+        try:
+            return price_breakup.paid_copy(price_breakup.subscription(
+                snapshot, slots=expand_plan_slot(sub.meal_slot), package_name=package,
+                plan_name=plan_name(sub.subscription_type), holiday_dates=holidays.sub_holidays(sub),
+                start_date=sub.start_date, end_date=sub.end_date,
+            ))
+        except (AssertionError, KeyError, ValueError, ArithmeticError):
+            pass
+    # the oldest plans (and plans carried over by a switch before breakups were kept): the stored totals
+    return price_breakup.from_totals(
+        "subscription", total=sub.final_amount, meals_amount=sub.total_amount,
+        discount=sub.discount_amount, charges=sub.charges_amount,
+        carried_over=bool(snapshot.get("switched_from")),
     )
-    try:
-        return price_breakup.paid_copy(price_breakup.subscription(
-            snapshot, slots=expand_plan_slot(sub.meal_slot), package_name=package,
-            plan_name=plan_name(sub.subscription_type), holiday_dates=holidays.sub_holidays(sub),
-            start_date=sub.start_date, end_date=sub.end_date,
-        ))
-    except (AssertionError, KeyError, ValueError):
-        return None
 
 
 def validate_start(slots: list[str], start_date: date) -> None:

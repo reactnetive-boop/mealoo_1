@@ -147,10 +147,12 @@ def test_03_no_unit_or_null_text_where_units_used_to_be(client, db):
     db.commit()
     detail = _ok(client.get(f"{API}/user/menu/packages/{w['package'].package_id}", headers=w["user_auth"]))
     for item in detail["items"]:
-        assert set(item) == {"item_id", "item_name", "item_order"}
+        # a count (no unit) is the only amount customers get; weight / volume items have none
+        assert set(item) == {"item_id", "item_name", "item_order", "quantity_count"}
+    assert next(i for i in detail["items"] if i["item_name"] == "Curd")["quantity_count"] is None
     _sub_id(client, w)
     summary = _ok(client.get(f"{K}/food-summary", headers=w["kitchen_auth"]))
-    assert summary["items"] and all(set(i) == {"item_name", "total_servings"} for i in summary["items"])
+    assert summary["items"] and all(set(i) == {"item_name", "total_servings", "total_quantity"} for i in summary["items"])
     shown = [i["item_name"] for i in detail["items"]] + [i["item_name"] for i in summary["items"]]
     for label in shown:
         for bad in ("None", "undefined", "null", "()", " g", " ml"):
@@ -199,7 +201,8 @@ def test_06_next_batch_appears_after_the_current_one_is_ready(client, db):
     r = _ok(client.put(f"{K}/batch/status", headers=w["kitchen_auth"],
                        json={"order_date": "2026-10-05", "meal_slot": "lunch", "status": "ready_for_pickup"}))
     assert r["batch"]["date"] == "2026-10-06" and r["batch"]["meal_slot"] == "lunch"
-    assert r["batch"]["can_mark_ready"] is False  # not its delivery day yet
+    # the kitchen may start or pack it ahead of its delivery day
+    assert r["batch"]["can_mark_ready"] is True and r["batch"]["is_today"] is False
 
 
 def test_07_bulk_ready_moves_only_eligible_orders_and_dialog_count_matches(client, db):

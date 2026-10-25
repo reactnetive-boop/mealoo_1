@@ -39,8 +39,11 @@ from app.models.wallet_transaction_model import WalletTransaction
 CACHE_SECONDS = 60
 TREND_DAYS = 14
 # money customers paid for food (wallet debits) and what they got back
-_SPEND_REASONS = ("subscription_payment", "order_placed")
-_REFUND_REASONS = ("order_cancel_refund", "subscription_cancel_refund", "free_skip_refund", "order_rejected_refund")
+_SPEND_REASONS = ("subscription_payment", "order_placed", "package_switch_payment")
+_REFUND_REASONS = (
+    "order_cancel_refund", "subscription_cancel_refund", "free_skip_refund", "order_rejected_refund",
+    "package_switch_credit", "VENDOR_EMERGENCY_HOLIDAY_MEAL_REFUND",
+)
 
 _cache: dict = {}
 _lock = threading.Lock()

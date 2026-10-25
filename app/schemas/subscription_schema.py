@@ -588,10 +588,10 @@ class PackageSwitchCalculation(BaseModel):
     # new_remaining_cost - remaining_value (signed, before floor rule)
     adjustment_amount: Decimal
 
-    # Floored to whole rupees (policy §17): what the customer pays now
+    # Exact to the paisa: what the customer pays now
     payment_amount: Decimal
 
-    # Floored to whole rupees (policy §17): what is credited to the wallet
+    # Exact to the paisa: what is credited to the wallet
     wallet_credit_amount: Decimal
 
     # 'payment_required' | 'wallet_credit' | 'no_adjustment'

@@ -15,6 +15,9 @@ class UserPackageItemResponse(BaseModel):
     # what is in the package; kitchens no longer give units, so none are sent
     item_name: str
 
+    # how many of the item one meal has (e.g. 4 roti); None when the kitchen gave no count
+    quantity_count: Optional[int] = None
+
     item_order: int
 
 
@@ -204,6 +207,10 @@ class UserPackageDetailResponse(UserPackageListItemResponse):
     reviews: List[PublicPackageReview] = []
 
     review_total: int = 0
+
+    # One meal ordered once at today's fees and taxes: item price x 1, every
+    # fee and tax, discount, total (app/domain/price_breakup.one_meal)
+    price_breakup: Optional[dict] = None
 
 
 class ServiceabilityResponse(BaseModel):

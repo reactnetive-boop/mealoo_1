@@ -91,7 +91,7 @@ class PackageSwitchLog(Base):
     # new_remaining_cost - remaining_value (signed, before floor rule)
     adjustment_amount = Column(Numeric(10, 2), nullable=False)
 
-    # Floored amounts actually moved (policy §17: truncate to whole rupee)
+    # Amounts actually moved, exact to the paisa (whole-rupee flooring until Oct 2026)
     payment_amount = Column(Numeric(10, 2), nullable=False, default=0)
 
     wallet_credit_amount = Column(Numeric(10, 2), nullable=False, default=0)

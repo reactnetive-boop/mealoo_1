@@ -35,6 +35,9 @@ from app.models.vendor_holiday_model import VendorHoliday
 RUNNING = ("active", "paused")
 REASON = "vendor_holiday"
 NOT_OWED_REASON = "vendor_holiday_not_owed"
+# Meals still at the kitchen: casual holidays start tomorrow at the earliest, and a kitchen
+# may start or pack a meal ahead of its date, so all of these are re-planned.
+_AT_KITCHEN = ("scheduled", "preparing", "ready_for_pickup")
 
 
 def _future_rule_dates(h: VendorHoliday, sub: Subscription, first: date) -> list[date]:
@@ -73,7 +76,7 @@ def preview(db: Session, h: VendorHoliday) -> dict:
         meal_count += db.query(Order).filter(
             Order.subscription_reference_id == sub.subscription_id,
             Order.order_date.in_(dates),
-            Order.status == "scheduled",
+            Order.status.in_(_AT_KITCHEN),
         ).count()
     first = today_local() + timedelta(days=1)
     upcoming = sorted(holidays.rule_dates(h, first, first + timedelta(days=60)))
@@ -121,7 +124,8 @@ def apply(db: Session, h: VendorHoliday) -> dict:
             ).with_for_update().all()
             owed_slots = []
             for meal in rows:
-                still_owed = meal.status == "scheduled" or (meal.status == "cancelled" and meal.cancel_reason == "paused")
+                # a meal the kitchen already started or packed ahead of its date is still owed
+                still_owed = meal.status in _AT_KITCHEN or (meal.status == "cancelled" and meal.cancel_reason == "paused")
                 if not still_owed:
                     continue  # skipped by the customer, or already handled
                 meal.status = "cancelled"

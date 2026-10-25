@@ -72,6 +72,14 @@ SKIP_REASON = "VENDOR_EMERGENCY_HOLIDAY_COMPENSATION"
 REFUND_REASON = "VENDOR_EMERGENCY_HOLIDAY_MEAL_REFUND"
 CANCEL_REASON = "vendor_emergency_holiday"
 AFFECTED_STATUSES = ("scheduled", "preparing")
+# Kitchens may mark meals ready ahead of their date; such a meal is still at the
+# closed kitchen, so on a later date it is affected too. Today a packed meal
+# (ready for pickup) is delivered as normal.
+AHEAD_AFFECTED_STATUSES = AFFECTED_STATUSES + ("ready_for_pickup",)
+
+
+def _affected_statuses(on: date) -> tuple[str, ...]:
+    return AHEAD_AFFECTED_STATUSES if on > today_local() else AFFECTED_STATUSES
 MAX_DAYS_AHEAD = 30
 MAX_ATTEMPTS = 5
 
@@ -117,7 +125,7 @@ def affected_orders(db: Session, provider_id, on: date) -> list[Order]:
         .filter(
             Order.vendor_reference_id == provider_id,
             Order.order_date == on,
-            Order.status.in_(AFFECTED_STATUSES),
+            Order.status.in_(_affected_statuses(on)),
             Order.refunded_at.is_(None),
             Subscription.status == "active",
         )
@@ -360,7 +368,7 @@ def process_meal(db: Session, record_id) -> str:
     rec.attempts = (rec.attempts or 0) + 1
 
     still_affected = (
-        order.status in AFFECTED_STATUSES and order.refunded_at is None and sub.status == "active"
+        order.status in _affected_statuses(order.order_date) and order.refunded_at is None and sub.status == "active"
         and str(order.vendor_reference_id) == str(rec.original_vendor_reference_id)
     )
     if not still_affected:

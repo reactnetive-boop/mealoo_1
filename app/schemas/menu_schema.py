@@ -132,6 +132,9 @@ class PackageItemResponse(
 
     quantity: Optional[str] = None
 
+    # how many of the item one meal has (no unit); None for older weight / volume items
+    quantity_count: Optional[int] = None
+
     quantity_value: Optional[float] = None
 
     quantity_unit: Optional[str] = None
