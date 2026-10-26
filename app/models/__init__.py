@@ -61,3 +61,4 @@ from .provider_notification_model import *
 from .delivery_partner_vendor_model import *
 from .vendor_holiday_model import *
 from .skip_credit_model import *
+from .admin_notification_model import *

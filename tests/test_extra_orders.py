@@ -119,8 +119,7 @@ def test_planned_holiday_moves_the_meal_to_the_end_of_the_plan(client, db):
     })
     assert sub.status_code == 200, sub.text
     before = _balance(db, w["user"])
-    r = client.post("/api/v1/provider/holidays", headers=w["kitchen_auth"], json={"date": "2026-10-06", "reason": "family event"})
-    assert r.status_code == 200, r.text
+    f.planned_holiday(db, w["kitchen"], rule_type="dates", dates=["2026-10-06"], reason="family event")
     clock.freeze(datetime(2026, 10, 6, 9, 1))
     jobs.cutoff_sweep_job()
     db.expire_all()

@@ -7,19 +7,27 @@ It is built from the same pricing snapshot the payment uses
 a Decimal rounded to the paisa, and the lines marked `in_total` add up to
 `total` exactly - a test checks the invariant for every kind of breakup.
 
-Lines (each one shown, with Rs 0.00 where it applies but is zero):
-  meals          per meal slot: meals x per-meal price (x quantity)
-  add_ons        Rs 0.00 (packages have no paid add-ons yet)
-  holidays       kitchen holiday dates inside the plan: not charged, Rs 0.00
-  discount       plan discount / offer: name, percent and amount
-  fees           delivery, packaging, platform, SMS, payment charges, and
-                 the switch fee on switches - each on its own line
-  taxes          each tax with its rate (GST 5% ...), or "Taxes Rs 0.00"
-  switch lines   amount already paid, meals used, remaining value of the
-                 current plan (credited against the new cost)
-  rounding       Rs 0.00: every amount is settled to the paisa
-  total          the order total; then wallet applied and the amount payable,
-                 or the refund and where it goes
+Every app shows the same layout (2026-10-26), so each line carries its
+`section` and the lines come in this order:
+
+  price        plan / item price: meals per meal slot (meals x per-meal
+               price x quantity), add-ons, kitchen holiday dates inside the
+               plan (not charged, Rs 0.00)
+  adjustment   switches only: amount already paid and meals used (context),
+               then the unused value of the current plan as a credit
+  discount     plan discount / offer: name, percent and amount
+  wallet       wallet balance used (quotes, when the wallet pays something);
+               not part of `total`
+  fees_taxes   delivery, packaging, platform, SMS, payment charges, the
+               switch fee, each tax with its rate (GST 5% ...) or
+               "Taxes Rs 0.00", and rounding
+  then         `total_payable`: what is left to pay after the wallet (or the
+               refund and where it goes), shown highlighted at the bottom
+
+Lines with `show: false` (a zero add-on, switch fee or rounding, the
+switch's internal difference) stay in the data but are not displayed. The
+breakup never contains a skip price: skips are not part of what a purchase
+costs.
 """
 
 import hashlib
@@ -30,7 +38,14 @@ from decimal import Decimal
 from app.domain.pricing import money, ZERO, TAX_KEYS
 from app.domain.holidays import NOT_CHARGED_LABEL
 
-VERSION = 1
+VERSION = 2
+# display order of the sections (every app renders them in this order)
+SECTIONS = ("price", "adjustment", "discount", "wallet", "fees_taxes")
+_SECTION_OF_KIND = {
+    "charge": "price", "info": "price", "credit": "adjustment", "subtotal": "adjustment",
+    "discount": "discount", "wallet": "wallet", "fee": "fees_taxes", "tax": "fees_taxes",
+    "rounding": "fees_taxes",
+}
 REFUND_DESTINATION = "wallet"
 REFUND_WHEN = "Credited to your Orleeno wallet as soon as you confirm"
 
@@ -46,16 +61,28 @@ def _rupees(value) -> str:
 
 
 def _line(key: str, label: str, amount, *, kind: str, detail: str | None = None, in_total: bool = True,
-          meta: dict | None = None) -> dict:
+          meta: dict | None = None, section: str | None = None, show: bool | None = None) -> dict:
+    value = money(amount)
+    if show is None:
+        # zero add-ons / switch fee / rounding add nothing: kept in the data, not displayed
+        show = not (key in ("add_ons", "fee_switch", "rounding") and value == ZERO)
     return {
         "key": key,
         "label": label,
         "detail": detail,
-        "amount": _s(amount),
+        "amount": _s(value),
         "kind": kind,
+        "section": section or _SECTION_OF_KIND.get(kind, "price"),
+        "show": show,
         "in_total": in_total,
         "meta": meta or {},
     }
+
+
+def _ordered(lines: list[dict]) -> list[dict]:
+    """Lines in the display order of their sections (stable inside a section)."""
+    rank = {name: i for i, name in enumerate(SECTIONS)}
+    return sorted(lines, key=lambda l: rank.get(l.get("section"), 0))
 
 
 def _meal_lines(snapshot: dict, slots: list[str], package_name: str | None) -> list[dict]:
@@ -140,12 +167,18 @@ def _wallet(total: Decimal, wallet_balance) -> dict:
 
 
 def quote_hash(breakup: dict) -> str:
-    """Fingerprint of what the customer was shown; changes whenever any amount does."""
+    """Fingerprint of the price the customer was shown; changes whenever any amount does (not the wallet)."""
     payload = json.dumps(
-        {"total": breakup["total"], "lines": [(l["key"], l["amount"]) for l in breakup["lines"]]},
+        {"total": breakup["total"],
+         "lines": [(l["key"], l["amount"]) for l in breakup["lines"] if l.get("section") != "wallet"]},
         sort_keys=True,
     )
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _wallet_line(applied) -> dict:
+    return _line("wallet", "Wallet balance used", -money(applied), kind="wallet", in_total=False,
+                 detail="Paid from your Orleeno wallet")
 
 
 def _finish(kind: str, lines: list[dict], total: Decimal, wallet_balance, **extra) -> dict:
@@ -156,6 +189,7 @@ def _finish(kind: str, lines: list[dict], total: Decimal, wallet_balance, **extr
         "version": VERSION,
         "currency": "INR",
         "kind": kind,
+        "sections": list(SECTIONS),
         "lines": lines,
         "total": _s(total),
         # JSON-safe: it is stored with the purchase
@@ -166,6 +200,11 @@ def _finish(kind: str, lines: list[dict], total: Decimal, wallet_balance, **extr
             "wallet_balance": _s(wallet_balance), "wallet_applied": "0.00",
             "wallet_balance_after": _s(money(wallet_balance)), "amount_payable": "0.00",
         })
+    if money(breakup.get("wallet_applied") or ZERO) > ZERO:
+        lines.append(_wallet_line(breakup["wallet_applied"]))
+    breakup["lines"] = _ordered(lines)
+    # what is left to pay after the wallet (or the order total when no wallet is involved)
+    breakup["total_payable"] = breakup.get("amount_payable") or _s(max(money(total), ZERO))
     breakup["quote_hash"] = quote_hash(breakup)
     return breakup
 
@@ -240,7 +279,7 @@ def extra_order_line(order, package=None) -> dict | None:
     total = money(order.total_price)
     stored = snapshot.get("price_breakup")
     if stored and money(stored.get("total")) == total:
-        return stored
+        return normalize(stored)
     pkg = package or _NamedPackage(order.package_reference_id, "Package")
     qty = int(order.quantity or 1)
     common = {"delivery_date": order.delivery_date, "meal_slot": order.meal_slot}
@@ -318,10 +357,10 @@ def switch(calc: dict, *, slots: list[str], new_package_name: str, plan_name: st
     quote = calc["quote"]
     info = [
         _line("already_paid", "Amount already paid for your current plan", paid_amount, kind="info", in_total=False,
-              detail=f"{meals_total} meals"),
+              detail=f"{meals_total} meals", section="adjustment"),
         _line("meals_used", "Meals already used", money(Decimal(old_meal_value) * meals_used), kind="info",
               in_total=False, detail=f"{meals_used} of {meals_total} meals × {_rupees(old_meal_value)}",
-              meta={"meals": meals_used}),
+              meta={"meals": meals_used}, section="adjustment"),
     ]
     lines = list(info)
     lines += _meal_lines(quote, slots, new_package_name)
@@ -338,13 +377,13 @@ def switch(calc: dict, *, slots: list[str], new_package_name: str, plan_name: st
     lines += taxes
     remaining_value = money(calc["remaining_value"])
     lines.append(_line(
-        "remaining_value", "Unused value of your current plan", -remaining_value, kind="credit",
+        "remaining_value", "Credit from your current package (unused value)", -remaining_value, kind="credit",
         detail=f"{calc['remaining_meals']} remaining meals × {_rupees(old_meal_value)}",
         meta={"meals": calc["remaining_meals"]},
     ))
     difference = money(calc["adjustment_amount"])
     lines.append(_line("difference", "Difference", difference, kind="subtotal", in_total=False,
-                       detail="New plan cost − unused value"))
+                       detail="New plan cost − unused value", show=False))
     final = calc["payment_amount"] if calc["payment_amount"] > ZERO else -money(calc["wallet_credit_amount"])
     rounding = money(final) - difference
     lines.append(_line("rounding", "Rounding adjustment", rounding, kind="rounding",
@@ -362,7 +401,7 @@ def switch(calc: dict, *, slots: list[str], new_package_name: str, plan_name: st
         new_vendor_name=new_vendor_name, old_package_name=old_package_name, new_package_name=new_package_name,
     )
     if final <= ZERO:
-        breakup.update({"wallet_applied": "0.00", "amount_payable": "0.00"})
+        breakup.update({"wallet_applied": "0.00", "amount_payable": "0.00", "total_payable": "0.00"})
         if wallet_balance is not None:
             breakup["wallet_balance"] = _s(wallet_balance)
             breakup["wallet_balance_after"] = _s(money(wallet_balance) - money(final))
@@ -370,9 +409,42 @@ def switch(calc: dict, *, slots: list[str], new_package_name: str, plan_name: st
 
 
 def paid_copy(breakup: dict) -> dict:
-    """The breakup as stored with the purchase: everything was paid from the wallet."""
+    """
+    The breakup as stored with the purchase: everything was paid from the
+    wallet, so history shows the total paid (no "wallet used" line).
+    """
     stored = {k: v for k, v in breakup.items() if k not in ("wallet_balance", "wallet_balance_after")}
+    stored["lines"] = [l for l in breakup.get("lines", []) if l.get("section") != "wallet"]
+    stored["paid"] = True
     if Decimal(breakup["total"]) > ZERO:
         stored["wallet_applied"] = breakup["total"]
         stored["amount_payable"] = "0.00"
+        stored["total_paid"] = breakup["total"]
     return stored
+
+
+def normalize(breakup: dict | None) -> dict | None:
+    """
+    A breakup stored before the common layout (version 1) in the same shape
+    as new ones: every line gets its section and `show`, in section order,
+    and `total_payable` / `paid` are set. Newer breakups come back unchanged.
+    """
+    if not breakup or int(breakup.get("version") or 1) >= VERSION:
+        return breakup
+    lines = []
+    for line in breakup.get("lines") or []:
+        key = line.get("key")
+        section = line.get("section") or (
+            "adjustment" if key in ("already_paid", "meals_used") else _SECTION_OF_KIND.get(line.get("kind"), "price")
+        )
+        zero = money(line.get("amount") or ZERO) == ZERO
+        show = line.get("show")
+        if show is None:
+            show = not (key == "difference" or (key in ("add_ons", "fee_switch", "rounding") and zero))
+        lines.append({**line, "section": section, "show": show})
+    out = {**breakup, "version": VERSION, "sections": list(SECTIONS), "lines": _ordered(lines)}
+    stored_paid = out.get("amount_payable") == "0.00" and out.get("wallet_applied") == out.get("total")
+    if stored_paid and money(out.get("total") or ZERO) > ZERO:
+        out.update({"paid": True, "total_paid": out["total"]})
+    out.setdefault("total_payable", out.get("amount_payable") or _s(max(money(out.get("total") or ZERO), ZERO)))
+    return out

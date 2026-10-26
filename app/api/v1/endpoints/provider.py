@@ -34,6 +34,7 @@ from app.schemas.provider_schema import (
     HolidayRequest,
     EmergencyHolidayRequest,
 )
+from app.services.holiday_request_service import HolidayRequestService
 from app.services.vendor_holiday_service import VendorHolidayService
 from app.services.provider_service import ProviderService
 from app.services.provider_order_service import ProviderOrderService
@@ -156,9 +157,10 @@ def set_accepting_orders(
     "/holidays",
     summary="Kitchen Holidays and Calendar",
     description=(
-        "Current holiday rules (`rules`), past ones, emergency declarations, the holiday calendar from 30 days "
-        "back to 120 days ahead (`calendar`, also as `holidays` for older apps), and `weekly_holiday_set` for "
-        "the onboarding question. Dates are business-local (Asia/Kolkata)."
+        "The APPROVED schedule: current rules (`rules`, each with any `pending_request` changing it), past "
+        "ones, emergency holidays, the calendar from 30 days back to 120 days ahead (`calendar`, also as "
+        "`holidays` for older apps), `weekly_off_days`, plus the kitchen's holiday requests (`pending_requests`, "
+        "`requests`). Dates are business-local (Asia/Kolkata)."
     ),
 )
 def list_holidays(db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
@@ -167,8 +169,8 @@ def list_holidays(db: Session = Depends(get_db), current_provider=Depends(get_cu
 
 @router.post(
     "/holidays/preview",
-    summary="Preview a Planned Holiday",
-    description="How many running subscriptions and meals the holiday would re-plan. Nothing is saved.",
+    summary="Preview a Regular Holiday",
+    description="How many running subscriptions and meals the weekly days off would re-plan. Nothing is saved.",
 )
 def preview_holiday(payload: HolidayRequest, db: Session = Depends(get_db),
                     current_provider=Depends(get_current_provider)):
@@ -177,37 +179,70 @@ def preview_holiday(payload: HolidayRequest, db: Session = Depends(get_db),
 
 @router.post(
     "/holidays",
-    summary="Plan a Holiday",
+    summary="Request Regular Weekly Holidays",
     description=(
-        "Every Sunday, weekends, selected weekdays, specific dates, a date range or days of the month, from "
-        "tomorrow on. Running subscriptions are re-planned at once: no meal and no charge on those days, plans "
-        "move past them, customers are told in advance. Same-day closures: use the emergency holiday."
+        "Asks Orleeno to add weekly days off (every Sunday, weekends or selected weekdays, from tomorrow or "
+        "`start_date`). Nothing changes until an admin approves it; the admins are notified at once. Sending "
+        "the same request again returns the one already waiting (`duplicate: true`). Other kinds of rules "
+        "(dates, ranges, days of the month) are no longer accepted (400 HOLIDAY_WEEKLY_ONLY): a single day is "
+        "an emergency holiday request."
     ),
 )
 def add_holiday(payload: HolidayRequest, db: Session = Depends(get_db),
                 current_provider=Depends(get_current_provider)):
-    pid = current_provider["provider_id"]
-    return VendorHolidayService.add_casual(db, pid, payload.rule(), actor_type="provider", actor_id=pid)
+    return HolidayRequestService.submit_regular(db, current_provider["provider_id"], payload.rule(), action="add")
 
 
-@router.put("/holidays/rules/{holiday_id}", summary="Edit a Future Holiday")
+@router.put(
+    "/holidays/rules/{holiday_id}",
+    summary="Request a Change of Weekly Holidays",
+    description="Asks to change an approved weekly rule to new weekdays. Applied only once an admin approves it.",
+)
 def update_holiday(holiday_id: UUID, payload: HolidayRequest, db: Session = Depends(get_db),
                    current_provider=Depends(get_current_provider)):
-    pid = current_provider["provider_id"]
-    return VendorHolidayService.update_casual(db, pid, holiday_id, payload.rule(), actor_type="provider", actor_id=pid)
+    return HolidayRequestService.submit_regular(db, current_provider["provider_id"], payload.rule(),
+                                                action="update", target_id=holiday_id)
 
 
-@router.delete("/holidays/rules/{holiday_id}", summary="Remove a Future Holiday")
+@router.delete(
+    "/holidays/rules/{holiday_id}",
+    summary="Request Removal of a Holiday",
+    description="Asks to remove an approved future holiday rule. Applied only once an admin approves it.",
+)
 def remove_holiday_rule(holiday_id: UUID, db: Session = Depends(get_db),
                         current_provider=Depends(get_current_provider)):
-    pid = current_provider["provider_id"]
-    return VendorHolidayService.remove(db, pid, holiday_id, actor_type="provider", actor_id=pid)
+    return HolidayRequestService.submit_regular(db, current_provider["provider_id"], {}, action="remove",
+                                                target_id=holiday_id)
+
+
+@router.get(
+    "/holidays/requests",
+    summary="My Holiday Requests",
+    description="Every holiday request of the kitchen, newest first, with status pending / approved / rejected / "
+                "withdrawn / expired, the admin's note and what approving it did.",
+)
+def list_holiday_requests(status: Optional[str] = Query(None, pattern="^(pending|approved|rejected|withdrawn|expired)$"),
+                          db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
+    return HolidayRequestService.list_for_provider(db, current_provider["provider_id"], status)
+
+
+@router.delete(
+    "/holidays/requests/{request_id}",
+    summary="Withdraw a Holiday Request",
+    description="Withdraws a request that is still waiting for approval. Decided requests cannot be withdrawn.",
+)
+def withdraw_holiday_request(request_id: UUID, db: Session = Depends(get_db),
+                             current_provider=Depends(get_current_provider)):
+    return HolidayRequestService.withdraw(db, current_provider["provider_id"], request_id)
 
 
 @router.get(
     "/holidays/emergency/preview",
     summary="Preview an Emergency Holiday",
-    description="Orders and subscriptions an emergency closure on `date` (default today) would affect.",
+    description=(
+        "Orders and subscriptions an emergency closure on `date` (default today) would affect if approved: meals "
+        "and one-time orders refunded, and how many active subscriptions get an extra free skip."
+    ),
 )
 def preview_emergency(date_: Optional[date] = Query(None, alias="date"), db: Session = Depends(get_db),
                       current_provider=Depends(get_current_provider)):
@@ -216,18 +251,18 @@ def preview_emergency(date_: Optional[date] = Query(None, alias="date"), db: Ses
 
 @router.post(
     "/holidays/emergency",
-    summary="Declare an Emergency Holiday",
+    summary="Request an Emergency Holiday",
     description=(
-        "The kitchen cannot cook on `date` (default today; never the past). No new work lands on it; each "
-        "affected meal goes to a replacement kitchen (same PIN code, same or lower price) or the customer gets "
-        "one extra skip plus the meal's value in the wallet. Subscriptions are not cancelled."
+        "Asks Orleeno to close the kitchen on `date` (default today; never the past; at most 30 days ahead), with "
+        "an optional reason. The admins are notified at once; nothing changes until one approves it. On "
+        "approval the kitchen is closed that day, affected meals and one-time orders are refunded, every active "
+        "subscription gets 1 extra free skip, and customers and delivery partners are told. Sending the same "
+        "date again returns the request already waiting (`duplicate: true`)."
     ),
 )
 def declare_emergency(payload: EmergencyHolidayRequest, db: Session = Depends(get_db),
                       current_provider=Depends(get_current_provider)):
-    pid = current_provider["provider_id"]
-    return VendorHolidayService.declare_emergency(db, pid, payload.date, payload.reason,
-                                                  actor_type="provider", actor_id=pid)
+    return HolidayRequestService.submit_emergency(db, current_provider["provider_id"], payload.date, payload.reason)
 
 
 @router.get("/holidays/{holiday_id}/affected", summary="Orders Affected by a Holiday")
@@ -236,14 +271,13 @@ def holiday_affected_orders(holiday_id: UUID, db: Session = Depends(get_db),
     return VendorHolidayService.affected_orders(db, current_provider["provider_id"], holiday_id)
 
 
-@router.delete("/holidays/{holiday_date}", summary="Remove a Holiday Date (older apps)")
+@router.delete("/holidays/{holiday_date}", summary="Request Removal of a Holiday Date (older apps)")
 def remove_holiday(
     holiday_date: date,
     db: Session = Depends(get_db),
     current_provider=Depends(get_current_provider),
 ):
-    pid = current_provider["provider_id"]
-    return VendorHolidayService.remove_date(db, pid, holiday_date, actor_type="provider", actor_id=pid)
+    return HolidayRequestService.submit_remove_date(db, current_provider["provider_id"], holiday_date)
 
 
 @router.get(

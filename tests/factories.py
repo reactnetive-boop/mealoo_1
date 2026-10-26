@@ -233,3 +233,30 @@ def pickup_code(db, kitchen, on=None) -> str:
 
 def wrong_code(code: str) -> str:
     return "000000" if code != "000000" else "111111"
+
+
+# ── Kitchen holidays (approved by an admin) ──────────────────
+
+def approve_holiday(client, db, sent: dict, note: str | None = None) -> dict:
+    """An admin approves the holiday request a kitchen just sent (its API response)."""
+    _, hdr = admin(db)
+    rid = sent["request"]["request_id"]
+    r = client.post(f"/api/v1/admin/holidays/requests/{rid}/approve", headers=hdr, json={"note": note})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def planned_holiday(db, kitchen, **rule) -> dict:
+    """
+    An approved planned holiday of any rule type (dates, range, monthly ...),
+    applied the way an admin does it - kitchens can only request weekly ones.
+    """
+    from datetime import date as _date
+
+    from app.services.vendor_holiday_service import VendorHolidayService
+
+    fixed = {k: (_date.fromisoformat(v) if k in ("start_date", "end_date") and isinstance(v, str) else v)
+             for k, v in rule.items()}
+    if "dates" in fixed:
+        fixed["dates"] = [_date.fromisoformat(d) if isinstance(d, str) else d for d in fixed["dates"]]
+    return VendorHolidayService.add_casual(db, kitchen.provider_id, fixed, actor_type="admin")

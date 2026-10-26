@@ -26,14 +26,12 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.audit import business_event, security_event
-from app.core.clock import now_local, now_utc
+from app.core.clock import now_utc
 from app.core.config import (
     PAYMENT_GATEWAY,
     RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET,
     RAZORPAY_WEBHOOK_SECRET,
-    WALLET_TOPUP_DAILY_LIMIT,
-    WALLET_TOPUP_MAX_AMOUNT,
 )
 from app.core.errors import DomainError
 from app.domain import notify
@@ -80,18 +78,8 @@ class RazorpayService:
     @staticmethod
     def create_order(db: Session, user_id: str, amount) -> dict:
         _enabled()
+        # no upper limit on how much a customer adds (business rule 2026-10-26)
         amount = money(amount)
-        if amount > money(WALLET_TOPUP_MAX_AMOUNT):
-            raise DomainError(f"A single top-up can be at most Rs {money(WALLET_TOPUP_MAX_AMOUNT)}")
-        from sqlalchemy import func
-
-        day_start = now_local().replace(hour=0, minute=0, second=0, microsecond=0)
-        today_total = db.query(func.coalesce(func.sum(Payment.amount), 0)).filter(
-            Payment.user_reference_id == user_id, Payment.purpose == "wallet_topup",
-            Payment.status == "completed", Payment.paid_at >= day_start,
-        ).scalar()
-        if money(today_total) + amount > money(WALLET_TOPUP_DAILY_LIMIT):
-            raise DomainError(f"Daily top-up limit of Rs {money(WALLET_TOPUP_DAILY_LIMIT)} reached")
 
         payment = Payment(
             user_reference_id=user_id, purpose="wallet_topup", amount=amount, currency="INR",

@@ -140,7 +140,7 @@ class MealContext:
             return {
                 "holiday_type": "emergency",
                 "outcome": "compensated",
-                "label": "Not deliverable – vendor emergency holiday",
+                "label": "Kitchen on leave – meal refunded to your wallet",
                 "will_be_delivered": False,
                 "skips_credited": 1,
                 "wallet_credit": str(o.refund_amount) if o.refund_amount is not None else None,

@@ -144,8 +144,8 @@ VERIFICATION_CODE_SECRET = os.getenv("VERIFICATION_CODE_SECRET") or None
 # DELIVERY_BOY_FEE_PER_DELIVERY variable is no longer read anywhere.
 
 # ── Internal wallet top-up (no payment gateway in this phase) ─
-WALLET_TOPUP_MAX_AMOUNT = os.getenv("WALLET_TOPUP_MAX_AMOUNT", "10000.00")
-WALLET_TOPUP_DAILY_LIMIT = os.getenv("WALLET_TOPUP_DAILY_LIMIT", "25000.00")
+# There is no per top-up or daily cap on wallet money (removed 2026-10-26); the
+# WALLET_TOPUP_MAX_AMOUNT / WALLET_TOPUP_DAILY_LIMIT variables are no longer read.
 # Self top-up adds wallet money WITHOUT any real payment (there is no gateway
 # yet). It exists for development / staging testing only, so production
 # keeps it off unless explicitly enabled; there, wallet money is added by an

@@ -27,7 +27,7 @@ class CompleteProfileRequest(
 
     area: str = Field(..., min_length=2, max_length=256)
 
-    address: str = Field(..., min_length=5, max_length=500)
+    address: str = Field(..., min_length=3, max_length=500)
 
     kitchen_type: str = Field(..., min_length=2, max_length=128)
 
@@ -166,7 +166,7 @@ class ProviderAddressUpdateRequest(BaseModel):
     # older app versions is ignored.
     provider_id: Optional[str] = None
     house_no: str = Field(..., min_length=1, max_length=64)
-    address: str = Field(..., min_length=5, max_length=500)
+    address: str = Field(..., min_length=3, max_length=500)
     landmark: Optional[str] = Field(None, max_length=128)
     area: Optional[str] = Field(None, max_length=256)
     city: str = Field(..., min_length=2, max_length=128)

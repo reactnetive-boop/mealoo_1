@@ -4,8 +4,15 @@ side, price breakup, vendor holidays (casual + emergency) - every scenario of
 mealoo_claude_prompt.md section 10 that the backend owns, numbered as there.
 
 Clock: Monday 5 Oct 2026, 05:00 IST (tests/conftest.py) unless a test moves it.
+
+Since 2026-10-26 every kitchen holiday is a request an admin approves
+(tests/test_holiday_approval_oct26.py covers the approval itself); the
+helpers below send the request and approve it. An approved emergency no
+longer looks for a replacement kitchen: the replacement scenarios run with
+the search switched back on (the `replacements` fixture).
 """
 
+import json
 import threading
 import uuid
 from datetime import date, datetime
@@ -15,6 +22,7 @@ import pytest
 
 from app.core import clock
 from app.core.database import SessionLocal
+from app.core.errors import DomainError
 from app.domain import emergency_holiday, holidays, notify, price_breakup
 from app.models.delivery_boy_notification_model import DeliveryBoyNotification
 from app.models.extra_order_model import ExtraOrder
@@ -23,7 +31,7 @@ from app.models.notification_model import Notification
 from app.models.order_model import Order
 from app.models.skip_credit_model import SkipCreditTransaction
 from app.models.subscription_model import Subscription
-from app.models.vendor_holiday_model import VendorHoliday, VendorHolidayMeal
+from app.models.vendor_holiday_model import HolidayNotice, VendorHoliday, VendorHolidayMeal, VendorHolidaySubscription
 from app.models.wallet_model import Wallet
 from app.models.wallet_transaction_model import WalletTransaction
 from app.schedulers import jobs
@@ -413,7 +421,10 @@ def test_21_new_subscription_breakup_adds_up_and_is_what_is_charged(client, db):
     created = _ok(_subscribe(client, w, expected_total=b["total"]))
     assert before - _balance(db, w["user"]) == Decimal(b["total"])
     assert created["price_breakup"]["total"] == b["total"]
-    assert {l["key"] for l in created["price_breakup"]["lines"]} == {l["key"] for l in b["lines"]}
+    assert {l["key"] for l in created["price_breakup"]["lines"]} == {l["key"] for l in b["lines"]} - {"wallet"}
+    wallet = next(l for l in b["lines"] if l["key"] == "wallet")
+    assert wallet["section"] == "wallet" and wallet["amount"] == "-1260.00" and wallet["in_total"] is False
+    assert b["total_payable"] == "0.00" and created["price_breakup"]["paid"] is True
 
 
 def test_22_discount_named_with_amount_and_percent(client, db):
@@ -547,8 +558,26 @@ def test_30_wallet_covers_partly_or_fully(client, db):
 
 # ══ Section 7: holiday pricing ═══════════════════════════════
 
+def _plain(data):
+    return json.loads(json.dumps(data, default=str))
+
+
 def _holiday(client, w, **rule):
-    return _ok(client.post(H, headers=w["kitchen_auth"], json=rule))
+    """
+    An approved holiday: a weekly one as the kitchen's request approved by an
+    admin; other kinds (dates, ranges, days of the month) as an admin sets them.
+    """
+    db = SessionLocal()
+    try:
+        if rule.get("preset") or rule.get("rule_type") == "weekly":
+            sent = _ok(client.post(H, headers=w["kitchen_auth"], json=rule))
+            assert sent["request"]["status"] == "pending"
+            approved = f.approve_holiday(client, db, sent)
+            return {**(approved["request"]["result"] or {}), "holiday": approved["holiday"],
+                    "request": approved["request"]}
+        return _plain(f.planned_holiday(db, w["kitchen"], **rule))
+    finally:
+        db.close()
 
 
 def test_31_sundays_closed_not_charged_listed_and_meal_count_kept(client, db):
@@ -571,7 +600,7 @@ def test_32_switch_into_a_kitchen_with_holidays_excludes_them_from_the_price(cli
     sub_id = _sub_id(client, w)
     other, other_auth = f.provider(db)
     pkg_b = f.package(db, other, w["category"], price="180")
-    _ok(client.post(H, headers=other_auth, json={"rule_type": "dates", "dates": ["2026-10-08"]}))
+    f.planned_holiday(db, other, rule_type="dates", dates=["2026-10-08"])
     b = _switch_preview(client, w, sub_id, pkg_b, other)["price_breakup"]
     assert b["holiday_dates"] == ["2026-10-08"] and b["meals"] == 6
     assert next(l for l in b["lines"] if l["key"] == "vendor_holidays")["amount"] == "0.00"
@@ -637,22 +666,24 @@ def test_35_every_kind_of_casual_rule(client, db):
 def test_36_future_holidays_edit_and_remove_past_ones_do_not(client, db):
     w = f.world(db)
     h = _holiday(client, w, rule_type="dates", dates=["2026-10-09"])["holiday"]
-    edited = _ok(client.put(f"{H}/rules/{h['holiday_id']}", headers=w["kitchen_auth"],
-                            json={"rule_type": "dates", "dates": ["2026-10-10"]}))
-    assert edited["holiday"]["dates"] == ["2026-10-10"]
-    _ok(client.delete(f"{H}/rules/{h['holiday_id']}", headers=w["kitchen_auth"]))
-    assert not holidays.is_closed(db, w["kitchen"].provider_id, date(2026, 10, 10))
+    # the kitchen asks to remove it; it is removed only once approved
+    sent = _ok(client.delete(f"{H}/rules/{h['holiday_id']}", headers=w["kitchen_auth"]))
+    assert holidays.is_closed(db, w["kitchen"].provider_id, date(2026, 10, 9))
+    f.approve_holiday(client, db, sent)
+    assert not holidays.is_closed(db, w["kitchen"].provider_id, date(2026, 10, 9))
     past = VendorHoliday(provider_reference_id=w["kitchen"].provider_id, holiday_type="casual", rule_type="dates",
                          dates=[date(2026, 10, 1)], start_date=date(2026, 10, 1), end_date=date(2026, 10, 1))
     db.add(past)
     db.commit()
     for r in (client.put(f"{H}/rules/{past.vendor_holiday_id}", headers=w["kitchen_auth"],
-                         json={"rule_type": "dates", "dates": ["2026-10-12"]}),
+                         json={"preset": "every_sunday"}),
               client.delete(f"{H}/rules/{past.vendor_holiday_id}", headers=w["kitchen_auth"])):
         assert r.status_code == 400 and r.json()["code"] == "HOLIDAY_IN_PAST"
     started = _holiday(client, w, preset="every_sunday")["holiday"]
     clock.freeze(datetime(2026, 10, 11, 5, 0))  # the rule is already closing its first Sunday
-    _ok(client.put(f"{H}/rules/{started['holiday_id']}", headers=w["kitchen_auth"], json={"preset": "weekends"}))
+    sent = _ok(client.put(f"{H}/rules/{started['holiday_id']}", headers=w["kitchen_auth"], json={"preset": "weekends"}))
+    assert not holidays.is_closed(db, w["kitchen"].provider_id, date(2026, 10, 17))  # still pending
+    f.approve_holiday(client, db, sent)
     db.expire_all()
     old = db.get(VendorHoliday, uuid.UUID(started["holiday_id"]))
     assert old.end_date == date(2026, 10, 11)  # the day already started stays on record
@@ -666,8 +697,10 @@ def test_37_duplicate_and_overlapping_holidays_never_double_process(client, db):
     _holiday(client, w, preset="every_sunday")
     dup = client.post(H, headers=w["kitchen_auth"], json={"preset": "every_sunday"})
     assert dup.status_code == 409 and dup.json()["code"] == "HOLIDAY_EXISTS"
-    same_day = client.post(H, headers=w["kitchen_auth"], json={"rule_type": "dates", "dates": ["2026-10-11"]})
-    assert same_day.status_code == 409
+    with pytest.raises(DomainError) as same_day:
+        f.planned_holiday(db, w["kitchen"], rule_type="dates", dates=["2026-10-11"])
+    assert same_day.value.status_code == 409
+    db.rollback()
     db.expire_all()
     sub = db.get(Subscription, uuid.UUID(sub_id))
     assert sub.end_date == date(2026, 10, 13) and sub.holiday_dates == ["2026-10-11"]
@@ -697,6 +730,7 @@ def test_39_holidays_are_shown_to_customers(client, db):
     listing = _ok(client.get(f"{API}/user/menu/packages", headers=w["user_auth"], params={"pin_code": f.PIN}))
     view = listing["packages"][0]["vendor_holidays"]
     assert view["regular_holidays"] == ["Closed every Sunday"]
+    assert view["weekly_off_days"] == [7] and view["weekly_off_label"] == "Weekly off: Sunday"
     assert [u["date"] for u in view["upcoming_holidays"]][:2] == ["2026-10-08", "2026-10-11"]
     sub_id = _sub_id(client, w)
     cal = _ok(client.get(f"{S}/{sub_id}/orders", headers=w["user_auth"]))
@@ -710,23 +744,41 @@ def test_39_holidays_are_shown_to_customers(client, db):
 def test_40_near_midnight_ist_lands_on_the_ist_date(client, db):
     w = f.world(db)
     clock.freeze(datetime(2026, 10, 5, 23, 59))  # 18:29 UTC
-    assert _ok(client.post(H, headers=w["kitchen_auth"], json={"rule_type": "dates", "dates": ["2026-10-06"]}))
-    e = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={}))
-    assert e["holiday"]["start_date"] == "2026-10-05"
+    assert f.planned_holiday(db, w["kitchen"], rule_type="dates", dates=["2026-10-06"])
+    e = _ok(_emergency(client, w))
+    assert e["holiday"]["start_date"] == "2026-10-05" and e["request"]["holiday_date"] == "2026-10-05"
     other, other_auth = f.provider(db)
     clock.freeze(datetime(2026, 10, 6, 0, 1))  # still 5 Oct in UTC
-    assert _ok(client.post(f"{H}/emergency", headers=other_auth, json={}))["holiday"]["start_date"] == "2026-10-06"
-    late = client.post(H, headers=other_auth, json={"rule_type": "dates", "dates": ["2026-10-06"]})
-    assert late.status_code == 400 and late.json()["code"] == "HOLIDAY_IN_PAST"
+    sent = _ok(client.post(f"{H}/emergency", headers=other_auth, json={}))
+    assert sent["request"]["holiday_date"] == "2026-10-06"
+    with pytest.raises(DomainError) as late:
+        f.planned_holiday(db, other, rule_type="dates", dates=["2026-10-06"])
+    assert late.value.code == "HOLIDAY_IN_PAST"
 
 
 # ══ Section 8.4: emergency holidays ══════════════════════════
 
 def _emergency(client, w, day=None, reason="gas leak"):
+    """The kitchen asks for an emergency holiday and an admin approves it: the approval's response."""
     body = {"reason": reason}
     if day:
         body["date"] = day
-    return client.post(f"{H}/emergency", headers=w["kitchen_auth"], json=body)
+    sent = client.post(f"{H}/emergency", headers=w["kitchen_auth"], json=body)
+    if sent.status_code != 200:
+        return sent
+    db = SessionLocal()
+    try:
+        _, hdr = f.admin(db)
+    finally:
+        db.close()
+    return client.post(f"{API}/admin/holidays/requests/{sent.json()['request']['request_id']}/approve",
+                       headers=hdr, json={})
+
+
+@pytest.fixture
+def replacements(monkeypatch):
+    """The replacement-kitchen search, off since 2026-10-26, switched back on for its own scenarios."""
+    monkeypatch.setattr(emergency_holiday, "REPLACEMENT_ENABLED", True)
 
 
 def _replacement(db, w, *, price="150", pin=f.PIN, meal_type="lunch", food_type="veg", capacity=None, quota=None,
@@ -753,7 +805,7 @@ def test_42_past_date_is_rejected(client, db):
     assert r.status_code == 400 and r.json()["code"] == "HOLIDAY_IN_PAST"
 
 
-def test_43_replacement_found_meal_moves_user_told_delivery_side_updated(client, db):
+def test_43_replacement_found_meal_moves_user_told_delivery_side_updated(client, db, replacements):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
     kitchen_b, pkg_b = _replacement(db, w, price="160")
@@ -781,7 +833,7 @@ def test_43_replacement_found_meal_moves_user_told_delivery_side_updated(client,
 
 
 @pytest.mark.parametrize("price, outcome", [("150", "replaced"), ("180", "replaced"), ("180.01", "compensated")])
-def test_44_45_46_replacement_price_must_not_exceed_the_subscribed_price(client, db, price, outcome):
+def test_44_45_46_replacement_price_must_not_exceed_the_subscribed_price(client, db, replacements, price, outcome):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
     _replacement(db, w, price=price)
@@ -801,7 +853,7 @@ def _assert_compensated(db, sub_id):
     return rec
 
 
-def test_47_replacement_in_another_pin_code_is_rejected(client, db):
+def test_47_replacement_in_another_pin_code_is_rejected(client, db, replacements):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
     f.pincode(db, 560002)
@@ -810,7 +862,7 @@ def test_47_replacement_in_another_pin_code_is_rejected(client, db):
     _assert_compensated(db, sub_id)
 
 
-def test_48_replacement_on_holiday_is_rejected(client, db):
+def test_48_replacement_on_holiday_is_rejected(client, db, replacements):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
     kitchen_b, _ = _replacement(db, w)
@@ -822,7 +874,7 @@ def test_48_replacement_on_holiday_is_rejected(client, db):
 
 
 @pytest.mark.parametrize("meal_type, food_type", [("dinner", "veg"), ("lunch", "non_veg")])
-def test_49_replacement_without_the_meal_type_or_diet_is_rejected(client, db, meal_type, food_type):
+def test_49_replacement_without_the_meal_type_or_diet_is_rejected(client, db, replacements, meal_type, food_type):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
     _replacement(db, w, meal_type=meal_type, food_type=food_type)
@@ -830,7 +882,7 @@ def test_49_replacement_without_the_meal_type_or_diet_is_rejected(client, db, me
     _assert_compensated(db, sub_id)
 
 
-def test_50_replacement_without_capacity_is_rejected(client, db):
+def test_50_replacement_without_capacity_is_rejected(client, db, replacements):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
     kitchen_b, pkg_b = _replacement(db, w, capacity=1)
@@ -844,7 +896,7 @@ def test_50_replacement_without_capacity_is_rejected(client, db):
     assert "no capacity" in _assert_compensated(db, sub_id).last_error
 
 
-def test_50_replacement_that_cannot_make_the_time_slot_is_rejected(client, db):
+def test_50_replacement_that_cannot_make_the_time_slot_is_rejected(client, db, replacements):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
     _replacement(db, w)
@@ -853,7 +905,7 @@ def test_50_replacement_that_cannot_make_the_time_slot_is_rejected(client, db):
     assert "time slot" in _assert_compensated(db, sub_id).last_error
 
 
-def test_51_several_replacements_same_deterministic_choice(client, db):
+def test_51_several_replacements_same_deterministic_choice(client, db, replacements):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
     first, _ = _replacement(db, w, price="150")
@@ -869,15 +921,16 @@ def test_51_several_replacements_same_deterministic_choice(client, db):
     assert _meal(db, sub_id, TODAY).vendor_reference_id == same.provider_id
 
 
-def test_52_53_54_no_replacement_one_skip_and_the_meal_value_as_two_entries(client, db):
+def test_52_53_54_meal_refunded_and_one_skip_as_two_entries(client, db):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
+    _replacement(db, w, price="150")  # a kitchen that could have cooked it: no replacement any more
     before = _balance(db, w["user"])
     _ok(_emergency(client, w))
     rec = _assert_compensated(db, sub_id)
     skip = db.query(SkipCreditTransaction).one()
     assert skip.skips == 1 and skip.reason == "VENDOR_EMERGENCY_HOLIDAY_COMPENSATION"
-    assert skip.order_reference_id == rec.order_reference_id and skip.vendor_reference_id == w["kitchen"].provider_id
+    assert skip.subscription_reference_id == uuid.UUID(sub_id) and skip.vendor_reference_id == w["kitchen"].provider_id
     assert skip.meal_date == TODAY and skip.reference_id == rec.vendor_holiday_reference_id
     sub = db.get(Subscription, uuid.UUID(sub_id))
     assert sub.free_skips_total == 3  # plan's 2 + the gift
@@ -885,7 +938,9 @@ def test_52_53_54_no_replacement_one_skip_and_the_meal_value_as_two_entries(clie
     assert refund.amount == Decimal("180.00") and refund.reference_id == rec.order_reference_id
     assert _balance(db, w["user"]) - before == Decimal("180.00")
     assert rec.wallet_transaction_reference_id == refund.wallet_transaction_id
-    assert rec.skip_credit_reference_id == skip.skip_credit_transaction_id
+    row = db.query(VendorHolidaySubscription).one()
+    assert row.skip_credit_reference_id == skip.skip_credit_transaction_id and row.skip_status == "completed"
+    assert row.refunded_meals == 1 and row.refund_amount == Decimal("180.00")
 
 
 def test_55_retrying_creates_no_duplicates(client, db):
@@ -908,7 +963,10 @@ def test_56_already_delivered_meal_is_not_compensated(client, db):
     _ok(client.put(f"{D}/orders/{meal.order_id}/deliver", headers=boy_auth, json={"otp": f.delivery_code(meal)}))
     r = _ok(_emergency(client, w))
     assert r["holiday"]["affected_meals"] == 0
-    assert db.query(SkipCreditTransaction).count() == 0
+    assert db.query(WalletTransaction).filter(
+        WalletTransaction.reason == "VENDOR_EMERGENCY_HOLIDAY_MEAL_REFUND").count() == 0
+    # the plan is still running: it gets the extra free skip like every active subscription
+    assert db.query(SkipCreditTransaction).count() == 1
 
 
 def test_57_customer_skip_on_that_date_is_not_compensated(client, db):
@@ -919,11 +977,13 @@ def test_57_customer_skip_on_that_date_is_not_compensated(client, db):
     refunds = db.query(WalletTransaction).filter(WalletTransaction.reason != "adjustment").count()
     assert _ok(_emergency(client, w))["holiday"]["affected_meals"] == 0
     db.expire_all()
-    assert db.query(SkipCreditTransaction).count() == 0
+    assert db.query(SkipCreditTransaction).count() == 1  # the gift every active subscription gets, once
     assert db.query(WalletTransaction).filter(WalletTransaction.reason != "adjustment").count() == refunds
 
 
 def test_58_failed_notice_is_retried_without_repeating_money(client, db, monkeypatch):
+    from app.domain import holiday_notices
+
     w = f.world(db, balance="5000")
     _sub_id(client, w)
     real = notify.customer
@@ -935,19 +995,24 @@ def test_58_failed_notice_is_retried_without_repeating_money(client, db, monkeyp
     hid = _ok(_emergency(client, w))["holiday"]["holiday_id"]
     db.expire_all()
     rec = db.query(VendorHolidayMeal).one()
-    assert rec.compensation_status == "completed" and rec.notification_status == "failed"
+    assert rec.compensation_status == "completed"
+    notice = db.query(HolidayNotice).filter(HolidayNotice.audience == "customer").one()
+    assert notice.status == "failed" and notice.attempts == 1
     money = (db.query(WalletTransaction).count(), db.query(SkipCreditTransaction).count())
     monkeypatch.setattr(notify, "customer", real)
-    assert emergency_holiday.send_notifications(db, uuid.UUID(hid)) == {"sent": 1, "failed": 0}
-    assert emergency_holiday.send_notifications(db, uuid.UUID(hid)) == {"sent": 0, "failed": 0}
+    retry = lambda: holiday_notices.deliver(db, holiday_id=uuid.UUID(hid), retry_failed=True)  # noqa: E731
+    assert retry() == {"sent": 1, "failed": 0}
+    assert retry() == {"sent": 0, "failed": 0}
+    emergency_holiday.process(db, uuid.UUID(hid), retry_failed=True)
     db.expire_all()
     assert (db.query(WalletTransaction).count(), db.query(SkipCreditTransaction).count()) == money
     note = db.query(Notification).filter(Notification.type == "vendor_holiday_compensation").one()
-    assert "credited ₹180.00 for today's meal" in note.body
-    assert db.query(VendorHolidayMeal).one().notification_status == "sent"
+    assert "We've refunded ₹180.00 for 1 meal to your wallet" in note.body
+    assert "Your wallet balance is now ₹3920.00" in note.body and "1 extra free meal skip" in note.body
+    assert db.query(HolidayNotice).filter(HolidayNotice.audience == "customer").one().status == "sent"
 
 
-def test_59_concurrent_processing_assigns_a_meal_once(client, db):
+def test_59_concurrent_processing_assigns_a_meal_once(client, db, replacements):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
     _replacement(db, w, price="150")
@@ -1027,7 +1092,7 @@ def test_62_subscribe_prepare_from_home_bulk_ready_pickup_deliver(client, db):
     assert _meal(db, sub_id, TODAY).status == "delivered"
 
 
-def test_63_emergency_replacement_delivered_by_the_new_kitchen(client, db):
+def test_63_emergency_replacement_delivered_by_the_new_kitchen(client, db, replacements):
     w = f.world(db, balance="5000")
     sub_id = _sub_id(client, w)
     kitchen_b, pkg_b = _replacement(db, w, price="170")

@@ -1,12 +1,19 @@
 """
-Kitchen holidays: what kitchens and admins do with them.
+Kitchen holidays: the approved schedule and the changes applied to it.
 
-Casual holidays (planned, from tomorrow) are rules; adding or editing one
-re-plans the kitchen's running subscriptions in the same transaction
+A kitchen never changes its holidays directly: it sends a request that an
+admin approves or rejects (app/services/holiday_request_service.py). The
+functions here APPLY an approved change (or an admin's own change):
+
+Regular (casual) holidays are rules; adding or editing one re-plans the
+kitchen's running subscriptions in the same transaction
 (app/domain/holiday_policy.py). Emergency holidays close one date (today or
-later) and send each affected meal to a replacement kitchen or compensate it
-(app/domain/emergency_holiday.py). Past holidays are history: they cannot be
-edited or removed. Every change is audited.
+later); the day's meals are refunded and every active subscription gets an
+extra free skip (app/domain/emergency_holiday.py). Past holidays are
+history: they cannot be edited or removed. Every change is audited.
+
+commit=False lets the approval of a request apply the change and record the
+decision in one transaction.
 """
 
 import uuid
@@ -18,12 +25,14 @@ from sqlalchemy.orm import Session
 from app.core.audit import business_event, record_audit
 from app.core.clock import now_utc, today_local
 from app.core.errors import DomainError
-from app.domain import emergency_holiday, holiday_policy, holidays
+from app.domain import emergency_holiday, holiday_notices, holiday_policy, holidays
 from app.models.menu_package_model import MenuPackage
 from app.models.order_model import Order
 from app.models.provider_model import Provider
 from app.models.user_model import User
-from app.models.vendor_holiday_model import VendorHoliday, VendorHolidayMeal
+from app.models.vendor_holiday_model import (
+    HolidayNotice, VendorHoliday, VendorHolidayMeal, VendorHolidayRequest, VendorHolidaySubscription,
+)
 
 CALENDAR_PAST_DAYS = 30
 CALENDAR_DAYS = 120
@@ -121,6 +130,23 @@ class VendorHolidayService:
         calendar = _calendar(db, provider_id)
         casual = [r for r in rules if r.holiday_type == holidays.CASUAL and r.status == "active"]
         current = [r for r in casual if (r.end_date is None or r.end_date > today) and r.removed_at is None]
+        from app.services.holiday_request_service import request_view
+
+        requests = (
+            db.query(VendorHolidayRequest)
+            .filter(VendorHolidayRequest.provider_reference_id == provider_id)
+            .order_by(VendorHolidayRequest.created_at.desc())
+            .limit(50)
+            .all()
+        )
+        pending = [r for r in requests if r.status == "pending"]
+        changing = {r.target_holiday_id: r for r in pending if r.target_holiday_id is not None}
+        targets = {h.vendor_holiday_id: h for h in rules}
+
+        def rule_with_request(r: VendorHoliday) -> dict:
+            req = changing.get(r.vendor_holiday_id)
+            return {**_rule_view(r), "pending_request": request_view(req, targets) if req else None}
+
         return {
             "success": True,
             "timezone": "Asia/Kolkata",
@@ -129,9 +155,15 @@ class VendorHolidayService:
             # for the "set your regular weekly holidays?" question
             "weekly_holiday_set": any(r.rule_type == "weekly" for r in current),
             "regular_holidays": [holidays.describe(r) for r in current if r.rule_type in ("weekly", "monthly")],
-            "rules": [_rule_view(r) for r in current],
+            # approved weekly days off now in force, e.g. [7] = every Sunday
+            "weekly_off_days": sorted({d for r in current if r.rule_type == "weekly" for d in (r.weekdays or [])}),
+            "rules": [rule_with_request(r) for r in current],
             "past_rules": [_rule_view(r) for r in casual if r not in current][:50],
             "emergencies": [_rule_view(r) for r in rules if r.holiday_type == holidays.EMERGENCY][:50],
+            # holiday changes waiting for Orleeno, and the decisions taken
+            "pending_requests": [request_view(r, targets) for r in pending],
+            "requests": [request_view(r, targets) for r in requests],
+            "requires_approval": True,
             "calendar": calendar,
             "upcoming": [c for c in calendar if c["date"] >= today],
             # older app versions read `holidays` (one row per date)
@@ -166,7 +198,8 @@ class VendorHolidayService:
         return {"success": True, "label": holidays.describe(draft), **holiday_policy.preview(db, draft)}
 
     @staticmethod
-    def add_casual(db: Session, provider_id, payload, *, actor_type: str = "provider", actor_id=None) -> dict:
+    def add_casual(db: Session, provider_id, payload, *, actor_type: str = "provider", actor_id=None,
+                   commit: bool = True, request_id=None) -> dict:
         data = _payload(payload)
         reason = data.pop("reason", None)
         rule = holidays.normalize_rule(data)
@@ -192,13 +225,15 @@ class VendorHolidayService:
         )
         db.add(h)
         db.flush()
-        result = holiday_policy.apply(db, h)
+        result = holiday_policy.apply(db, h, request_id=request_id)
         record_audit(
             db, table="provider.vendor_holidays", record_id=h.vendor_holiday_id, operation="I",
             new={"label": holidays.describe(h), "reason": h.reason, **result},
             actor_id=actor_id or provider_id, actor_type=actor_type,
         )
-        db.commit()
+        if commit:
+            db.commit()
+            holiday_notices.deliver(db, holiday_id=h.vendor_holiday_id)
         business_event("holiday.casual_added", provider_id=provider_id, holiday_id=h.vendor_holiday_id, **result)
         msg = f"{holidays.describe(h)}. "
         if result["affected_subscriptions"]:
@@ -210,7 +245,7 @@ class VendorHolidayService:
 
     @staticmethod
     def update_casual(db: Session, provider_id, holiday_id, payload, *, actor_type: str = "provider",
-                      actor_id=None) -> dict:
+                      actor_id=None, commit: bool = True, request_id=None) -> dict:
         _lock_kitchen(db, provider_id)
         h = _owned(db, provider_id, holiday_id)
         today = today_local()
@@ -242,19 +277,21 @@ class VendorHolidayService:
             )
             db.add(target)
         db.flush()
-        result = holiday_policy.apply(db, target)
+        result = holiday_policy.apply(db, target, request_id=request_id)
         record_audit(
             db, table="provider.vendor_holidays", record_id=target.vendor_holiday_id, operation="U",
             old=old, new={"label": holidays.describe(target), **result},
             actor_id=actor_id or provider_id, actor_type=actor_type,
         )
-        db.commit()
+        if commit:
+            db.commit()
+            holiday_notices.deliver(db, holiday_id=target.vendor_holiday_id)
         return {"success": True, "message": f"Holiday updated: {holidays.describe(target)}",
                 "holiday": _rule_view(target), **result}
 
     @staticmethod
     def remove(db: Session, provider_id, holiday_id, *, actor_type: str = "provider", actor_id=None,
-               reason: str | None = None) -> dict:
+               reason: str | None = None, commit: bool = True) -> dict:
         _lock_kitchen(db, provider_id)
         h = _owned(db, provider_id, holiday_id)
         today = today_local()
@@ -275,14 +312,17 @@ class VendorHolidayService:
             db, table="provider.vendor_holidays", record_id=h.vendor_holiday_id, operation="D",
             old=_rule_view(h), actor_id=actor_id or provider_id, actor_type=actor_type,
         )
-        db.commit()
+        if commit:
+            db.commit()
         return {
             "success": True,
             "message": "Holiday removed. Running subscriptions keep their plan; new orders can use these days.",
+            "holiday": _rule_view(h),
         }
 
     @staticmethod
-    def remove_date(db: Session, provider_id, on: date, *, actor_type: str = "provider", actor_id=None) -> dict:
+    def remove_date(db: Session, provider_id, on: date, *, actor_type: str = "provider", actor_id=None,
+                    commit: bool = True) -> dict:
         """Older apps remove one date at a time."""
         if on <= today_local():
             raise DomainError("Past holidays cannot be removed", code="HOLIDAY_IN_PAST")
@@ -296,7 +336,7 @@ class VendorHolidayService:
         remaining = [d for d in (h.dates or []) if d != on]
         if not remaining:
             return VendorHolidayService.remove(db, provider_id, h.vendor_holiday_id, actor_type=actor_type,
-                                               actor_id=actor_id)
+                                               actor_id=actor_id, commit=commit)
         _lock_kitchen(db, provider_id)
         h = _owned(db, provider_id, h.vendor_holiday_id)
         h.dates = remaining
@@ -304,8 +344,9 @@ class VendorHolidayService:
         h.updated_by = actor_id
         record_audit(db, table="provider.vendor_holidays", record_id=h.vendor_holiday_id, operation="U",
                      old={"removed_date": on}, actor_id=actor_id or provider_id, actor_type=actor_type)
-        db.commit()
-        return {"success": True, "message": f"Holiday on {on} removed"}
+        if commit:
+            db.commit()
+        return {"success": True, "message": f"Holiday on {on} removed", "holiday": _rule_view(h)}
 
     # ── Kitchen: emergency holidays ───────────────────────
 
@@ -328,8 +369,8 @@ class VendorHolidayService:
         return {
             "success": True,
             "message": (
-                f"Emergency holiday declared for {on}. {holiday.affected_meals} meal(s) affected: "
-                f"{holiday.replaced_meals} moved to another kitchen, {holiday.compensated_meals} compensated."
+                f"Emergency holiday declared for {on}. {holiday.affected_meals} meal(s) affected and "
+                f"{holiday.compensated_meals} refunded; every active subscription got 1 extra free skip."
             ),
             "holiday": _rule_view(holiday),
             **result,
@@ -377,12 +418,42 @@ class VendorHolidayService:
              "meal_slot": o.meal_slot, "outcome": "moved_to_plan_end", "status": o.status}
             for o in db.query(Order).filter(Order.vendor_holiday_reference_id == h.vendor_holiday_id).all()
         ]
+        subs = db.query(VendorHolidaySubscription).filter(
+            VendorHolidaySubscription.vendor_holiday_reference_id == h.vendor_holiday_id
+        ).all()
+        names = dict(db.query(User.user_id, User.full_name).filter(
+            User.user_id.in_([s.user_reference_id for s in subs])).all()) if subs else {}
+        notices = db.query(HolidayNotice).filter(
+            HolidayNotice.vendor_holiday_reference_id == h.vendor_holiday_id
+        ).order_by(HolidayNotice.created_at).all()
+        from app.services.holiday_request_service import request_view
+
+        req = db.query(VendorHolidayRequest).filter(
+            VendorHolidayRequest.resulting_holiday_id == h.vendor_holiday_id
+        ).order_by(VendorHolidayRequest.created_at.desc()).first()
         return {
             "success": True,
             "holiday": {**_rule_view(h), "provider_id": h.provider_reference_id,
                         "vendor_name": kitchen.business_name if kitchen else None},
+            "request": request_view(req) if req else None,
             "summary": dict(Counter(m["outcome"] for m in meals)),
             "meals": meals,
+            # emergency: one extra free skip per active subscription
+            "skip_credits": [
+                {
+                    "subscription_id": s.subscription_reference_id,
+                    "customer_name": names.get(s.user_reference_id),
+                    "skip_status": s.skip_status,
+                    "skip_credit_id": s.skip_credit_reference_id,
+                    "refunded_meals": s.refunded_meals,
+                    "refund_amount": s.refund_amount,
+                    "notified": s.notice_queued_at is not None,
+                    "attempts": s.attempts,
+                    "last_error": s.last_error,
+                }
+                for s in subs
+            ],
+            "notices": [holiday_notices.view(n) for n in notices],
         }
 
     @staticmethod
@@ -411,7 +482,15 @@ class VendorHolidayService:
         if h is None:
             raise DomainError("Holiday not found", 404)
         if h.holiday_type != holidays.EMERGENCY:
-            raise DomainError("Only emergency holidays have meals to process", 400)
+            # a regular holiday has nothing to process again: only its notices are re-sent
+            db.query(HolidayNotice).filter(
+                HolidayNotice.vendor_holiday_reference_id == holiday_id, HolidayNotice.status == "failed",
+            ).update({"attempts": 0}, synchronize_session=False)
+            record_audit(db, table="provider.vendor_holidays", record_id=holiday_id, operation="U",
+                         new={"event": "retry_notices"}, actor_id=admin_id, actor_type="admin", ip=ip)
+            db.commit()
+            return {"success": True, "message": "Retry finished",
+                    "notifications": holiday_notices.deliver(db, holiday_id=holiday_id, retry_failed=True)}
         # failed meals get a fresh set of attempts; finished ones are never processed again
         db.query(VendorHolidayMeal).filter(
             VendorHolidayMeal.vendor_holiday_reference_id == holiday_id,
@@ -421,10 +500,17 @@ class VendorHolidayService:
             VendorHolidayMeal.vendor_holiday_reference_id == holiday_id,
             VendorHolidayMeal.notification_status == "failed",
         ).update({"notification_attempts": 0}, synchronize_session=False)
+        db.query(VendorHolidaySubscription).filter(
+            VendorHolidaySubscription.vendor_holiday_reference_id == holiday_id,
+            (VendorHolidaySubscription.skip_status == "failed") | VendorHolidaySubscription.notice_queued_at.is_(None),
+        ).update({"attempts": 0}, synchronize_session=False)
+        db.query(HolidayNotice).filter(
+            HolidayNotice.vendor_holiday_reference_id == holiday_id, HolidayNotice.status == "failed",
+        ).update({"attempts": 0}, synchronize_session=False)
         record_audit(db, table="provider.vendor_holidays", record_id=holiday_id, operation="U",
                      new={"event": "retry"}, actor_id=admin_id, actor_type="admin", ip=ip)
         db.commit()
-        result = emergency_holiday.process(db, holiday_id)
+        result = emergency_holiday.process(db, holiday_id, retry_failed=True)
         return {"success": True, "message": "Retry finished", **result}
 
 

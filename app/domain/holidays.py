@@ -338,35 +338,50 @@ def describe(h: VendorHoliday) -> str:
     return text
 
 
-def regular_rules(db: Session, provider_ids) -> dict:
-    """{provider_id: ['Closed every Sunday', ...]} - recurring casual rules still in force."""
-    today = today_local()
-    out: dict = defaultdict(list)
-    ids = _ids(provider_ids)
-    if not ids:
-        return out
-    rows = db.query(VendorHoliday).filter(
+def _regular_rows(db: Session, ids) -> list[VendorHoliday]:
+    return db.query(VendorHoliday).filter(
         VendorHoliday.provider_reference_id.in_(ids),
         VendorHoliday.status == "active",
         VendorHoliday.holiday_type == CASUAL,
         VendorHoliday.rule_type.in_(("weekly", "monthly")),
-        or_(VendorHoliday.end_date.is_(None), VendorHoliday.end_date >= today),
+        or_(VendorHoliday.end_date.is_(None), VendorHoliday.end_date >= today_local()),
     ).order_by(VendorHoliday.created_at).all()
-    for h in rows:
+
+
+def regular_rules(db: Session, provider_ids, rows=None) -> dict:
+    """{provider_id: ['Closed every Sunday', ...]} - recurring casual rules still in force."""
+    out: dict = defaultdict(list)
+    ids = _ids(provider_ids)
+    if not ids:
+        return out
+    for h in rows if rows is not None else _regular_rows(db, ids):
         out[h.provider_reference_id].append(describe(h))
     return out
 
 
+def weekly_off_label(weekdays) -> str | None:
+    """'Weekly off: Sunday', 'Weekly off: Saturday and Sunday'."""
+    days = [WEEKDAY_NAMES[d] for d in sorted(set(weekdays or []))]
+    return f"Weekly off: {_join(days)}" if days else None
+
+
 def public_view(db: Session, provider_ids, days: int = 30) -> dict:
     """
-    What customers see about a kitchen's holidays: the regular closures
-    ("Closed every Sunday") and the closed dates in the next `days` days.
+    What customers and delivery partners see about a kitchen's APPROVED
+    holidays: the regular closures ("Closed every Sunday"), the weekly days
+    off, and the closed dates in the next `days` days. Requests waiting for
+    approval never show here.
     """
     given = {_uuid(p): p for p in provider_ids if p is not None}
     ids = list(given)
     today = today_local()
     calendar = closures(db, ids, today, today + timedelta(days=days))
-    regular = regular_rules(db, ids)
+    rows = _regular_rows(db, ids) if ids else []
+    regular = regular_rules(db, ids, rows)
+    weekly: dict = defaultdict(set)
+    for h in rows:
+        if h.rule_type == "weekly":
+            weekly[h.provider_reference_id] |= set(h.weekdays or [])
     out = {}
     for pid in ids:
         upcoming = [
@@ -380,6 +395,9 @@ def public_view(db: Session, provider_ids, days: int = 30) -> dict:
         out[given[pid]] = {
             "regular_holidays": regular.get(pid, []),
             "holiday_summary": "; ".join(regular.get(pid, [])) or None,
+            # approved weekly days off, ISO weekdays (1 = Monday .. 7 = Sunday)
+            "weekly_off_days": sorted(weekly.get(pid, set())),
+            "weekly_off_label": weekly_off_label(weekly.get(pid)),
             "upcoming_holidays": upcoming,
             "is_closed_today": any(u["date"] == today for u in upcoming),
         }

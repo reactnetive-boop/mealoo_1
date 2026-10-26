@@ -16,6 +16,14 @@ are re-planned in the same transaction:
 Dates a subscription already treats as holidays are skipped, so overlapping
 or repeated rules never re-plan the same day twice. Removing a holiday later
 does not shorten any subscription (its meal count is already right).
+
+One-time orders already placed for a new holiday date are cancelled and
+refunded in full. Every notice goes through the holiday notice log
+(app/domain/holiday_notices.py), so it is sent only after the change commits
+and a failed one is retried without re-planning anything.
+
+Only approved holidays get here: a kitchen's request is applied when an
+admin approves it (app/services/holiday_request_service.py).
 """
 
 from collections import defaultdict
@@ -25,14 +33,17 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import business_event
 from app.core.clock import today_local
-from app.domain import holidays, notify, orders as meals
+from app.domain import holiday_notices, holidays, orders as meals
+from app.domain.pricing import money
 from app.domain.slots import expand_plan_slot
+from app.models.extra_order_model import ExtraOrder
 from app.models.order_model import Order
 from app.models.provider_model import Provider
 from app.models.subscription_model import Subscription
 from app.models.vendor_holiday_model import VendorHoliday
 
 RUNNING = ("active", "paused")
+EXTRA_OPEN = ("pending", "confirmed", "preparing", "ready_for_pickup")
 REASON = "vendor_holiday"
 NOT_OWED_REASON = "vendor_holiday_not_owed"
 # Meals still at the kitchen: casual holidays start tomorrow at the earliest, and a kitchen
@@ -102,13 +113,50 @@ def _not_owed_row(sub: Subscription, on: date, slot: str) -> dict:
     }
 
 
-def apply(db: Session, h: VendorHoliday) -> dict:
+def _cancel_extra_orders(db: Session, h: VendorHoliday, kitchen_name: str, partners: dict, *, request_id=None) -> int:
+    """One-time orders already placed for a new holiday date: cancelled and refunded in full."""
+    first = today_local() + timedelta(days=1)
+    rows = db.query(ExtraOrder).filter(
+        ExtraOrder.vendor_reference_id == h.provider_reference_id,
+        ExtraOrder.delivery_date >= max(first, h.start_date),
+        ExtraOrder.status.in_(EXTRA_OPEN),
+        ExtraOrder.refunded_at.is_(None),
+    )
+    if h.end_date is not None:
+        rows = rows.filter(ExtraOrder.delivery_date <= h.end_date)
+    cancelled = 0
+    for order in rows.order_by(ExtraOrder.extra_order_id).with_for_update().all():
+        if not holidays.rule_dates(h, order.delivery_date, order.delivery_date):
+            continue
+        order.status = "cancelled"
+        order.cancel_reason = REASON
+        amount = meals.refund_extra_order(
+            db, order, reason="order_cancel_refund",
+            description=f"Refund: kitchen holiday on {order.delivery_date} (one-time order)",
+        )
+        if order.delivery_boy_reference_id:
+            partners[order.delivery_boy_reference_id].add(order.delivery_date)
+        holiday_notices.queue(
+            db, "customer", order.user_reference_id, "order_cancelled", "Order cancelled - kitchen holiday",
+            f"{kitchen_name} is closed on {order.delivery_date.strftime('%a %d %b')}, so your one-time order "
+            f"was cancelled and ₹{money(amount):.2f} refunded to your wallet.",
+            {"extra_order_id": order.extra_order_id, "vendor_holiday_id": h.vendor_holiday_id,
+             "wallet_credit": f"{money(amount):.2f}"},
+            dedupe_key=f"casual_holiday_extra:{h.vendor_holiday_id}:{order.extra_order_id}",
+            request_id=request_id, holiday_id=h.vendor_holiday_id,
+        )
+        cancelled += 1
+    return cancelled
+
+
+def apply(db: Session, h: VendorHoliday, *, request_id=None) -> dict:
     """Re-plan every running subscription the holiday touches (caller commits)."""
     kitchen = db.query(Provider).filter(Provider.provider_id == h.provider_reference_id).first()
     kitchen_name = (kitchen.business_name if kitchen else None) or "Your kitchen"
     partners: dict = defaultdict(set)
     touched = 0
     cancelled_total = 0
+    notified: set = set()
     for sub, dates in affected(db, h):
         sub = db.query(Subscription).filter(
             Subscription.subscription_id == sub.subscription_id
@@ -162,8 +210,8 @@ def apply(db: Session, h: VendorHoliday) -> dict:
         touched += 1
         last_meal = sub.end_date - timedelta(days=1)
         shown = ", ".join(d.strftime("%a %d %b") for d in dates[:6]) + (" …" if len(dates) > 6 else "")
-        notify.customer(
-            db, sub.user_reference_id, "vendor_holiday", "Your kitchen has a holiday coming up",
+        holiday_notices.queue(
+            db, "customer", sub.user_reference_id, "vendor_holiday", "Your kitchen has a holiday coming up",
             f"{kitchen_name} will be closed on {shown}. There is no delivery and no charge for those days. "
             f"Your plan keeps every meal you paid for and now ends on {last_meal.strftime('%d %b %Y')}.",
             {
@@ -175,18 +223,25 @@ def apply(db: Session, h: VendorHoliday) -> dict:
                 "last_meal_date": last_meal.isoformat(),
             },
             dedupe_key=f"casual_holiday:{h.vendor_holiday_id}:{sub.subscription_id}",
+            request_id=request_id, holiday_id=h.vendor_holiday_id,
         )
+        notified.add(sub.subscription_id)
+
+    extra_cancelled = _cancel_extra_orders(db, h, kitchen_name, partners, request_id=request_id)
 
     for boy, days in partners.items():
         shown = ", ".join(d.strftime("%a %d %b") for d in sorted(days))
-        notify.delivery_partner(
-            db, boy, "schedule_update", "Deliveries cancelled - kitchen holiday",
+        holiday_notices.queue(
+            db, "delivery_boy", boy, "schedule_update", "Deliveries cancelled - kitchen holiday",
             f"{kitchen_name} is closed on {shown}. Those deliveries are off your schedule.",
             {"vendor_holiday_id": str(h.vendor_holiday_id), "dates": [d.isoformat() for d in sorted(days)]},
+            dedupe_key=f"casual_holiday_partner:{h.vendor_holiday_id}:{boy}",
+            request_id=request_id, holiday_id=h.vendor_holiday_id,
         )
     h.affected_subscriptions = (h.affected_subscriptions or 0) + touched
     h.affected_meals = (h.affected_meals or 0) + cancelled_total
     h.processing_status = "completed"
     business_event("holiday.casual_applied", holiday_id=h.vendor_holiday_id, subscriptions=touched,
                    meals=cancelled_total)
-    return {"affected_subscriptions": touched, "cancelled_meals": cancelled_total}
+    return {"affected_subscriptions": touched, "cancelled_meals": cancelled_total,
+            "cancelled_one_time_orders": extra_cancelled, "notified_subscriptions": sorted(str(n) for n in notified)}

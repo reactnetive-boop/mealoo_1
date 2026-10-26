@@ -85,15 +85,18 @@ def test_address_in_use_cannot_change_pincode_or_be_deleted(client, db):
     assert client.get(f"/api/v1/user/address/{aid}", headers=stranger).status_code == 404
 
 
-def test_wallet_topup_limits_and_idempotency(client, db):
+def test_wallet_topup_has_no_cap_and_is_idempotent(client, db):
     user, _, hdr = f.customer(db)
-    assert client.post("/api/v1/user/wallet/recharge", headers=hdr, json={"amount": "10001"}).status_code == 400
     assert client.post("/api/v1/user/wallet/recharge", headers=hdr, json={"amount": "-5"}).status_code == 422
-    for i in range(2):
-        assert client.post("/api/v1/user/wallet/recharge", headers={**hdr, "Idempotency-Key": f"t{i}"}, json={"amount": "10000"}).status_code == 200
-    r = client.post("/api/v1/user/wallet/recharge", headers={**hdr, "Idempotency-Key": "t3"}, json={"amount": "6000"})
-    assert r.status_code == 400  # 25,000 per day
-    assert _balance(db, user) == Decimal("20000.00")
+    assert client.post("/api/v1/user/wallet/recharge", headers=hdr, json={"amount": "0"}).status_code == 422
+    # no per top-up or daily limit any more (2026-10-26)
+    for i, amount in enumerate(("10001", "25000", "150000.50")):
+        r = client.post("/api/v1/user/wallet/recharge", headers={**hdr, "Idempotency-Key": f"t{i}"}, json={"amount": amount})
+        assert r.status_code == 200, r.text
+        assert "limit" not in r.json()["message"].lower()
+    again = client.post("/api/v1/user/wallet/recharge", headers={**hdr, "Idempotency-Key": "t2"}, json={"amount": "150000.50"})
+    assert again.status_code == 200 and again.json()["message"] == "Wallet already recharged"
+    assert _balance(db, user) == Decimal("185001.50")
 
 
 def test_kitchen_profile_needs_serviceable_pincode(client, db):

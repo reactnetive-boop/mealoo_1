@@ -161,7 +161,7 @@ def stored_breakup(db: Session, sub: Subscription) -> dict | None:
     """The breakup shown at purchase (rebuilt from the snapshot for plans bought before it was stored)."""
     snapshot = sub.pricing_snapshot or {}
     if snapshot.get("price_breakup"):
-        return snapshot["price_breakup"]
+        return price_breakup.normalize(snapshot["price_breakup"])
     if snapshot.get("base_unit_price") and not snapshot.get("switched_from"):
         package = (
             db.query(MenuPackage.package_name)
@@ -669,7 +669,7 @@ class SubscriptionService:
             "final_amount": sub.final_amount,
             "wallet_balance_after": balance_after,
             "price_breakdown": quote_view(sub.pricing_snapshot) if sub.pricing_snapshot else None,
-            "price_breakup": (sub.pricing_snapshot or {}).get("price_breakup"),
+            "price_breakup": price_breakup.normalize((sub.pricing_snapshot or {}).get("price_breakup")),
             "holiday_dates": sorted(holidays.sub_holidays(sub)),
         }
 

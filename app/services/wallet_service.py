@@ -12,12 +12,11 @@ same ledger credit, so balances, history and admin refunds work unchanged.
 """
 
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.audit import business_event, security_event
-from app.core.clock import now_utc, now_local
-from app.core.config import WALLET_TOPUP_MAX_AMOUNT, WALLET_TOPUP_DAILY_LIMIT, WALLET_SELF_TOPUP_ENABLED
+from app.core.audit import business_event
+from app.core.clock import now_utc
+from app.core.config import WALLET_SELF_TOPUP_ENABLED
 from app.core.errors import DomainError
 from app.domain import ledger
 from app.domain.pricing import ZERO, money
@@ -69,9 +68,8 @@ class WalletService:
         if not WALLET_SELF_TOPUP_ENABLED:
             raise DomainError("Wallet top-up is not available right now", 403)
 
+        # no upper limit on how much a customer adds (business rule 2026-10-26)
         amount = money(payload.amount)
-        if amount > money(WALLET_TOPUP_MAX_AMOUNT):
-            raise DomainError(f"A single top-up can be at most Rs {money(WALLET_TOPUP_MAX_AMOUNT)}")
 
         key = f"topup_request:{user_id}:{idempotency_key}" if idempotency_key else None
         if key:
@@ -88,21 +86,6 @@ class WalletService:
                 }
 
         wallet = ledger.lock_customer_wallet(db, user_id)
-
-        day_start = now_local().replace(hour=0, minute=0, second=0, microsecond=0)
-        topped_today = (
-            db.query(func.coalesce(func.sum(Payment.amount), 0))
-            .filter(
-                Payment.user_reference_id == user_id,
-                Payment.purpose == "wallet_topup",
-                Payment.status == "completed",
-                Payment.paid_at >= day_start,
-            )
-            .scalar()
-        )
-        if money(topped_today) + amount > money(WALLET_TOPUP_DAILY_LIMIT):
-            security_event("wallet.topup_daily_limit", user_id=user_id, attempted=amount)
-            raise DomainError(f"Daily top-up limit of Rs {money(WALLET_TOPUP_DAILY_LIMIT)} reached")
 
         payment = Payment(
             user_reference_id=user_id,

@@ -151,8 +151,7 @@ def test_a_meal_packed_ahead_is_replanned_by_a_later_holiday(client, db):
     _ok(client.put(f"{K}/subscription-orders/{meal.order_id}/status", headers=w["kitchen_auth"],
                    json={"status": "ready_for_pickup"}))
     end = db.get(Subscription, uuid.UUID(sub_id)).end_date
-    _ok(client.post(f"{API}/provider/holidays", headers=w["kitchen_auth"],
-                    json={"rule_type": "dates", "dates": ["2026-10-06"]}))
+    f.planned_holiday(db, w["kitchen"], rule_type="dates", dates=["2026-10-06"])
     db.expire_all()
     moved = _meal(db, sub_id, TOMORROW)
     assert moved.status == "cancelled" and moved.cancel_reason == "vendor_holiday"
@@ -262,7 +261,7 @@ def test_older_plans_still_show_a_breakup_that_adds_up(client, db):
 
 def test_planned_holiday_blocks_one_time_orders_and_plan_meals(client, db):
     w = f.world(db, balance="2000")
-    _ok(client.post(f"{API}/provider/holidays", headers=w["kitchen_auth"], json={"rule_type": "dates", "dates": ["2026-10-07"]}))
+    f.planned_holiday(db, w["kitchen"], rule_type="dates", dates=["2026-10-07"])
     r = client.post(f"{API}/user/order/extra", headers=w["user_auth"], json={
         "vendor_id": str(w["kitchen"].provider_id), "address_id": str(w["address"].user_address_id),
         "delivery_date": "2026-10-07", "meal_slot": "lunch",

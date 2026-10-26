@@ -25,9 +25,11 @@ keys.
                           created on first use, so this only front-loads them)
   maintenance             daily 03:30: money / pipeline reconciliation (logged
                           at ERROR when anything is off) and data retention
-  holiday_retry           every 10 min: finishes emergency-holiday meals that
-                          failed or were interrupted and re-sends unsent
-                          customer notices (never repeats money movements)
+  holiday_retry           every 10 min: finishes emergency-holiday work that
+                          failed or was interrupted (refunds, skip credits),
+                          expires emergency requests whose date passed
+                          undecided, and re-sends unsent holiday notices from
+                          the notice log (never repeats money movements)
 """
 
 import logging
@@ -40,7 +42,7 @@ from app.core.audit import business_event
 from app.core.clock import today_local
 from app.core.config import STALE_SWEEP_LOOKBACK_DAYS
 from app.core.database import SessionLocal
-from app.domain import emergency_holiday, holidays, maintenance, notify
+from app.domain import emergency_holiday, holiday_notices, holidays, maintenance, notify
 from app.domain import orders as meals
 from app.domain.slots import SLOTS, is_before_cutoff
 from app.domain.status import SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES, IN_HAND_STATUSES
@@ -345,9 +347,13 @@ def holiday_retry_job() -> None:
         work = SessionLocal()
         try:
             result = emergency_holiday.retry_pending(work)
+            from app.services.holiday_request_service import HolidayRequestService
+
+            result["expired_requests"] = HolidayRequestService.expire_stale(work)["expired"]
+            result["notices"] = holiday_notices.deliver(work, retry_failed=True)
         finally:
             work.close()
-        if result["holidays"]:
+        if result["holidays"] or result["expired_requests"] or any(result["notices"].values()):
             logger.info("[holiday_retry] done %s", result)
     except Exception:
         db.rollback()

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import now_utc, today_local
 from app.core.errors import DomainError
-from app.domain import vendor_partner
+from app.domain import holidays, vendor_partner
 from app.domain.status import (
     IN_HAND_STATUSES,
     SUB_UNPICKED_STATUSES,
@@ -36,6 +36,8 @@ from app.services.delivery_views import (
 
 SUBSCRIPTION_PAGE_MAX = 50
 VENDOR_UPCOMING_DAYS = 7
+# kitchen holidays shown to partners: the next 60 days
+HOLIDAY_DAYS = 60
 _GONE = ("cancelled", "skipped")
 
 
@@ -149,6 +151,7 @@ class DeliveryBoyOrderService(DeliveryHandoverService):
             .group_by(Subscription.vendor_reference_id)
             .all()
         )
+        closed = holidays.public_view(db, [p.provider_id for _, p in kitchens], days=HOLIDAY_DAYS)
         return {
             "success": True,
             "total": len(kitchens),
@@ -157,6 +160,8 @@ class DeliveryBoyOrderService(DeliveryHandoverService):
                     **_kitchen_brief(row, p),
                     **counts.get(p.provider_id, {}),
                     "active_subscriptions": subs.get(p.provider_id, 0),
+                    # approved holidays only: weekly days off and closed dates ahead
+                    "holidays": closed.get(p.provider_id),
                 }
                 for row, p in kitchens
             ],
@@ -193,11 +198,14 @@ class DeliveryBoyOrderService(DeliveryHandoverService):
             [_card(o, "subscription", lk) for o in subs] + [_card(o, "extra", lk) for o in extras], key=_sort_key,
         )
         counts = DeliveryBoyOrderService._kitchen_counts(db, delivery_boy_id, [kitchen.provider_id])
+        closed = holidays.public_view(db, [kitchen.provider_id], days=HOLIDAY_DAYS).get(kitchen.provider_id)
         return {
             "success": True,
             "vendor": {
                 **_kitchen_brief(row, kitchen),
                 **counts.get(kitchen.provider_id, {}),
+                # approved holidays only: weekly days off and the closed dates of the next 60 days
+                "holidays": closed,
             },
             "today_orders": [c for c in cards if c["date"] == today],
             "upcoming_orders": [c for c in cards if c["date"] > today],

@@ -4,7 +4,7 @@ from sqlalchemy import (
     Column, String, Text, Date, DateTime, Integer, SmallInteger, Numeric, ForeignKey,
     CheckConstraint, Index, UniqueConstraint, text,
 )
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -187,3 +187,191 @@ class VendorHolidayMeal(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     processed_at = Column(DateTime(timezone=True), nullable=True)
     notified_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class VendorHolidayRequest(Base):
+    """
+    A kitchen's request to change its holidays, waiting for an admin.
+
+    Nothing a kitchen asks for touches its schedule until an admin approves
+    it: the approved schedule is provider.vendor_holidays only, so a pending,
+    rejected, withdrawn or expired request never closes (or opens) a day.
+
+    request_type  emergency  one date (holiday_date), optional reason
+                  regular    weekly days (weekdays from start_date on)
+    action        add | update (target_holiday_id) | remove (target_holiday_id)
+
+    dedupe_key is unique among the pending requests of a kitchen
+    ("emergency:2026-10-06", "regular:add:6,7", "regular:target:<id>"), so
+    sending the same request twice gives back the one already waiting.
+    """
+
+    __tablename__ = "vendor_holiday_requests"
+
+    __table_args__ = (
+        CheckConstraint("request_type IN ('emergency', 'regular')", name="chk_holiday_request_type"),
+        CheckConstraint("action IN ('add', 'update', 'remove')", name="chk_holiday_request_action"),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected', 'withdrawn', 'expired')", name="chk_holiday_request_status",
+        ),
+        Index("idx_holiday_requests_provider", "provider_reference_id", "created_at"),
+        Index("idx_holiday_requests_status", "status", "created_at"),
+        Index(
+            "uq_holiday_requests_pending", "provider_reference_id", "dedupe_key", unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        {"schema": "provider"},
+    )
+
+    request_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    provider_reference_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("provider.providers.provider_id", name="vendor_holiday_requests_provider_id_fkey"),
+        nullable=False,
+    )
+
+    # emergency | regular
+    request_type = Column(String(20), nullable=False)
+
+    # add | update | remove
+    action = Column(String(20), nullable=False, default="add")
+
+    # the approved holiday an update / remove changes
+    target_holiday_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("provider.vendor_holidays.vendor_holiday_id", name="vendor_holiday_requests_target_fkey"),
+        nullable=True,
+    )
+
+    # emergency: the date the kitchen cannot cook
+    holiday_date = Column(Date, nullable=True)
+
+    # regular: ISO weekdays (1 = Monday .. 7 = Sunday) and the first day they apply
+    weekdays = Column(ARRAY(SmallInteger), nullable=True)
+    start_date = Column(Date, nullable=True)
+
+    reason = Column(Text, nullable=True)
+
+    # pending | approved | rejected | withdrawn | expired
+    status = Column(String(20), nullable=False, default="pending")
+
+    dedupe_key = Column(String(120), nullable=False)
+
+    # what the request would change when it was sent (shown to the admin)
+    impact = Column(JSONB, nullable=True)
+
+    decided_by = Column(UUID(as_uuid=True), nullable=True)
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+    decision_note = Column(Text, nullable=True)
+
+    # the approved holiday created (or changed) by this request
+    resulting_holiday_id = Column(UUID(as_uuid=True), nullable=True)
+    # what applying it did (re-planned subscriptions, refunds, skips, ...)
+    result = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class VendorHolidaySubscription(Base):
+    """
+    One active subscription of a kitchen on an approved emergency holiday:
+    its extra free skip (exactly one per holiday) and the notice telling the
+    customer about the closure, the refunded meals, the wallet balance and the
+    skip. Unique per (holiday, subscription), so retries never credit twice.
+    """
+
+    __tablename__ = "vendor_holiday_subscriptions"
+
+    __table_args__ = (
+        UniqueConstraint("vendor_holiday_reference_id", "subscription_reference_id",
+                         name="uq_vendor_holiday_subscription"),
+        CheckConstraint("skip_status IN ('pending', 'completed', 'failed')", name="chk_vh_sub_skip_status"),
+        Index("idx_vendor_holiday_subscriptions_status", "skip_status"),
+        {"schema": "provider"},
+    )
+
+    vendor_holiday_subscription_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    vendor_holiday_reference_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("provider.vendor_holidays.vendor_holiday_id", name="vendor_holiday_subscriptions_holiday_fkey"),
+        nullable=False,
+    )
+    subscription_reference_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("subscription.subscriptions.subscription_id", name="vendor_holiday_subscriptions_sub_fkey"),
+        nullable=False,
+    )
+    user_reference_id = Column(
+        UUID(as_uuid=True), ForeignKey("auth.users.user_id", name="vendor_holiday_subscriptions_user_fkey"),
+        nullable=False,
+    )
+
+    skip_credit_reference_id = Column(UUID(as_uuid=True), nullable=True)
+    # pending | completed | failed
+    skip_status = Column(String(20), nullable=False, default="pending")
+    attempts = Column(SmallInteger, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+
+    # meals of this subscription refunded for the holiday, and their total
+    refunded_meals = Column(Integer, nullable=False, default=0)
+    refund_amount = Column(Numeric(10, 2), nullable=False, default=0)
+
+    notice_queued_at = Column(DateTime(timezone=True), nullable=True)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class HolidayNotice(Base):
+    """
+    Notification log of everything sent about kitchen holidays: to admins
+    (new request), kitchens (decision), customers (closure, refund, skip,
+    schedule change) and delivery partners (no pickup, schedule change).
+
+    A notice is written in the same transaction as the business change it
+    reports (so it is never sent for something that did not commit), then
+    delivered on its own. A failed delivery is retried later from this row
+    alone - refunds, skips and schedule changes are never run again.
+    dedupe_key is unique: one notice per event and recipient.
+    """
+
+    __tablename__ = "holiday_notices"
+
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_holiday_notices_dedupe"),
+        CheckConstraint("audience IN ('admin', 'provider', 'customer', 'delivery_boy')",
+                        name="chk_holiday_notice_audience"),
+        CheckConstraint("status IN ('pending', 'sent', 'failed')", name="chk_holiday_notice_status"),
+        Index("idx_holiday_notices_status", "status", "created_at"),
+        Index("idx_holiday_notices_holiday", "vendor_holiday_reference_id"),
+        Index("idx_holiday_notices_request", "request_reference_id"),
+        {"schema": "provider"},
+    )
+
+    holiday_notice_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    request_reference_id = Column(UUID(as_uuid=True), nullable=True)
+    vendor_holiday_reference_id = Column(UUID(as_uuid=True), nullable=True)
+
+    # admin | provider | customer | delivery_boy
+    audience = Column(String(20), nullable=False)
+    # the user / kitchen / partner; NULL for admins (every admin sees it)
+    recipient_id = Column(UUID(as_uuid=True), nullable=True)
+
+    type = Column(String(50), nullable=False)
+    title = Column(String(150), nullable=False)
+    body = Column(Text, nullable=False)
+    data = Column(JSONB, nullable=True)
+
+    dedupe_key = Column(String(160), nullable=False)
+
+    # pending | sent | failed
+    status = Column(String(20), nullable=False, default="pending")
+    attempts = Column(SmallInteger, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    sent_at = Column(DateTime(timezone=True), nullable=True)

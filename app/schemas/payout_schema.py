@@ -20,7 +20,8 @@ class CustomerWithdrawalRequest(BaseModel):
 
 
 class TopupOrderRequest(BaseModel):
-    amount: Decimal = Field(..., ge=1, le=100000, max_digits=12, decimal_places=2)
+    # no upper limit (2026-10-26); max_digits only keeps it inside the wallet's NUMERIC(10, 2)
+    amount: Decimal = Field(..., ge=1, max_digits=10, decimal_places=2)
 
 
 class TopupVerifyRequest(BaseModel):
