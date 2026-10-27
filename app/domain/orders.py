@@ -50,7 +50,11 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
     skipped; a closure found on a date that has no meal yet (e.g. a holiday
     planned after the plan was sold) joins them and the end date moves past
     it, so the customer keeps every meal day they paid for. Dates that already
-    have meals are re-planned by the holiday workflows, not here.
+    have meals are re-planned by the holiday workflows, not here. An
+    emergency holiday blocking only some meals counts as a closure for the
+    plan when it blocks every one of the plan's meals; otherwise the day
+    stays and each blocked meal is created cancelled and refunded
+    (emergency_holiday.refund_blocked_meal), while the others are served.
 
     Nothing is generated for a kitchen that is inactive or no longer approved
     (admins cannot get there while subscriptions run, so this only guards
@@ -81,11 +85,13 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
     start = max(subscription.start_date, from_date or subscription.start_date, today)
     known = _holidays_ahead(db, subscription, start)
     end = subscription.end_date if to_date is None else min(subscription.end_date, to_date)
+    blocked = partly_blocked(db, subscription.vendor_reference_id, start, end - timedelta(days=1))
 
     partner_id = inherited_partner(db, subscription)
     # days the partner is on leave are generated without a partner
     off_days = partner_leave.leave_dates(db, partner_id, start, end) if partner_id else set()
     rows = []
+    refund = {}  # (date, slot) -> the holiday blocking that meal
     current = start
     while current < end:
         if current in known:
@@ -94,6 +100,9 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
         for slot in slots:
             if current == today and not is_before_cutoff(current, slot):
                 continue
+            holiday = blocked.get(current, {}).get(slot)
+            if holiday is not None:
+                refund[(current, slot)] = holiday
             rows.append({
                 "subscription_reference_id": subscription.subscription_id,
                 "user_reference_id": subscription.user_reference_id,
@@ -116,10 +125,19 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
             pg_insert(Order)
             .values(rows)
             .on_conflict_do_nothing(index_elements=["subscription_reference_id", "order_date", "meal_slot"])
+            .returning(Order.order_id)
         )
-        result = db.execute(stmt)
+        inserted = {oid for (oid,) in db.execute(stmt).all()}
         db.flush()
-        created = result.rowcount or 0
+        created = len(inserted)
+        if refund and inserted:
+            from app.domain import emergency_holiday
+
+            keys = {r["order_id"]: (r["order_date"], r["meal_slot"]) for r in rows if r["order_id"] in inserted}
+            todo = [oid for oid, key in keys.items() if key in refund]
+            for order in db.query(Order).filter(Order.order_id.in_(todo)).order_by(Order.order_date).all():
+                emergency_holiday.refund_blocked_meal(db, order, subscription,
+                                                      refund[(order.order_date, order.meal_slot)])
         if created:
             # never the codes themselves: only that they exist
             business_event(
@@ -131,12 +149,30 @@ def generate_meals(db: Session, subscription: Subscription, from_date: date | No
     return created
 
 
+def partly_blocked(db: Session, provider_id, start: date, last_day: date) -> dict:
+    """
+    {date: {slot: VendorHoliday}}: the meals emergency holidays for SOME
+    meals block in [start, last_day] (full-day closures are left out: those
+    dates are holidays of the plan, or already have their meals).
+    """
+    if last_day < start:
+        return {}
+    out: dict = {}
+    for day, by_slot in holidays.blocked_slots(db, provider_id, start, last_day).items():
+        partial = {slot: h for slot, h in by_slot.items() if h.meal_slots}
+        if partial:
+            out[day] = partial
+    return out
+
+
 def _holidays_ahead(db: Session, subscription: Subscription, start: date) -> set:
     """Holiday dates of the subscription from `start`, folding in closures not yet planned around."""
     known = holidays.sub_holidays(subscription)
     if start >= subscription.end_date:
         return known
-    closed = holidays.closed_dates(db, subscription.vendor_reference_id, start, subscription.end_date - timedelta(days=1))
+    slots = expand_plan_slot(subscription.meal_slot)
+    closed = holidays.closed_dates(db, subscription.vendor_reference_id, start,
+                                   subscription.end_date - timedelta(days=1), slots=slots)
     if not closed - known:
         return known
     with_meals = {
@@ -147,7 +183,8 @@ def _holidays_ahead(db: Session, subscription: Subscription, start: date) -> set
     new = sorted(d for d in closed if d not in known and d not in with_meals)
     if new:
         known |= set(new)
-        extension = holidays.extend(db, subscription.vendor_reference_id, subscription.end_date, len(new), skip=known)
+        extension = holidays.extend(db, subscription.vendor_reference_id, subscription.end_date, len(new), skip=known,
+                                    slots=slots)
         known |= set(extension.holiday_dates)
         subscription.end_date = extension.end
         holidays.set_sub_holidays(subscription, known)

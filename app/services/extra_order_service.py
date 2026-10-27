@@ -131,6 +131,9 @@ class ExtraOrderService:
 
         if is_on_holiday(db, provider.provider_id, payload.delivery_date):
             raise DomainError(f"{provider.business_name} is closed on {payload.delivery_date}", code="KITCHEN_HOLIDAY")
+        if is_on_holiday(db, provider.provider_id, payload.delivery_date, slot):
+            raise DomainError(f"{provider.business_name} does not serve {slot} on {payload.delivery_date} "
+                              "(emergency holiday)", code="KITCHEN_HOLIDAY")
 
         return address, slot, provider, priced
 

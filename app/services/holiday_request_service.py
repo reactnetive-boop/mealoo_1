@@ -3,7 +3,8 @@ Kitchen holiday requests and their approval by an admin.
 
 A kitchen (Profile -> Manage Holidays) asks for:
 
-  emergency  one date (today up to 30 days ahead), optional reason
+  emergency  one date after today (up to 30 days ahead), the whole day or
+             some of the meals the kitchen serves, optional reason
   regular    weekly days off: add, change (an approved weekly rule) or remove
              (any approved rule, including older date / vacation / monthly
              ones, which can no longer be added)
@@ -22,7 +23,9 @@ idempotency keys (app/domain/emergency_holiday.py). The kitchen hears the
 decision; customers and delivery partners hear about approved changes only.
 
 Duplicates: one pending request per kitchen and dedupe key (unique index);
-sending the same request again gives back the one already waiting.
+sending the same request again gives back the one already waiting. An
+emergency request overlapping a different one still waiting (same date, a
+meal in common) is refused (409) until that one is withdrawn or decided.
 """
 
 import uuid
@@ -36,6 +39,7 @@ from app.core.audit import business_event, record_audit
 from app.core.clock import now_utc, today_local
 from app.core.errors import DomainError
 from app.domain import emergency_holiday, holiday_notices, holiday_policy, holidays, vendor_partner
+from app.domain.slots import SLOTS, slots_label
 from app.models.provider_model import Provider
 from app.models.subscription_model import Subscription
 from app.models.vendor_holiday_model import HolidayNotice, VendorHoliday, VendorHolidayRequest
@@ -62,9 +66,9 @@ def _weekly_label(weekdays) -> str:
 
 
 def describe(r: VendorHolidayRequest, target: VendorHoliday | None = None) -> str:
-    """'Emergency holiday on 6 Oct 2026', 'Add: Closed every Sunday', 'Remove: Closed every Sunday', ..."""
+    """'Emergency holiday on 6 Oct 2026 (Lunch only)', 'Add: Closed every Sunday', 'Remove: Closed every Sunday', ..."""
     if r.request_type == EMERGENCY:
-        return f"Emergency holiday on {_fmt(r.holiday_date)}"
+        return f"Emergency holiday on {_fmt(r.holiday_date)}{holidays.meals_note(r.meal_slots)}"
     current = holidays.describe(target) if target is not None else "a holiday"
     if r.action == "remove":
         if r.holiday_date is not None:
@@ -92,6 +96,9 @@ def request_view(r: VendorHolidayRequest, targets: dict | None = None, *, db: Se
         "status": r.status,
         "label": describe(r, target),
         "holiday_date": r.holiday_date,
+        # emergency: the meals asked for; None = the whole day
+        "meal_slots": r.meal_slots or None,
+        "full_day": not r.meal_slots,
         "weekdays": sorted(r.weekdays or []),
         "start_date": r.start_date,
         "reason": r.reason,
@@ -122,6 +129,26 @@ def _pending(db: Session, provider_id, key: str) -> VendorHolidayRequest | None:
         VendorHolidayRequest.dedupe_key == key,
         VendorHolidayRequest.status == "pending",
     ).first()
+
+
+def _refuse_overlap(db: Session, provider_id, on: date, slots, key: str) -> None:
+    """Another emergency request for a meal of that date still waiting: it must be withdrawn first (409)."""
+    wanted = set(slots or SLOTS)
+    waiting = db.query(VendorHolidayRequest).filter(
+        VendorHolidayRequest.provider_reference_id == provider_id,
+        VendorHolidayRequest.request_type == EMERGENCY,
+        VendorHolidayRequest.status == "pending",
+        VendorHolidayRequest.holiday_date == on,
+    ).all()
+    for w in waiting:
+        if w.dedupe_key == key:
+            continue  # the very same request: given back as a duplicate
+        overlap = wanted & set(w.meal_slots or SLOTS)
+        if overlap:
+            raise DomainError(
+                f"An emergency holiday request for {slots_label(overlap)} on {_fmt(on)} is already waiting for "
+                "approval. Withdraw it first.", 409, code="HOLIDAY_REQUEST_PENDING",
+            )
 
 
 def _payload(payload) -> dict:
@@ -156,12 +183,17 @@ def _notify_admins(db: Session, r: VendorHolidayRequest, kitchen: Provider, targ
     name = kitchen.business_name or "A kitchen"
     impact = r.impact or {}
     if r.request_type == EMERGENCY:
+        meals = f" for {slots_label(r.meal_slots)} only" if r.meal_slots else " (full day)"
+        skip = impact.get("free_skip") or {}
+        if skip.get("eligible", True):
+            skips = f"{impact.get('skip_credits', 0)} active subscription(s) get 1 extra free skip."
+        else:
+            skips = f"no free skip is given ({skip.get('reason', 'the kitchen serves fewer than 2 meals a day')})."
         body = (
-            f"{name} asked for an emergency holiday on {r.holiday_date.strftime('%a %d %b %Y')}"
+            f"{name} asked for an emergency holiday on {r.holiday_date.strftime('%a %d %b %Y')}{meals}"
             + (f" ({r.reason})" if r.reason else "") + ". "
             f"If approved: {impact.get('affected_orders', 0)} meal(s) and {impact.get('one_time_orders', 0)} "
-            f"one-time order(s) refunded (about ₹{impact.get('estimated_refund', '0.00')}), and "
-            f"{impact.get('skip_credits', 0)} active subscription(s) get 1 extra free skip."
+            f"one-time order(s) refunded (about ₹{impact.get('estimated_refund', '0.00')}), and {skips}"
         )
     else:
         body = f"{name} asked: {describe(r, target)}."
@@ -229,14 +261,24 @@ class HolidayRequestService:
     # ── Kitchen ────────────────────────────────────────────
 
     @staticmethod
-    def submit_emergency(db: Session, provider_id, on: date | None, reason: str | None) -> dict:
+    def submit_emergency(db: Session, provider_id, on: date | None, reason: str | None, meal_slots=None) -> dict:
+        """
+        A kitchen's emergency holiday request: only for a date after today
+        (business-local; no date = today, refused), the whole day or
+        `meal_slots` (meals the kitchen serves). The whole request is refused
+        when the date or a meal is not allowed.
+        """
         on = on or today_local()
+        emergency_holiday.validate_future(on)
         kitchen = _kitchen(db, provider_id, lock=True)  # one request at a time per kitchen
-        emergency_holiday.validate_request(db, provider_id, on)
+        slots = emergency_holiday.normalize_slots(db, provider_id, on, meal_slots)
+        emergency_holiday.validate_request(db, provider_id, on, slots, future_only=True)
+        key = f"emergency:{on.isoformat()}" + (f":{','.join(slots)}" if slots else "")
+        _refuse_overlap(db, provider_id, on, slots, key)
         r, created = _create(
-            db, kitchen, key=f"emergency:{on.isoformat()}", request_type=EMERGENCY, action="add",
-            holiday_date=on, reason=(reason or "").strip() or None,
-            impact=_json(emergency_holiday.preview(db, provider_id, on)),
+            db, kitchen, key=key, request_type=EMERGENCY, action="add",
+            holiday_date=on, meal_slots=slots, reason=(reason or "").strip() or None,
+            impact=_json(emergency_holiday.preview(db, provider_id, on, slots)),
         )
         return _submitted(db, r, kitchen, created)
 
@@ -373,7 +415,8 @@ class HolidayRequestService:
         if r.status == "pending":
             try:
                 if r.request_type == EMERGENCY:
-                    view["impact_now"] = _json(emergency_holiday.preview(db, r.provider_reference_id, r.holiday_date))
+                    view["impact_now"] = _json(emergency_holiday.preview(db, r.provider_reference_id, r.holiday_date,
+                                                                         r.meal_slots))
                 elif r.action != "remove":
                     draft = VendorHoliday(provider_reference_id=r.provider_reference_id, holiday_type=holidays.CASUAL,
                                           **_weekly_rule({"rule_type": "weekly", "weekdays": r.weekdays,
@@ -430,7 +473,7 @@ class HolidayRequestService:
         if r.request_type == EMERGENCY:
             holiday = emergency_holiday.declare(
                 db, r.provider_reference_id, r.holiday_date, r.reason, actor_type="admin", actor_id=admin_id,
-                commit=False, request_id=r.request_id,
+                commit=False, request_id=r.request_id, meal_slots=r.meal_slots,
             )
             holiday_id = holiday.vendor_holiday_id
         else:
@@ -569,8 +612,12 @@ def _notify_kitchen(db: Session, r: VendorHolidayRequest, kitchen: Provider, *, 
     if approved:
         title = "Holiday request approved"
         if r.request_type == EMERGENCY:
-            body = (f"Approved: {what}. You are closed that day: no orders, preparation or pickups. "
-                    "Customers are told and refunded, and get an extra free skip.")
+            skip = emergency_holiday.skip_decision(db, kitchen.provider_id, r.holiday_date, r.meal_slots)
+            closed = (f"No {slots_label(r.meal_slots).lower()} that day: no orders, preparation or pickups for it; "
+                      "your other meals run as usual." if r.meal_slots
+                      else "You are closed that day: no orders, preparation or pickups.")
+            body = (f"Approved: {what}. {closed} Customers are told and refunded"
+                    + (", and get an extra free skip." if skip.eligible else "."))
         else:
             body = f"Approved: {what}. Your holiday calendar is updated and customers are told."
     else:

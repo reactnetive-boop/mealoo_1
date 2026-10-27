@@ -8,10 +8,24 @@ Two kinds (provider.vendor_holidays):
              (vacation) or selected days of the month. A casual holiday is
              built into every price and schedule: a subscription never has a
              meal - and never pays for one - on a casual holiday.
-  emergency  the kitchen suddenly cannot cook on one date (today or later).
-             Meals already sold for that date go to a replacement kitchen or
-             are compensated, one by one (app/domain/emergency_holiday.py);
-             the subscription itself is not re-priced.
+  emergency  the kitchen suddenly cannot cook on one coming date: the whole
+             day, or only some meals (meal_slots, e.g. lunch). Meals already
+             sold for those meals are compensated, one by one
+             (app/domain/emergency_holiday.py); the subscription itself is
+             not re-priced.
+
+Two levels of answer:
+
+  date level   closures(), closed_dates(), is_closed(), closed_kitchens(),
+               plan_days(): FULL-DAY closures only - the kitchen is closed
+               that date. Holidays that block only some meals never appear
+               here, so a kitchen with a lunch-only holiday still sells and
+               serves breakfast and dinner that day.
+  meal level   blocked(), blocked_slots(), is_slot_closed(),
+               kitchens_closed_for(): every holiday, per meal (a full-day
+               closure blocks all three). closed_dates(slots=...) and
+               plan_days(slots=...) treat a date as closed for a plan when
+               every one of the plan's meals is blocked.
 
 Every date is a business-local date (BUSINESS_TIMEZONE, Asia/Kolkata by
 default; app.core.clock), so a holiday declared near midnight lands on the
@@ -42,6 +56,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import today_local
 from app.core.errors import DomainError
+from app.domain.slots import SLOTS, ordered_slots, slots_label
 from app.models.vendor_holiday_model import VendorHoliday
 
 CASUAL = "casual"
@@ -103,7 +118,17 @@ def _ids(provider_ids) -> list[uuid.UUID]:
     return list({_uuid(p) for p in provider_ids if p is not None})
 
 
-def _rows(db: Session, provider_ids, start: date, end: date, types=None) -> list[VendorHoliday]:
+def holiday_slots(h: VendorHoliday) -> list[str]:
+    """The meals a holiday blocks: its meal_slots, or all three for a full-day one."""
+    return ordered_slots(h.meal_slots) if h.meal_slots else list(SLOTS)
+
+
+def is_full_day(h: VendorHoliday) -> bool:
+    return not h.meal_slots
+
+
+def _rows(db: Session, provider_ids, start: date, end: date, types=None, *,
+          full_day_only: bool = True) -> list[VendorHoliday]:
     ids = _ids(provider_ids)
     if not ids:
         return []
@@ -113,6 +138,8 @@ def _rows(db: Session, provider_ids, start: date, end: date, types=None) -> list
         VendorHoliday.start_date <= end,
         or_(VendorHoliday.end_date.is_(None), VendorHoliday.end_date >= start),
     )
+    if full_day_only:
+        q = q.filter(VendorHoliday.meal_slots.is_(None))
     if types:
         q = q.filter(VendorHoliday.holiday_type.in_(tuple(types)))
     return q.order_by(VendorHoliday.created_at).all()
@@ -120,9 +147,11 @@ def _rows(db: Session, provider_ids, start: date, end: date, types=None) -> list
 
 def closures(db: Session, provider_ids, start: date, end: date, types=None) -> dict:
     """
-    {provider_id (UUID): {date: VendorHoliday}} for every closed date in [start, end].
-    When a casual rule and an emergency fall on the same date the emergency is
-    reported (it is the one with consequences for meals).
+    {provider_id (UUID): {date: VendorHoliday}} for every date in [start, end]
+    the kitchen is closed for the WHOLE day (holidays blocking only some meals
+    are left out: see blocked()). When a casual rule and an emergency fall on
+    the same date the emergency is reported (it is the one with consequences
+    for meals).
     """
     out: dict = defaultdict(dict)
     for h in _rows(db, provider_ids, start, end, types):
@@ -133,7 +162,50 @@ def closures(db: Session, provider_ids, start: date, end: date, types=None) -> d
     return out
 
 
-def closed_dates(db: Session, provider_id, start: date, end: date, types=None) -> set[date]:
+def blocked(db: Session, provider_ids, start: date, end: date, types=None) -> dict:
+    """
+    {provider_id (UUID): {date: {slot: VendorHoliday}}}: every meal in
+    [start, end] a holiday blocks - full-day closures block all three, a
+    holiday for some meals only those (an emergency wins over a casual rule).
+    """
+    out: dict = defaultdict(lambda: defaultdict(dict))
+    for h in _rows(db, provider_ids, start, end, types, full_day_only=False):
+        slots = holiday_slots(h)
+        for d in rule_dates(h, start, end):
+            day = out[h.provider_reference_id][d]
+            for slot in slots:
+                current = day.get(slot)
+                if current is None or (h.holiday_type == EMERGENCY and current.holiday_type != EMERGENCY):
+                    day[slot] = h
+    return out
+
+
+def blocked_slots(db: Session, provider_id, start: date, end: date) -> dict:
+    """{date: {slot: VendorHoliday}} of one kitchen (see blocked())."""
+    return blocked(db, [provider_id], start, end).get(_uuid(provider_id), {})
+
+
+def is_slot_closed(db: Session, provider_id, on: date, slot: str) -> bool:
+    """No `slot` meal from this kitchen on `on` (closed that day, or that meal is blocked)."""
+    return slot in blocked_slots(db, provider_id, on, on).get(on, {})
+
+
+def kitchens_closed_for(db: Session, provider_ids, on: date, slot: str) -> set:
+    """The subset of `provider_ids` that serve no `slot` meal on `on`, as given."""
+    given = {_uuid(p): p for p in (provider_ids or []) if p is not None}
+    return {given[pid] for pid, days in blocked(db, list(given), on, on).items() if slot in days.get(on, {})}
+
+
+def closed_dates(db: Session, provider_id, start: date, end: date, types=None, slots=None) -> set[date]:
+    """
+    Dates in [start, end] the kitchen is closed for the whole day. With
+    `slots` (a plan's meals): also the dates on which every one of those
+    meals is blocked - for that plan the day has no meal at all.
+    """
+    if slots:
+        wanted = set(slots)
+        days = blocked(db, [provider_id], start, end, types).get(_uuid(provider_id), {})
+        return {d for d, by_slot in days.items() if wanted <= set(by_slot)}
     return set(closures(db, [provider_id], start, end, types).get(_uuid(provider_id), {}))
 
 
@@ -148,7 +220,13 @@ def closed_kitchens(db: Session, provider_ids, on: date, types=None) -> set:
 
 
 def holiday_on(db: Session, provider_id, on: date) -> VendorHoliday | None:
+    """The full-day holiday closing the kitchen on `on`, if any."""
     return closures(db, [provider_id], on, on).get(_uuid(provider_id), {}).get(on)
+
+
+def holidays_on(db: Session, provider_id, on: date) -> list[VendorHoliday]:
+    """Every active holiday of the kitchen on `on`, full-day or for some meals."""
+    return [h for h in _rows(db, [provider_id], on, on, full_day_only=False) if rule_dates(h, on, on)]
 
 
 # ── Subscription schedules ────────────────────────────────────
@@ -167,17 +245,20 @@ class Schedule:
         return len(self.meal_dates)
 
 
-def plan_days(db: Session, provider_id, start: date, meal_days: int, skip=()) -> Schedule:
+def plan_days(db: Session, provider_id, start: date, meal_days: int, skip=(), slots=None) -> Schedule:
     """
     The first `meal_days` dates from `start` on which the kitchen is open
     (fixed-length plans): holidays are skipped and the end date moves past
     them, so the customer gets every meal day they pay for. `skip`: extra
     dates to treat as closed (already-known holidays of the subscription).
+    `slots`: the plan's meals - a date where all of them are blocked is
+    skipped too; a date where only some are blocked stays a meal day (those
+    meals are refunded when they are created, app/domain/orders.py).
     """
     if meal_days < 1:
         raise DomainError("A plan needs at least one meal day")
     horizon = start + timedelta(days=meal_days + SCHEDULE_SLACK_DAYS)
-    closed = closed_dates(db, provider_id, start, horizon) | set(skip)
+    closed = closed_dates(db, provider_id, start, horizon, slots=slots) | set(skip)
     schedule = Schedule(start=start, end=start)
     current = start
     while len(schedule.meal_dates) < meal_days:
@@ -195,9 +276,9 @@ def plan_days(db: Session, provider_id, start: date, meal_days: int, skip=()) ->
     return schedule
 
 
-def plan_range(db: Session, provider_id, start: date, last_day: date) -> Schedule:
-    """Open days in [start, last_day] (custom plans: the customer chose the dates)."""
-    closed = closed_dates(db, provider_id, start, last_day)
+def plan_range(db: Session, provider_id, start: date, last_day: date, slots=None) -> Schedule:
+    """Open days in [start, last_day] (custom plans: the customer chose the dates; `slots` as in plan_days)."""
+    closed = closed_dates(db, provider_id, start, last_day, slots=slots)
     schedule = Schedule(start=start, end=last_day + timedelta(days=1))
     for d in _days(start, last_day):
         (schedule.holiday_dates if d in closed else schedule.meal_dates).append(d)
@@ -207,9 +288,9 @@ def plan_range(db: Session, provider_id, start: date, last_day: date) -> Schedul
     return schedule
 
 
-def extend(db: Session, provider_id, end: date, meal_days: int, skip=()) -> Schedule:
+def extend(db: Session, provider_id, end: date, meal_days: int, skip=(), slots=None) -> Schedule:
     """`meal_days` more open days after an exclusive end date (pause, holiday make-up)."""
-    return plan_days(db, provider_id, end, meal_days, skip)
+    return plan_days(db, provider_id, end, meal_days, skip, slots)
 
 
 # ── Dates stored on a subscription ────────────────────────────
@@ -319,10 +400,15 @@ def _fmt(d: date) -> str:
     return f"{d.day} {d.strftime('%b %Y')}"
 
 
+def meals_note(slots) -> str:
+    """'' for the whole day, ' (Lunch only)' / ' (Breakfast and Dinner only)' for some meals."""
+    return f" ({slots_label(slots)} only)" if slots else ""
+
+
 def describe(h: VendorHoliday) -> str:
-    """'Closed every Sunday', 'Closed 20 Oct 2026 - 25 Oct 2026', ..."""
+    """'Closed every Sunday', 'Closed 20 Oct 2026 - 25 Oct 2026', 'Emergency closure on 6 Oct 2026 (Lunch only)'."""
     if h.holiday_type == EMERGENCY:
-        return f"Emergency closure on {_fmt(h.start_date)}"
+        return f"Emergency closure on {_fmt(h.start_date)}{meals_note(h.meal_slots)}"
     if h.rule_type == "weekly":
         days = [WEEKDAY_NAMES[d] for d in sorted(h.weekdays or [])]
         text = f"Closed every {_join(days)}"
@@ -369,13 +455,16 @@ def public_view(db: Session, provider_ids, days: int = 30) -> dict:
     """
     What customers and delivery partners see about a kitchen's APPROVED
     holidays: the regular closures ("Closed every Sunday"), the weekly days
-    off, and the closed dates in the next `days` days. Requests waiting for
+    off, the closed dates in the next `days` days (`upcoming_holidays`,
+    whole days only, as older apps expect) and the dates on which only some
+    meals are blocked (`upcoming_meal_closures`). Requests waiting for
     approval never show here.
     """
     given = {_uuid(p): p for p in provider_ids if p is not None}
     ids = list(given)
     today = today_local()
     calendar = closures(db, ids, today, today + timedelta(days=days))
+    meals = blocked(db, ids, today, today + timedelta(days=days)) if ids else {}
     rows = _regular_rows(db, ids) if ids else []
     regular = regular_rules(db, ids, rows)
     weekly: dict = defaultdict(set)
@@ -392,6 +481,18 @@ def public_view(db: Session, provider_ids, days: int = 30) -> dict:
             }
             for d, h in sorted(calendar.get(pid, {}).items())
         ]
+        whole_days = set(calendar.get(pid, {}))
+        partial = []
+        for d, by_slot in sorted(meals.get(pid, {}).items()):
+            if d in whole_days:
+                continue
+            slots = ordered_slots(by_slot)
+            partial.append({
+                "date": d,
+                "type": EMERGENCY,
+                "meal_slots": slots,
+                "label": f"{EMERGENCY_LABEL} – {slots_label(slots)}",
+            })
         out[given[pid]] = {
             "regular_holidays": regular.get(pid, []),
             "holiday_summary": "; ".join(regular.get(pid, [])) or None,
@@ -399,6 +500,10 @@ def public_view(db: Session, provider_ids, days: int = 30) -> dict:
             "weekly_off_days": sorted(weekly.get(pid, set())),
             "weekly_off_label": weekly_off_label(weekly.get(pid)),
             "upcoming_holidays": upcoming,
+            # dates where only some meals are blocked; the other meals run as usual
+            "upcoming_meal_closures": partial,
             "is_closed_today": any(u["date"] == today for u in upcoming),
+            # meals with no service today (all three when closed for the day)
+            "closed_today_meal_slots": ordered_slots(meals.get(pid, {}).get(today, {})),
         }
     return out

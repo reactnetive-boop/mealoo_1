@@ -176,7 +176,14 @@ def _cutoff(db: Session) -> dict:
             ExtraOrder.delivery_date == today, ExtraOrder.status.in_(("pending", "confirmed")),
         ).distinct()
     }
-    holiday_kitchens = list(holidays.closed_kitchens(db, kitchens_today, today))
+    # {kitchen: {slot: holiday}}: meals closed today, whole day or only some meals
+    closed_meals = {
+        pid: days.get(today, {}) for pid, days in holidays.blocked(db, kitchens_today, today, today).items()
+    }
+    holiday_kitchens = [pid for pid, by_slot in closed_meals.items() if set(by_slot) & set(passed)]
+
+    def closed(kitchen_id, slot) -> bool:
+        return slot in closed_meals.get(kitchen_id, {})
 
     holiday_meals = holiday_extras = unconfirmed = 0
     if holiday_kitchens:
@@ -190,6 +197,8 @@ def _cutoff(db: Session) -> dict:
             )
             .with_for_update(skip_locked=True)
         ):
+            if not closed(order.vendor_reference_id, order.meal_slot):
+                continue
             _cancel_meal(db, order, "kitchen_holiday", f"Your kitchen is closed today, so your {order.meal_slot} was cancelled.")
             holiday_meals += 1
 
@@ -203,6 +212,8 @@ def _cutoff(db: Session) -> dict:
             )
             .with_for_update(skip_locked=True)
         ):
+            if not closed(order.vendor_reference_id, order.meal_slot):
+                continue
             _cancel_extra(db, order, "kitchen_holiday", "The kitchen is closed today, so your order was cancelled.")
             holiday_extras += 1
 

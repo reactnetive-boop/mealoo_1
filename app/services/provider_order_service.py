@@ -26,7 +26,7 @@ from app.core.config import PICKUP_CODE_MAX_ATTEMPTS
 from app.core.errors import DomainError
 from app.domain import checkout, delivery_assignment, holidays, item_quantity, notify, orders as meals, partner_leave
 from app.domain.meal_views import MealContext
-from app.domain.slots import SLOTS, SLOT_WINDOWS, delivery_window, expand_plan_slot
+from app.domain.slots import SLOTS, SLOT_WINDOWS, delivery_window, expand_plan_slot, ordered_slots
 from app.domain.status import (
     assert_sub_order_transition, assert_extra_order_transition, allowed_next,
     SUB_UNPICKED_STATUSES, EXTRA_UNPICKED_STATUSES, IN_HAND_STATUSES, KITCHEN_READY_FROM,
@@ -811,6 +811,8 @@ class ProviderOrderService:
             "success": True,
             "today": today,
             "is_holiday_today": closed_today,
+            # meals an emergency holiday blocks today (all three when closed for the day)
+            "holiday_today_meal_slots": ordered_slots(holidays.blocked_slots(db, vendor_id, today, today).get(today, {})),
             "batch": ProviderOrderService._batch_view(db, vendor_id, *current[0]) if current else None,
             "upcoming": [
                 {"date": d, "meal_slot": s, "delivery_window": delivery_window(s)} for d, s in current[1:4]
@@ -870,13 +872,22 @@ class ProviderOrderService:
         them ready and changes nothing, so nobody is notified twice. Each
         assigned partner gets one notice for all their meals.
         """
+        when = "today" if day == today_local() else f"on {day}"
         if holidays.is_closed(db, vendor_id, day):
             raise DomainError(
-                f"Your kitchen is on holiday {'today' if day == today_local() else f'on {day}'}, "
-                "so there is nothing to mark ready.",
+                f"Your kitchen is on holiday {when}, so there is nothing to mark ready.",
+                409, code="KITCHEN_HOLIDAY",
+            )
+        blocked = set(holidays.blocked_slots(db, vendor_id, day, day).get(day, {}))
+        if slot is not None and slot in blocked:
+            raise DomainError(
+                f"Your kitchen has an emergency holiday for {slot} {when}, so there is nothing to mark ready.",
                 409, code="KITCHEN_HOLIDAY",
             )
         subs, extras = ProviderOrderService._batch_rows(db, vendor_id, day, slot, lock=True)
+        # a whole day ("mark all ready") leaves the blocked meals alone
+        subs = [o for o in subs if o.meal_slot not in blocked]
+        extras = [e for e in extras if e.meal_slot not in blocked]
         changed = []
         for o in subs:
             if o.status in KITCHEN_READY_FROM:
@@ -936,9 +947,10 @@ class ProviderOrderService:
         today = today_local()
         if holidays.is_closed(db, vendor_id, today):
             return {"success": True, "date": today, "eligible": 0, "by_meal_slot": {}, "is_holiday_today": True}
+        blocked = set(holidays.blocked_slots(db, vendor_id, today, today).get(today, {}))
         subs, extras = ProviderOrderService._batch_rows(db, vendor_id, today, None)
-        eligible = [o for o in subs if o.status in KITCHEN_READY_FROM] + [
-            e for e in extras if e.status in ("confirmed", "preparing")
+        eligible = [o for o in subs if o.status in KITCHEN_READY_FROM and o.meal_slot not in blocked] + [
+            e for e in extras if e.status in ("confirmed", "preparing") and e.meal_slot not in blocked
         ]
         by_slot: dict = defaultdict(int)
         for o in eligible:

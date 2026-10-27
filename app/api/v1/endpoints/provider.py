@@ -240,29 +240,36 @@ def withdraw_holiday_request(request_id: UUID, db: Session = Depends(get_db),
     "/holidays/emergency/preview",
     summary="Preview an Emergency Holiday",
     description=(
-        "Orders and subscriptions an emergency closure on `date` (default today) would affect if approved: meals "
-        "and one-time orders refunded, and how many active subscriptions get an extra free skip."
+        "Orders and subscriptions an emergency closure on `date` (after today) would affect if approved, for the "
+        "whole day or `meal_slots` (comma separated, e.g. `lunch,dinner`): meals and one-time orders refunded, "
+        "and how many active subscriptions get an extra free skip (`free_skip` says whether the holiday grants "
+        "it). 422 HOLIDAY_NOT_FUTURE for today or the past, HOLIDAY_SLOT_NOT_OFFERED for a meal not served."
     ),
 )
-def preview_emergency(date_: Optional[date] = Query(None, alias="date"), db: Session = Depends(get_db),
-                      current_provider=Depends(get_current_provider)):
-    return VendorHolidayService.preview_emergency(db, current_provider["provider_id"], date_)
+def preview_emergency(date_: Optional[date] = Query(None, alias="date"),
+                      meal_slots: Optional[str] = Query(None, max_length=60),
+                      db: Session = Depends(get_db), current_provider=Depends(get_current_provider)):
+    return VendorHolidayService.preview_emergency(db, current_provider["provider_id"], date_, meal_slots)
 
 
 @router.post(
     "/holidays/emergency",
     summary="Request an Emergency Holiday",
     description=(
-        "Asks Orleeno to close the kitchen on `date` (default today; never the past; at most 30 days ahead), with "
-        "an optional reason. The admins are notified at once; nothing changes until one approves it. On "
-        "approval the kitchen is closed that day, affected meals and one-time orders are refunded, every active "
-        "subscription gets 1 extra free skip, and customers and delivery partners are told. Sending the same "
-        "date again returns the request already waiting (`duplicate: true`)."
+        "Asks Orleeno to close the kitchen on `date` - after today (422 HOLIDAY_NOT_FUTURE for today or the past), "
+        "at most 30 days ahead - for the whole day or only `meal_slots` (meals the kitchen serves; 422 "
+        "HOLIDAY_SLOT_NOT_OFFERED otherwise), with an optional reason. The admins are notified at once; nothing "
+        "changes until one approves it. On approval those meals are closed, affected meals and one-time orders "
+        "are refunded, active subscriptions get 1 extra free skip (a full-day holiday only when the kitchen "
+        "serves 2+ meals a day), and customers and delivery partners are told. Sending the same request again "
+        "returns the one already waiting (`duplicate: true`); a holiday or waiting request already covering one "
+        "of those meals that date gives 409."
     ),
 )
 def declare_emergency(payload: EmergencyHolidayRequest, db: Session = Depends(get_db),
                       current_provider=Depends(get_current_provider)):
-    return HolidayRequestService.submit_emergency(db, current_provider["provider_id"], payload.date, payload.reason)
+    return HolidayRequestService.submit_emergency(db, current_provider["provider_id"], payload.date, payload.reason,
+                                                  payload.meal_slots)
 
 
 @router.get("/holidays/{holiday_id}/affected", summary="Orders Affected by a Holiday")

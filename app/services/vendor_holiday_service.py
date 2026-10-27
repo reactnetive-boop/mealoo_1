@@ -7,10 +7,13 @@ functions here APPLY an approved change (or an admin's own change):
 
 Regular (casual) holidays are rules; adding or editing one re-plans the
 kitchen's running subscriptions in the same transaction
-(app/domain/holiday_policy.py). Emergency holidays close one date (today or
-later); the day's meals are refunded and every active subscription gets an
-extra free skip (app/domain/emergency_holiday.py). Past holidays are
-history: they cannot be edited or removed. Every change is audited.
+(app/domain/holiday_policy.py). Emergency holidays close one date - the
+whole day or some meals; a kitchen asks only for dates after today - and
+its blocked meals are refunded; every active subscription gets an extra
+free skip (a full-day one only at kitchens serving two or more meals a
+day; app/domain/emergency_holiday.py). An admin can delete an emergency
+holiday until the delivery time of its earliest blocked meal. Past holidays
+are history: they cannot be edited or removed. Every change is audited.
 
 commit=False lets the approval of a request apply the change and record the
 decision in one transaction.
@@ -23,9 +26,10 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from app.core.audit import business_event, record_audit
-from app.core.clock import now_utc, today_local
+from app.core.clock import now_local, now_utc, today_local
 from app.core.errors import DomainError
-from app.domain import emergency_holiday, holiday_notices, holiday_policy, holidays
+from app.domain import emergency_holiday, holiday_notices, holiday_policy, holidays, meal_offering
+from app.domain.slots import slots_label
 from app.models.menu_package_model import MenuPackage
 from app.models.order_model import Order
 from app.models.provider_model import Provider
@@ -38,9 +42,18 @@ CALENDAR_PAST_DAYS = 30
 CALENDAR_DAYS = 120
 
 
-def _rule_view(h: VendorHoliday) -> dict:
+def _rule_view(h: VendorHoliday, db: Session | None = None) -> dict:
+    """
+    One holiday. With `db`, an emergency holiday also says until when an
+    admin may delete it (`delete_cutoff_at`) and whether that is still
+    possible now (`deletable`).
+    """
     today = today_local()
     finished = h.end_date is not None and h.end_date <= today
+    extra = {}
+    if db is not None and h.holiday_type == holidays.EMERGENCY:
+        cutoff = emergency_holiday.delete_cutoff(db, h)
+        extra = {"delete_cutoff_at": cutoff, "deletable": h.status == "active" and now_local() < cutoff}
     return {
         "holiday_id": h.vendor_holiday_id,
         "holiday_type": h.holiday_type,
@@ -50,10 +63,15 @@ def _rule_view(h: VendorHoliday) -> dict:
         "dates": sorted(h.dates or []),
         "start_date": h.start_date,
         "end_date": h.end_date,
+        # emergency: the meals it blocks; None = the whole day
+        "meal_slots": h.meal_slots or None,
+        "full_day": holidays.is_full_day(h),
+        "meals_label": slots_label(h.meal_slots) if h.meal_slots else "Full day",
         "reason": h.reason,
         "label": holidays.describe(h),
         "status": h.status,
         "removed_at": h.removed_at,
+        "removed_reason": h.removed_reason,
         "processing_status": h.processing_status,
         "affected_subscriptions": h.affected_subscriptions,
         "affected_meals": h.affected_meals,
@@ -65,6 +83,7 @@ def _rule_view(h: VendorHoliday) -> dict:
         # past holidays are history
         "editable": h.holiday_type == holidays.CASUAL and h.status == "active" and not finished
                     and h.removed_at is None,
+        **extra,
     }
 
 
@@ -85,22 +104,42 @@ def _lock_kitchen(db: Session, provider_id) -> Provider:
 
 
 def _calendar(db: Session, provider_id) -> list[dict]:
+    """
+    One row per closed date (`full_day`), then one per emergency holiday
+    blocking only some meals of a date that is otherwise open
+    (`full_day` false, `meal_slots`).
+    """
     today = today_local()
     start, end = today - timedelta(days=CALENDAR_PAST_DAYS), today + timedelta(days=CALENDAR_DAYS)
     days = holidays.closures(db, [provider_id], start, end).get(holidays._uuid(provider_id), {})
+    rows = [(d, h) for d, h in days.items()]
+    partial = {
+        h.vendor_holiday_id: h
+        for by_slot in holidays.blocked_slots(db, provider_id, start, end).values()
+        for h in by_slot.values() if h.meal_slots
+    }
+    rows += [(h.start_date, h) for h in partial.values() if h.start_date not in days]
+
+    def label(h: VendorHoliday) -> str:
+        if h.holiday_type == holidays.CASUAL:
+            return holidays.CASUAL_LABEL
+        return holidays.EMERGENCY_LABEL + (f" – {slots_label(h.meal_slots)}" if h.meal_slots else "")
+
     return [
         {
             "date": d,
             "unavailable_date": d,  # older app versions
             "holiday_id": h.vendor_holiday_id,
             "holiday_type": h.holiday_type,
-            "label": holidays.CASUAL_LABEL if h.holiday_type == holidays.CASUAL else holidays.EMERGENCY_LABEL,
+            "label": label(h),
             "rule_label": holidays.describe(h),
             "reason": h.reason,
             "is_past": d < today,
             "editable": h.holiday_type == holidays.CASUAL and d > today,
+            "full_day": holidays.is_full_day(h),
+            "meal_slots": h.meal_slots or None,
         }
-        for d, h in sorted(days.items())
+        for d, h in sorted(rows, key=lambda r: (r[0], r[1].meal_slots or []))
     ]
 
 
@@ -151,7 +190,9 @@ class VendorHolidayService:
             "success": True,
             "timezone": "Asia/Kolkata",
             "today": today,
-            "is_holiday_today": any(c["date"] == today for c in calendar),
+            "is_holiday_today": any(c["date"] == today and c["full_day"] for c in calendar),
+            # the meals the kitchen serves: what an emergency holiday can block
+            "offered_meal_slots": meal_offering.offered_slots(db, provider_id, today),
             # for the "set your regular weekly holidays?" question
             "weekly_holiday_set": any(r.rule_type == "weekly" for r in current),
             "regular_holidays": [holidays.describe(r) for r in current if r.rule_type in ("weekly", "monthly")],
@@ -351,11 +392,12 @@ class VendorHolidayService:
     # ── Kitchen: emergency holidays ───────────────────────
 
     @staticmethod
-    def preview_emergency(db: Session, provider_id, on: date | None) -> dict:
+    def preview_emergency(db: Session, provider_id, on: date | None, meal_slots=None) -> dict:
+        """What the kitchen's request would do: only for dates after today, the whole day or `meal_slots`."""
         on = on or today_local()
-        if on < today_local():
-            raise DomainError("An emergency holiday cannot be declared for a past date", code="HOLIDAY_IN_PAST")
-        return {"success": True, **emergency_holiday.preview(db, provider_id, on)}
+        emergency_holiday.validate_future(on)
+        slots = emergency_holiday.normalize_slots(db, provider_id, on, meal_slots)
+        return {"success": True, **emergency_holiday.preview(db, provider_id, on, slots)}
 
     @staticmethod
     def declare_emergency(db: Session, provider_id, on: date | None, reason: str | None, *,
@@ -403,7 +445,7 @@ class VendorHolidayService:
             "success": True,
             "total": total,
             "page": page,
-            "holidays": [{**_rule_view(h), "provider_id": h.provider_reference_id, "vendor_name": name}
+            "holidays": [{**_rule_view(h, db), "provider_id": h.provider_reference_id, "vendor_name": name}
                          for h, name in rows],
         }
 
@@ -433,7 +475,7 @@ class VendorHolidayService:
         ).order_by(VendorHolidayRequest.created_at.desc()).first()
         return {
             "success": True,
-            "holiday": {**_rule_view(h), "provider_id": h.provider_reference_id,
+            "holiday": {**_rule_view(h, db), "provider_id": h.provider_reference_id,
                         "vendor_name": kitchen.business_name if kitchen else None},
             "request": request_view(req) if req else None,
             "summary": dict(Counter(m["outcome"] for m in meals)),
@@ -475,6 +517,17 @@ class VendorHolidayService:
         total = q.count()
         rows = q.order_by(VendorHolidayMeal.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
         return {"success": True, "total": total, "page": page, "meals": _meal_views(db, rows)}
+
+    @staticmethod
+    def admin_delete(db: Session, holiday_id, admin_id, reason: str | None = None, ip: str | None = None) -> dict:
+        """Delete an emergency holiday before its delivery cutoff (409 after it; nothing changes then)."""
+        h = emergency_holiday.remove(db, holiday_id, actor_id=admin_id, reason=reason, ip=ip)
+        return {
+            "success": True,
+            "message": (f"Deleted: {holidays.describe(h)}. The kitchen is open again for those meals; refunds and "
+                        "free skips already given stay with the customers."),
+            "holiday": _rule_view(h, db),
+        }
 
     @staticmethod
     def admin_retry(db: Session, holiday_id, admin_id, ip: str | None = None) -> dict:

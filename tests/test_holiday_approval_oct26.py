@@ -42,6 +42,12 @@ TODAY = date(2026, 10, 5)  # a Monday
 SUNDAY = date(2026, 10, 11)
 
 
+@pytest.fixture(autouse=True)
+def _two_meal_kitchens(monkeypatch):
+    """These kitchens serve lunch and dinner, so a full-day emergency grants the free skip."""
+    f.serve_two_meals(monkeypatch)
+
+
 def _ok(r, code=200):
     assert r.status_code == code, f"{r.request.method} {r.request.url}: {r.status_code} {r.text}"
     return r.json()
@@ -192,22 +198,22 @@ def test_duplicate_requests_are_stored_once(client, db):
 def test_withdrawn_and_expired_requests_change_nothing(client, db):
     w = f.world(db, balance="5000")
     _, admin_hdr = f.admin(db)
-    sent = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={}))
+    sent = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={"date": "2026-10-06"}))
     out = _ok(client.delete(f"{H}/requests/{sent['request']['request_id']}", headers=w["kitchen_auth"]))
     assert out["request"]["status"] == "withdrawn"
     assert client.post(f"{R}/{sent['request']['request_id']}/approve", headers=admin_hdr, json={}).status_code == 409
     # an emergency nobody decided before its date expires
-    late = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={}))
-    clock.freeze(datetime(2026, 10, 6, 9, 0))
-    _, admin_hdr = f.admin(db)  # a fresh sign-in on the next day
+    late = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={"date": "2026-10-06"}))
+    clock.freeze(datetime(2026, 10, 7, 9, 0))
+    _, admin_hdr = f.admin(db)  # a fresh sign-in after the date
     r = client.post(f"{R}/{late['request']['request_id']}/approve", headers=admin_hdr, json={})
     assert r.status_code == 409 and r.json()["code"] == "HOLIDAY_REQUEST_EXPIRED"
     db.expire_all()
     assert db.get(VendorHolidayRequest, uuid.UUID(late["request"]["request_id"])).status == "expired"
     kitchen_auth = f.auth(__import__("app.core.security", fromlist=["x"]).create_access_token(
         {"provider_id": str(w["kitchen"].provider_id)}, role="provider", token_version=0))
-    other = _ok(client.post(f"{H}/emergency", headers=kitchen_auth, json={}))  # for 6 Oct
-    clock.freeze(datetime(2026, 10, 7, 0, 30))
+    other = _ok(client.post(f"{H}/emergency", headers=kitchen_auth, json={"date": "2026-10-08"}))
+    clock.freeze(datetime(2026, 10, 9, 0, 30))
     jobs.holiday_retry_job()
     db.expire_all()
     assert db.get(VendorHolidayRequest, uuid.UUID(other["request"]["request_id"])).status == "expired"
@@ -219,7 +225,7 @@ def test_approving_twice_at_once_applies_the_change_once(client, db):
     w = f.world(db, balance="5000")
     sub_id = _subscribe(client, w)
     admin, _ = f.admin(db)
-    rid = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={}))["request"]["request_id"]
+    rid = _ok(f.ask_emergency(client, w["kitchen_auth"]))["request"]["request_id"]
     results, errors = [], []
 
     def approve():
@@ -266,7 +272,7 @@ def test_approved_emergency_refunds_skips_and_tells_everyone(client, db):
     before_a, before_d = _balance(db, w["user"]), _balance(db, d["user"])
     skips_c = db.get(Subscription, uuid.UUID(sub_c)).free_skips_total
 
-    sent = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={"reason": "gas leak"}))
+    sent = _ok(f.ask_emergency(client, w["kitchen_auth"], reason="gas leak"))
     assert sent["request"]["impact"]["skip_credits"] == 2 and sent["request"]["impact"]["one_time_orders"] == 1
     _, admin_hdr = f.admin(db)
     out = _ok(client.post(f"{R}/{sent['request']['request_id']}/approve", headers=admin_hdr, json={"note": "Get well"}))
@@ -327,7 +333,7 @@ def test_retries_never_refund_or_credit_twice(client, db):
     w = f.world(db, balance="5000")
     _subscribe(client, w)
     _, admin_hdr = f.admin(db)
-    rid = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={}))["request"]["request_id"]
+    rid = _ok(f.ask_emergency(client, w["kitchen_auth"]))["request"]["request_id"]
     hid = _ok(client.post(f"{R}/{rid}/approve", headers=admin_hdr, json={}))["holiday"]["holiday_id"]
     counts = lambda: (db.query(SkipCreditTransaction).count(), db.query(WalletTransaction).count(),  # noqa: E731
                       db.query(Notification).count(), db.query(HolidayNotice).count())
@@ -356,7 +362,7 @@ def test_a_failed_skip_is_retried_and_the_customer_told_only_after_it(client, db
 
     monkeypatch.setattr(emergency_holiday, "_grant_skip", broken)
     _, admin_hdr = f.admin(db)
-    rid = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={}))["request"]["request_id"]
+    rid = _ok(f.ask_emergency(client, w["kitchen_auth"]))["request"]["request_id"]
     hid = _ok(client.post(f"{R}/{rid}/approve", headers=admin_hdr, json={}))["holiday"]["holiday_id"]
     db.expire_all()
     row = db.query(VendorHolidaySubscription).one()
@@ -382,7 +388,7 @@ def test_failed_admin_notice_is_retried_from_the_log(client, db, monkeypatch):
         return real(session, n)
 
     monkeypatch.setattr(holiday_notices, "_send", flaky)
-    sent = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={}))
+    sent = _ok(f.ask_emergency(client, w["kitchen_auth"]))
     assert sent["request"]["status"] == "pending"  # the request is kept
     db.expire_all()
     assert db.query(HolidayNotice).one().status == "failed"
@@ -518,7 +524,7 @@ def test_a_plan_paused_from_tomorrow_still_gets_todays_meal_refunded_and_the_ski
     if today.status != "scheduled":
         pytest.skip("the pause already covers today")
     before = _balance(db, w["user"])
-    sent = _ok(client.post(f"{H}/emergency", headers=w["kitchen_auth"], json={}))
+    sent = _ok(f.ask_emergency(client, w["kitchen_auth"]))
     f.approve_holiday(client, db, sent)
     assert _balance(db, w["user"]) - before == Decimal("180.00")
     assert db.query(SkipCreditTransaction).count() == 1

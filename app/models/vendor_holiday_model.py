@@ -9,6 +9,12 @@ from sqlalchemy.sql import func
 
 from app.core.database import Base
 
+# meal_slots: NULL = the whole day, else some of breakfast / lunch / dinner
+MEAL_SLOTS_CHECK = (
+    "meal_slots IS NULL OR (cardinality(meal_slots) >= 1 "
+    "AND meal_slots <@ ARRAY['breakfast', 'lunch', 'dinner']::varchar[])"
+)
+
 
 class VendorHoliday(Base):
     """
@@ -17,12 +23,14 @@ class VendorHoliday(Base):
     casual:    planned closures, as a rule: weekly (weekdays), dates (specific
                dates), range (start_date..end_date) or monthly (days of the
                month). end_date NULL = open-ended weekly / monthly rule.
-    emergency: the kitchen cannot cook on one date (start_date); its meals of
-               that day go to a replacement kitchen or are compensated
-               (app/domain/emergency_holiday.py).
+    emergency: the kitchen cannot cook on one date (start_date): the whole
+               day (meal_slots NULL) or only some meals (meal_slots); those
+               meals are compensated (app/domain/emergency_holiday.py).
 
     Rows are never deleted. Removing a rule sets status 'removed', or cuts
     end_date to the removal day when part of the rule is already history.
+    An admin deleting an emergency holiday before its delivery time also
+    sets status 'removed'.
     """
 
     __tablename__ = "vendor_holidays"
@@ -32,11 +40,19 @@ class VendorHoliday(Base):
         CheckConstraint("rule_type IN ('weekly', 'dates', 'range', 'monthly')", name="chk_vendor_holiday_rule"),
         CheckConstraint("status IN ('active', 'removed')", name="chk_vendor_holiday_status"),
         CheckConstraint("end_date IS NULL OR end_date >= start_date", name="chk_vendor_holiday_dates"),
+        CheckConstraint(MEAL_SLOTS_CHECK, name="chk_vendor_holiday_meal_slots"),
         Index("idx_vendor_holidays_provider_dates", "provider_reference_id", "start_date", "end_date"),
         Index("idx_vendor_holidays_type_date", "holiday_type", "start_date"),
-        Index(
-            "uq_vendor_holidays_emergency_day", "provider_reference_id", "start_date", unique=True,
-            postgresql_where=text("holiday_type = 'emergency' AND status = 'active'"),
+        # one active emergency holiday per kitchen, date and meal (a full-day one blocks all three)
+        *(
+            Index(
+                f"uq_vendor_holidays_emergency_{slot}", "provider_reference_id", "start_date", unique=True,
+                postgresql_where=text(
+                    f"holiday_type = 'emergency' AND status = 'active' "
+                    f"AND (meal_slots IS NULL OR '{slot}' = ANY(meal_slots))"
+                ),
+            )
+            for slot in ("breakfast", "lunch", "dinner")
         ),
         {"schema": "provider"},
     )
@@ -69,6 +85,9 @@ class VendorHoliday(Base):
 
     # last day the rule applies, inclusive; NULL = no end
     end_date = Column(Date, nullable=True)
+
+    # emergency: the meals it blocks (breakfast | lunch | dinner); NULL = the whole day
+    meal_slots = Column(ARRAY(String(20)), nullable=True)
 
     reason = Column(Text, nullable=True)
 
@@ -197,13 +216,15 @@ class VendorHolidayRequest(Base):
     it: the approved schedule is provider.vendor_holidays only, so a pending,
     rejected, withdrawn or expired request never closes (or opens) a day.
 
-    request_type  emergency  one date (holiday_date), optional reason
+    request_type  emergency  one future date (holiday_date), the whole day or
+                             some meals (meal_slots), optional reason
                   regular    weekly days (weekdays from start_date on)
     action        add | update (target_holiday_id) | remove (target_holiday_id)
 
     dedupe_key is unique among the pending requests of a kitchen
-    ("emergency:2026-10-06", "regular:add:6,7", "regular:target:<id>"), so
-    sending the same request twice gives back the one already waiting.
+    ("emergency:2026-10-06", "emergency:2026-10-06:lunch",
+    "regular:add:6,7", "regular:target:<id>"), so sending the same request
+    twice gives back the one already waiting.
     """
 
     __tablename__ = "vendor_holiday_requests"
@@ -214,6 +235,7 @@ class VendorHolidayRequest(Base):
         CheckConstraint(
             "status IN ('pending', 'approved', 'rejected', 'withdrawn', 'expired')", name="chk_holiday_request_status",
         ),
+        CheckConstraint(MEAL_SLOTS_CHECK, name="chk_holiday_request_meal_slots"),
         Index("idx_holiday_requests_provider", "provider_reference_id", "created_at"),
         Index("idx_holiday_requests_status", "status", "created_at"),
         Index(
@@ -244,8 +266,9 @@ class VendorHolidayRequest(Base):
         nullable=True,
     )
 
-    # emergency: the date the kitchen cannot cook
+    # emergency: the date the kitchen cannot cook, and the meals (NULL = the whole day)
     holiday_date = Column(Date, nullable=True)
+    meal_slots = Column(ARRAY(String(20)), nullable=True)
 
     # regular: ISO weekdays (1 = Monday .. 7 = Sunday) and the first day they apply
     weekdays = Column(ARRAY(SmallInteger), nullable=True)
@@ -280,6 +303,8 @@ class VendorHolidaySubscription(Base):
     its extra free skip (exactly one per holiday) and the notice telling the
     customer about the closure, the refunded meals, the wallet balance and the
     skip. Unique per (holiday, subscription), so retries never credit twice.
+    skip_status 'not_eligible': a full-day holiday of a kitchen that normally
+    serves fewer than two meals a day - no skip, the notice is still sent.
     """
 
     __tablename__ = "vendor_holiday_subscriptions"
@@ -287,7 +312,8 @@ class VendorHolidaySubscription(Base):
     __table_args__ = (
         UniqueConstraint("vendor_holiday_reference_id", "subscription_reference_id",
                          name="uq_vendor_holiday_subscription"),
-        CheckConstraint("skip_status IN ('pending', 'completed', 'failed')", name="chk_vh_sub_skip_status"),
+        CheckConstraint("skip_status IN ('pending', 'completed', 'failed', 'not_eligible')",
+                        name="chk_vh_sub_skip_status"),
         Index("idx_vendor_holiday_subscriptions_status", "skip_status"),
         {"schema": "provider"},
     )
@@ -310,7 +336,7 @@ class VendorHolidaySubscription(Base):
     )
 
     skip_credit_reference_id = Column(UUID(as_uuid=True), nullable=True)
-    # pending | completed | failed
+    # pending | completed | failed | not_eligible
     skip_status = Column(String(20), nullable=False, default="pending")
     attempts = Column(SmallInteger, nullable=False, default=0)
     last_error = Column(Text, nullable=True)

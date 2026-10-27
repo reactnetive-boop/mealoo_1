@@ -28,6 +28,7 @@ from app.models.order_model import Order
 from app.models.package_switch_log_model import PackageSwitchLog
 from app.models.provider_model import Provider
 from app.models.subscription_package_model import SubscriptionPackage
+from app.models.vendor_holiday_model import VendorHoliday, VendorHolidayMeal, VendorHolidaySubscription
 
 SKIPPED = "SKIPPED"
 PACKAGE_SWITCHED = "PACKAGE_SWITCHED"
@@ -90,6 +91,26 @@ class MealContext:
         self._kitchens = dict(
             db.query(Provider.provider_id, Provider.business_name).filter(Provider.provider_id.in_(list(kitchens)))
         ) if kitchens else {}
+        # emergency holidays of these meals: the meals they block and whether the plan got the free skip
+        holiday_ids = {o.vendor_holiday_reference_id for o in orders
+                       if o.cancel_reason == EMERGENCY_REASON and o.vendor_holiday_reference_id}
+        self._holiday_slots: dict = {}
+        self._skips: dict = {}
+        if holiday_ids:
+            self._holiday_slots = dict(db.query(VendorHoliday.vendor_holiday_id, VendorHoliday.meal_slots).filter(
+                VendorHoliday.vendor_holiday_id.in_(list(holiday_ids))))
+            for hid, sid, status in db.query(
+                VendorHolidaySubscription.vendor_holiday_reference_id,
+                VendorHolidaySubscription.subscription_reference_id, VendorHolidaySubscription.skip_status,
+            ).filter(VendorHolidaySubscription.vendor_holiday_reference_id.in_(list(holiday_ids)),
+                     VendorHolidaySubscription.subscription_reference_id.in_(sub_ids)):
+                self._skips[(hid, sid)] = status
+            # holidays before 2026-10-26 credited the skip on the meal itself
+            for hid, sid in db.query(
+                VendorHolidayMeal.vendor_holiday_reference_id, VendorHolidayMeal.subscription_reference_id,
+            ).filter(VendorHolidayMeal.vendor_holiday_reference_id.in_(list(holiday_ids)),
+                     VendorHolidayMeal.skip_credit_reference_id.isnot(None)):
+                self._skips.setdefault((hid, sid), "completed")
 
     def kitchen_name(self, provider_id) -> str | None:
         return self._kitchens.get(provider_id)
@@ -137,12 +158,18 @@ class MealContext:
 
     def holiday_outcome(self, o: Order) -> dict | None:
         if o.status == "cancelled" and o.cancel_reason == EMERGENCY_REASON:
+            slots = self._holiday_slots.get(o.vendor_holiday_reference_id)
+            skip = self._skips.get((o.vendor_holiday_reference_id, o.subscription_reference_id))
             return {
                 "holiday_type": "emergency",
                 "outcome": "compensated",
-                "label": "Kitchen on leave – meal refunded to your wallet",
+                "label": ("Kitchen not serving this meal – refunded to your wallet" if slots
+                          else "Kitchen on leave – meal refunded to your wallet"),
                 "will_be_delivered": False,
-                "skips_credited": 1,
+                # the meals the holiday blocks (None = the whole day)
+                "meal_slots": slots,
+                # 0: a full-day holiday of a kitchen serving fewer than two meals a day grants no skip
+                "skips_credited": 0 if skip in (None, "not_eligible") and o.vendor_holiday_reference_id else 1,
                 "wallet_credit": str(o.refund_amount) if o.refund_amount is not None else None,
             }
         if o.status == "cancelled" and o.cancel_reason in ("vendor_holiday", "vendor_holiday_not_owed"):

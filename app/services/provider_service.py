@@ -7,6 +7,7 @@ from app.core.clock import today_local
 from app.core.errors import DomainError
 from app.domain import capacity, holidays, vendor_partner
 from app.domain.eligibility import assert_pincode_can_change, serviceable_pincode, parse_pincode
+from app.domain.slots import ordered_slots
 from app.models.delivery_boy_model import DeliveryBoy
 from app.repositories.provider_repository import ProviderRepository
 from app.utils.file_helper import save_profile_image, delete_upload
@@ -91,6 +92,10 @@ class ProviderService:
             "approval_note": provider.approval_note,
             "is_accepting_orders": bool(provider.is_accepting_orders),
             "is_holiday_today": holidays.is_closed(db, provider.provider_id, today_local()),
+            # meals an emergency holiday blocks today (all three when closed for the day)
+            "holiday_today_meal_slots": ordered_slots(
+                holidays.blocked_slots(db, provider.provider_id, today_local(), today_local()).get(today_local(), {})
+            ),
             "next_step": next_step,
         }
 

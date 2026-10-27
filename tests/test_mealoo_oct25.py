@@ -45,6 +45,12 @@ H = f"{API}/provider/holidays"
 TODAY = date(2026, 10, 5)
 
 
+@pytest.fixture(autouse=True)
+def _two_meal_kitchens(monkeypatch):
+    """These kitchens serve lunch and dinner, so a full-day emergency grants the free skip."""
+    f.serve_two_meals(monkeypatch)
+
+
 def _ok(r, code=200):
     assert r.status_code == code, f"{r.request.method} {r.request.url}: {r.status_code} {r.text}"
     return r.json()
@@ -749,8 +755,11 @@ def test_40_near_midnight_ist_lands_on_the_ist_date(client, db):
     assert e["holiday"]["start_date"] == "2026-10-05" and e["request"]["holiday_date"] == "2026-10-05"
     other, other_auth = f.provider(db)
     clock.freeze(datetime(2026, 10, 6, 0, 1))  # still 5 Oct in UTC
-    sent = _ok(client.post(f"{H}/emergency", headers=other_auth, json={}))
-    assert sent["request"]["holiday_date"] == "2026-10-06"
+    # 6 Oct is "tomorrow" in UTC but today in IST: refused; 7 Oct is the first day that can be asked for
+    today_ist = client.post(f"{H}/emergency", headers=other_auth, json={"date": "2026-10-06"})
+    assert today_ist.status_code == 422 and today_ist.json()["code"] == "HOLIDAY_NOT_FUTURE"
+    sent = _ok(client.post(f"{H}/emergency", headers=other_auth, json={"date": "2026-10-07"}))
+    assert sent["request"]["holiday_date"] == "2026-10-07"
     with pytest.raises(DomainError) as late:
         f.planned_holiday(db, other, rule_type="dates", dates=["2026-10-06"])
     assert late.value.code == "HOLIDAY_IN_PAST"
@@ -759,11 +768,13 @@ def test_40_near_midnight_ist_lands_on_the_ist_date(client, db):
 # ══ Section 8.4: emergency holidays ══════════════════════════
 
 def _emergency(client, w, day=None, reason="gas leak"):
-    """The kitchen asks for an emergency holiday and an admin approves it: the approval's response."""
-    body = {"reason": reason}
-    if day:
-        body["date"] = day
-    sent = client.post(f"{H}/emergency", headers=w["kitchen_auth"], json=body)
+    """
+    The kitchen asks for an emergency holiday and an admin approves it: the
+    approval's response. For today (the default) the kitchen asked the
+    evening before (only later dates can be asked for); the admin approves
+    on the day.
+    """
+    sent = f.ask_emergency(client, w["kitchen_auth"], day, reason=reason)
     if sent.status_code != 200:
         return sent
     db = SessionLocal()
@@ -802,7 +813,7 @@ def test_41_emergency_with_no_affected_meals(client, db):
 def test_42_past_date_is_rejected(client, db):
     w = f.world(db)
     r = _emergency(client, w, day="2026-10-04")
-    assert r.status_code == 400 and r.json()["code"] == "HOLIDAY_IN_PAST"
+    assert r.status_code == 422 and r.json()["code"] == "HOLIDAY_NOT_FUTURE"
 
 
 def test_43_replacement_found_meal_moves_user_told_delivery_side_updated(client, db, replacements):

@@ -166,8 +166,13 @@ def offering(db: Session, provider_id, package_id) -> ProviderSelectedPackage | 
     )
 
 
-def is_on_holiday(db: Session, provider_id, on: date) -> bool:
-    """Closed on `on` by any holiday (planned or emergency): nothing new may land on that date."""
+def is_on_holiday(db: Session, provider_id, on: date, slot: str | None = None) -> bool:
+    """
+    Closed on `on` by any holiday (planned or emergency): nothing new may land
+    on that date. With `slot`: also when an emergency holiday blocks that meal.
+    """
+    if slot is not None:
+        return holidays.is_slot_closed(db, provider_id, on, slot)
     return holidays.is_closed(db, provider_id, on)
 
 

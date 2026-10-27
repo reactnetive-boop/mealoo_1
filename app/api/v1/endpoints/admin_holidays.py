@@ -19,6 +19,10 @@ class HolidayDecisionRequest(BaseModel):
     note: Optional[str] = Field(None, max_length=500)
 
 
+class HolidayDeleteRequest(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
 @router.get(
     "",
     summary="Kitchen Holiday History",
@@ -127,6 +131,23 @@ def reject_request(request_id: UUID, request: Request, payload: Optional[Holiday
 @router.get("/{holiday_id}", summary="Kitchen Holiday Detail")
 def holiday_detail(holiday_id: UUID, db: Session = Depends(get_db), current=Depends(get_current_admin)):
     return VendorHolidayService.admin_detail(db, holiday_id)
+
+
+@router.delete(
+    "/{holiday_id}",
+    summary="Delete an Emergency Holiday",
+    description=(
+        "Only before the delivery time of the holiday's earliest blocked meal (for a full-day holiday the "
+        "earliest meal the kitchen serves), business-local time - `delete_cutoff_at` / `deletable` on the "
+        "holiday. At or after it: 409 HOLIDAY_DELETE_CUTOFF_PASSED and nothing changes. The meals open again for "
+        "new orders; refunds and free skips already given stay with the customers, cancelled meals stay "
+        "cancelled; customers, partners and the kitchen are told."
+    ),
+)
+def delete_holiday(holiday_id: UUID, request: Request, payload: Optional[HolidayDeleteRequest] = None,
+                   db: Session = Depends(get_db), current=Depends(get_current_admin)):
+    return VendorHolidayService.admin_delete(db, holiday_id, current["admin_id"], payload.reason if payload else None,
+                                             client_ip(request))
 
 
 @router.post(

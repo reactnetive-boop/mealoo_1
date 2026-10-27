@@ -191,7 +191,7 @@ def apply(db: Session, h: VendorHoliday, *, request_id=None) -> dict:
 
         old_end = sub.end_date
         if owed:
-            extension = holidays.extend(db, sub.vendor_reference_id, old_end, len(owed), skip=known)
+            extension = holidays.extend(db, sub.vendor_reference_id, old_end, len(owed), skip=known, slots=slots)
             known |= set(extension.holiday_dates)
             sub.end_date = extension.end
             # a make-up day only carries the meals that were owed on the holiday

@@ -126,8 +126,8 @@ def _new_kitchen(db: Session, new_provider_id: str, current_provider_id, on: dat
     reason = provider_block_reason(provider)
     if reason:
         raise DomainError(f"New kitchen cannot take orders: {reason}")
-    if is_on_holiday(db, provider.provider_id, on):
-        raise DomainError(f"New kitchen is on holiday on {on}.")
+    if is_on_holiday(db, provider.provider_id, on, slot):
+        raise DomainError(f"New kitchen is on holiday on {on} ({slot}).")
     address = db.query(UserAddress).filter(UserAddress.user_address_id == address_id).first()
     if address is not None and not kitchen_serves(db, provider, parse_pincode(address.pin_code)):
         raise DomainError("New kitchen does not deliver to this customer's pincode.")
@@ -629,7 +629,7 @@ class AdminOrderService:
         order = _sub_order(db, order_id)
         if order.status != "scheduled":
             raise DomainError(f"Only scheduled meals can be moved (this one is '{order.status}').")
-        if not is_on_holiday(db, order.vendor_reference_id, order.order_date):
+        if not is_on_holiday(db, order.vendor_reference_id, order.order_date, order.meal_slot):
             raise DomainError("Mark the current kitchen unavailable for this date before moving its meals.")
 
         new_provider_id = str(payload.new_provider_id)
@@ -676,7 +676,7 @@ class AdminOrderService:
         order = _extra_order(db, order_id)
         if order.status not in ("pending", "confirmed"):
             raise DomainError(f"Only pending or confirmed orders can be moved (this one is '{order.status}').")
-        if not is_on_holiday(db, order.vendor_reference_id, order.delivery_date):
+        if not is_on_holiday(db, order.vendor_reference_id, order.delivery_date, order.meal_slot):
             raise DomainError("Mark the current kitchen unavailable for this date before moving its orders.")
 
         new_provider_id = str(payload.new_provider_id)

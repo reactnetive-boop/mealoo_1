@@ -37,7 +37,7 @@ from app.core.config import (
 from app.core.errors import DomainError
 from app.domain.cancellation import assert_customer_can_cancel, customer_cancellation_enabled
 from app.core.paging import FIRST_PAGE, Paging
-from app.domain import capacity, holidays, ledger, notify, orders as meals, partner_leave, price_breakup
+from app.domain import capacity, emergency_holiday, holidays, ledger, notify, orders as meals, partner_leave, price_breakup
 from app.domain.meal_views import MealContext
 from app.domain.delivery_assignment import inherited_partner
 from app.domain.status import SUB_OPEN_STATUSES
@@ -135,9 +135,11 @@ def plan_schedule(db: Session, plan: SubscriptionPlan, provider_id, start_date: 
     days of the chosen range.
     """
     _, days = resolve_term(plan, start_date, end_date)
+    # a day on which every meal of the plan is blocked is a holiday for it
+    slots = expand_plan_slot(plan.meal_slot)
     if is_custom_plan(plan):
-        return holidays.plan_range(db, provider_id, start_date, end_date)
-    return holidays.plan_days(db, provider_id, start_date, days)
+        return holidays.plan_range(db, provider_id, start_date, end_date, slots=slots)
+    return holidays.plan_days(db, provider_id, start_date, days, slots=slots)
 
 
 def plan_name(plan_or_type) -> str:
@@ -1051,8 +1053,9 @@ class SubscriptionService:
         # after the end date, past any holidays there
         known = holidays.sub_holidays(sub)
         missed = sum(1 for i in range(days_paused) if sub.pause_start_date + timedelta(days=i) not in known)
-        # meals coming back on a day the kitchen is now closed are made up at the end as well
-        closed_now = holidays.closed_dates(db, sub.vendor_reference_id, resume_date, old_end) - known
+        # meals coming back on a day the kitchen is now closed (for every meal of the plan) are
+        # made up at the end as well
+        closed_now = holidays.closed_dates(db, sub.vendor_reference_id, resume_date, old_end, slots=slots) - known
         if closed_now:
             missed += db.query(Order.order_date).filter(
                 Order.subscription_reference_id == sub.subscription_id,
@@ -1063,9 +1066,11 @@ class SubscriptionService:
             known |= closed_now
         new_end = old_end
         if missed:
-            extension = holidays.extend(db, sub.vendor_reference_id, old_end, missed, skip=known)
+            extension = holidays.extend(db, sub.vendor_reference_id, old_end, missed, skip=known, slots=slots)
             known |= set(extension.holiday_dates)
             new_end = extension.end
+        # single meals an emergency holiday blocks: they come back cancelled and refunded
+        blocked = meals.partly_blocked(db, sub.vendor_reference_id, resume_date, old_end)
 
         # Lock the kitchen and check room on the dates coming back
         db.query(Provider).filter(Provider.provider_id == sub.vendor_reference_id).with_for_update().first()
@@ -1102,6 +1107,10 @@ class SubscriptionService:
         for meal in restored:
             if meal.order_date in known:
                 meal.cancel_reason = "vendor_holiday"  # closed that day: made up at the end
+                continue
+            holiday = blocked.get(meal.order_date, {}).get(meal.meal_slot)
+            if holiday is not None:
+                emergency_holiday.refund_blocked_meal(db, meal, sub, holiday)
                 continue
             meal.status = "scheduled"
             meal.cancel_reason = None

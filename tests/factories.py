@@ -190,6 +190,18 @@ def delivery_boy(db, *, approved=True, kitchen=None, online=True, documents=True
     return boy, auth(token)
 
 
+def serve_two_meals(monkeypatch) -> None:
+    """
+    Every world() kitchen sells a lunch-and-dinner package: a full-day
+    emergency holiday then grants the free skip (kitchens serving fewer than
+    two meals a day get none; tests/test_emergency_meals_oct27.py).
+    """
+    import tests.factories as module
+
+    real = module.world
+    monkeypatch.setattr(module, "world", lambda db, **kw: real(db, **{"meal_type": "lunch,dinner", **kw}))
+
+
 def world(db, *, price="180", discounted=None, sub_price=None, meal_type="lunch", balance="5000",
           plan_slot="lunch", plan_days=7, discount="0", skips=2, quota=None, capacity=None):
     """A sellable kitchen + package + plan + customer with money, all in one pincode."""
@@ -236,6 +248,28 @@ def wrong_code(code: str) -> str:
 
 
 # ── Kitchen holidays (approved by an admin) ──────────────────
+
+def ask_emergency(client, kitchen_auth, on=None, **body):
+    """
+    A kitchen asks for an emergency holiday on `on` (default today). Kitchens
+    may only ask for dates after today, so for today it asks at 22:00 the
+    evening before; the clock then goes back to where it was (an admin
+    approves on the day). The raw response.
+    """
+    from datetime import date, datetime, time, timedelta
+
+    from app.core import clock
+
+    now = clock.now_local()
+    on = date.fromisoformat(on) if isinstance(on, str) else (on or now.date())
+    if on == now.date():
+        clock.freeze(datetime.combine(on - timedelta(days=1), time(22, 0)))
+    try:
+        return client.post("/api/v1/provider/holidays/emergency", headers=kitchen_auth,
+                           json={**body, "date": on.isoformat()})
+    finally:
+        clock.freeze(now)
+
 
 def approve_holiday(client, db, sent: dict, note: str | None = None) -> dict:
     """An admin approves the holiday request a kitchen just sent (its API response)."""

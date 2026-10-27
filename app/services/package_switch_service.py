@@ -121,7 +121,7 @@ class PackageSwitchService:
             discount = plan.discount_percent if plan else 0
 
         # the same number of meal days at the new kitchen, after its holidays
-        schedule = holidays.plan_days(db, provider.provider_id, effective, remaining_days)
+        schedule = holidays.plan_days(db, provider.provider_id, effective, remaining_days, slots=slots)
         quote = build_quote(
             current_components(db),
             kind="subscription",

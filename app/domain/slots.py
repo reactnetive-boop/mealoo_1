@@ -54,6 +54,28 @@ SLOT_WINDOWS: dict[str, tuple[time, time]] = {
 }
 
 
+SLOT_LABELS = {"breakfast": "Breakfast", "lunch": "Lunch", "dinner": "Dinner"}
+
+
+def ordered_slots(slots) -> list[str]:
+    """Distinct known slots in breakfast, lunch, dinner order (anything else is dropped)."""
+    wanted = {str(s).strip().lower() for s in (slots or [])}
+    return [s for s in SLOTS if s in wanted]
+
+
+def slots_label(slots) -> str:
+    """'Lunch', 'Breakfast and Dinner', 'Breakfast, Lunch and Dinner'."""
+    names = [SLOT_LABELS[s] for s in ordered_slots(slots)]
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def delivery_starts(day: date, slot: str):
+    """Business-local moment the delivery window of `slot` on `day` opens (the meal's delivery time)."""
+    return local_datetime(day, SLOT_WINDOWS[slot][0])
+
+
 def delivery_window(slot: str) -> dict | None:
     window = SLOT_WINDOWS.get(slot)
     if window is None:
