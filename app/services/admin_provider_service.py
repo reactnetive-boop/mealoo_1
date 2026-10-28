@@ -375,6 +375,9 @@ class AdminProviderService:
                     "holiday_type": c["holiday_type"],
                     "label": c["rule_label"],
                     "editable": c["editable"],
+                    # emergency: the meals it blocks; None = the whole day
+                    "meal_slots": c["meal_slots"],
+                    "full_day": c["full_day"],
                 }
                 for c in reversed(overview["calendar"])
             ],

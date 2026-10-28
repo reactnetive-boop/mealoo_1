@@ -24,6 +24,13 @@ and a failed one is retried without re-planning anything.
 
 Only approved holidays get here: a kitchen's request is applied when an
 admin approves it (app/services/holiday_request_service.py).
+
+Changing or removing an approved regular holiday (2026-10-28) is refused
+while it would touch a running subscription: change_conflicts() lists the
+running plans with a date that would open or close inside what is left of
+them, and assert_no_conflicts() refuses the change (409
+HOLIDAY_CHANGE_BLOCKED) - when the kitchen asks, and again when an admin
+approves. Adding a holiday is not restricted (it re-plans, as above).
 """
 
 from collections import defaultdict
@@ -33,6 +40,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import business_event
 from app.core.clock import today_local
+from app.core.errors import DomainError
 from app.domain import holiday_notices, holidays, orders as meals
 from app.domain.pricing import money
 from app.domain.slots import expand_plan_slot
@@ -96,6 +104,68 @@ def preview(db: Session, h: VendorHoliday) -> dict:
         "affected_meals": meal_count,
         "upcoming_dates": [d.isoformat() for d in upcoming[:20]],
     }
+
+
+def change_conflicts(db: Session, provider_id, changed) -> dict:
+    """
+    Running subscriptions (active / paused) of the kitchen that changing or
+    removing a regular holiday would touch. `changed(lo, hi)` gives the
+    dates in [lo, hi] that would open or close; only what is left of each
+    plan counts (from tomorrow to its last day). A regular holiday closes
+    the whole day, so every meal of the plan that day is concerned.
+    """
+    first = today_local() + timedelta(days=1)
+    subs = db.query(Subscription).filter(
+        Subscription.vendor_reference_id == provider_id,
+        Subscription.status.in_(RUNNING),
+        Subscription.end_date > first,
+    ).all()
+    hits: list[tuple[Subscription, set]] = []
+    for sub in subs:
+        lo, hi = max(first, sub.start_date), sub.end_date - timedelta(days=1)
+        dates = set(changed(lo, hi)) if lo <= hi else set()
+        if dates:
+            hits.append((sub, dates))
+    return {
+        "affected_subscriptions": len(hits),
+        "dates": sorted({d for _, dates in hits for d in dates})[:10],
+        # the last day of the latest of those plans: after it they no longer stand in the way
+        "clear_after": max(sub.end_date - timedelta(days=1) for sub, _ in hits) if hits else None,
+    }
+
+
+def blocked_message(conflicts: dict, verb: str) -> str:
+    """Why a regular holiday cannot be `verb` ('changed', 'removed') now, for the kitchen and the admin."""
+    n = conflicts["affected_subscriptions"]
+    shown = ", ".join(d.strftime("%a %d %b") for d in conflicts["dates"][:4])
+    more = " …" if len(conflicts["dates"]) > 4 else ""
+    until = conflicts["clear_after"]
+    return (
+        f"This holiday cannot be {verb} now: it would change the meal days of {n} running "
+        f"subscription{'s' if n != 1 else ''} ({shown}{more}). You can ask again after "
+        f"{until.strftime('%d %b %Y')}, when those plans have ended."
+    )
+
+
+def assert_no_conflicts(db: Session, provider_id, changed, verb: str) -> None:
+    """409 HOLIDAY_CHANGE_BLOCKED when changing / removing a regular holiday would touch a running subscription."""
+    conflicts = change_conflicts(db, provider_id, changed)
+    if conflicts["affected_subscriptions"]:
+        raise DomainError(
+            blocked_message(conflicts, verb), 409, code="HOLIDAY_CHANGE_BLOCKED",
+            extra={
+                "affected_subscriptions": conflicts["affected_subscriptions"],
+                "dates": [d.isoformat() for d in conflicts["dates"]],
+                "clear_after": conflicts["clear_after"].isoformat(),
+            },
+        )
+
+
+def rule_change(old: VendorHoliday, new: VendorHoliday | None):
+    """`changed(lo, hi)` for replacing `old` with `new` (None: removing it): the dates that open or close."""
+    if new is None:
+        return lambda lo, hi: holidays.rule_dates(old, lo, hi)
+    return lambda lo, hi: holidays.rule_dates(old, lo, hi) ^ holidays.rule_dates(new, lo, hi)
 
 
 def _not_owed_row(sub: Subscription, on: date, slot: str) -> dict:

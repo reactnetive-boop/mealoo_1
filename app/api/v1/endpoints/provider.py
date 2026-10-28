@@ -196,7 +196,11 @@ def add_holiday(payload: HolidayRequest, db: Session = Depends(get_db),
 @router.put(
     "/holidays/rules/{holiday_id}",
     summary="Request a Change of Weekly Holidays",
-    description="Asks to change an approved weekly rule to new weekdays. Applied only once an admin approves it.",
+    description=(
+        "Asks to change an approved weekly rule to new weekdays. Applied only once an admin approves it. Refused "
+        "(409 HOLIDAY_CHANGE_BLOCKED, with `affected_subscriptions`, `dates` and `clear_after`) while the change "
+        "would move a meal day of a running subscription; checked again on approval."
+    ),
 )
 def update_holiday(holiday_id: UUID, payload: HolidayRequest, db: Session = Depends(get_db),
                    current_provider=Depends(get_current_provider)):
@@ -207,7 +211,11 @@ def update_holiday(holiday_id: UUID, payload: HolidayRequest, db: Session = Depe
 @router.delete(
     "/holidays/rules/{holiday_id}",
     summary="Request Removal of a Holiday",
-    description="Asks to remove an approved future holiday rule. Applied only once an admin approves it.",
+    description=(
+        "Asks to remove an approved future holiday rule. Applied only once an admin approves it. Refused (409 "
+        "HOLIDAY_CHANGE_BLOCKED) while a running subscription has a meal day planned around it; checked again on "
+        "approval."
+    ),
 )
 def remove_holiday_rule(holiday_id: UUID, db: Session = Depends(get_db),
                         current_provider=Depends(get_current_provider)):
@@ -257,7 +265,8 @@ def preview_emergency(date_: Optional[date] = Query(None, alias="date"),
     summary="Request an Emergency Holiday",
     description=(
         "Asks Orleeno to close the kitchen on `date` - after today (422 HOLIDAY_NOT_FUTURE for today or the past), "
-        "at most 30 days ahead - for the whole day or only `meal_slots` (meals the kitchen serves; 422 "
+        "at most 30 days ahead - for the whole day or only `meal_slots` (meals the kitchen serves, kept exactly as "
+        "chosen: only breakfast + lunch + dinner is the full day; 422 "
         "HOLIDAY_SLOT_NOT_OFFERED otherwise), with an optional reason. The admins are notified at once; nothing "
         "changes until one approves it. On approval those meals are closed, affected meals and one-time orders "
         "are refunded, active subscriptions get 1 extra free skip (a full-day holiday only when the kitchen "

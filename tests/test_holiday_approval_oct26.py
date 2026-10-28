@@ -462,6 +462,17 @@ def test_weekly_holiday_add_change_remove_after_approval(client, db):
     assert view["packages"][0]["vendor_holidays"]["weekly_off_label"] == "Weekly off: Sunday"
     rule_id = out["holiday"]["holiday_id"]
 
+    # change / removal refused while the 14-day plan runs over these weekends (2026-10-28 rule)
+    for r in (client.put(f"{H}/rules/{rule_id}", headers=w["kitchen_auth"], json={"preset": "weekends"}),
+              client.delete(f"{H}/rules/{rule_id}", headers=w["kitchen_auth"])):
+        assert r.status_code == 409 and r.json()["code"] == "HOLIDAY_CHANGE_BLOCKED"
+        assert r.json()["affected_subscriptions"] == 1 and r.json()["clear_after"] == "2026-10-20"
+    assert db.query(VendorHolidayRequest).filter(VendorHolidayRequest.action != "add").count() == 0
+    rule = next(x for x in _ok(client.get(H, headers=w["kitchen_auth"]))["rules"] if x["holiday_id"] == rule_id)
+    assert rule["change_blocked"] is True and "20 Oct 2026" in rule["change_blocked_reason"]
+    db.get(Subscription, uuid.UUID(sub_id)).status = "cancelled"  # that plan stops running
+    db.commit()
+
     # change to Saturday + Sunday
     change = _ok(client.put(f"{H}/rules/{rule_id}", headers=w["kitchen_auth"], json={"preset": "weekends"}))
     assert change["request"]["label"] == "Change: Closed every Sunday → Closed every Saturday and Sunday"
@@ -472,19 +483,16 @@ def test_weekly_holiday_add_change_remove_after_approval(client, db):
     changed = f.approve_holiday(client, db, change)
     db.expire_all()
     assert holidays.is_closed(db, w["kitchen"].provider_id, date(2026, 10, 10))
-    live = _meals(db, sub_id, "scheduled")
-    assert len(live) == 14 and all(m.order_date.isoweekday() < 6 for m in live)
     assert db.query(Notification).filter(Notification.user_reference_id == b["user"].user_id,
                                          Notification.title.like("%changed its weekly days off")).count() == 1
 
-    # remove
+    # remove (the Mon-Wed plan has no weekend inside)
     new_id = changed["holiday"]["holiday_id"]
     removal = _ok(client.delete(f"{H}/rules/{new_id}", headers=w["kitchen_auth"]))
     assert removal["request"]["action"] == "remove"
     f.approve_holiday(client, db, removal)
     db.expire_all()
     assert not holidays.is_closed(db, w["kitchen"].provider_id, date(2026, 10, 24))
-    assert len(_meals(db, sub_id, "scheduled")) == 14  # no paid meal lost, nothing shortened
     assert db.query(Notification).filter(Notification.user_reference_id == b["user"].user_id,
                                          Notification.title.like("%removed a holiday")).count() == 1
     history = _ok(client.get(f"{H}/requests", headers=w["kitchen_auth"]))["requests"]

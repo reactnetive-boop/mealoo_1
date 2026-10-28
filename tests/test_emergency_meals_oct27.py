@@ -188,9 +188,9 @@ def test_several_meals_can_be_blocked_in_any_order(client, db):
     (ALL, None),                              # nothing chosen: the whole day (older apps)
     (ALL, ["breakfast", "lunch", "dinner"]),  # every meal
     (ALL, ["full_day"]),                      # the "Full day" option
-    ("lunch,dinner", ["dinner", "lunch"]),    # every meal THIS kitchen serves
+    ("lunch,dinner", ["breakfast", "lunch", "dinner"]),  # all three, even with no breakfast served
 ])
-def test_every_meal_the_kitchen_serves_is_the_full_day(client, db, meal_type, slots):
+def test_breakfast_lunch_and_dinner_is_the_full_day(client, db, meal_type, slots):
     w = _kitchen(db, meal_type=meal_type, plan_slot="lunch")
     sent = _ok(_ask(client, w, slots=slots))
     assert sent["request"]["meal_slots"] is None and sent["request"]["full_day"] is True
@@ -200,6 +200,21 @@ def test_every_meal_the_kitchen_serves_is_the_full_day(client, db, meal_type, sl
     h = f.approve_holiday(client, db, sent)["holiday"]
     assert h["meal_slots"] is None and h["full_day"] is True and h["label"] == "Emergency closure on 6 Oct 2026"
     assert holidays.is_closed(db, w["kitchen"].provider_id, TOMORROW)
+
+
+def test_every_meal_a_kitchen_serves_stays_the_meals_chosen(client, db):
+    """2026-10-28: fewer than three meals are never widened to the full day (they used to be)."""
+    w = _kitchen(db, meal_type="lunch,dinner", plan_slot="lunch")
+    sent = _ok(_ask(client, w, slots=["dinner", "lunch"]))
+    assert sent["request"]["meal_slots"] == ["lunch", "dinner"] and sent["request"]["full_day"] is False
+    assert sent["request"]["meals_label"] == "Lunch and Dinner"
+    assert db.query(VendorHolidayRequest).one().dedupe_key == "emergency:2026-10-06:lunch,dinner"
+    h = f.approve_holiday(client, db, sent)["holiday"]
+    assert h["meal_slots"] == ["lunch", "dinner"] and h["full_day"] is False
+    assert h["label"] == "Emergency closure on 6 Oct 2026 (Lunch and Dinner only)"
+    kitchen = w["kitchen"].provider_id
+    assert holidays.is_slot_closed(db, kitchen, TOMORROW, "lunch") and holidays.is_slot_closed(db, kitchen, TOMORROW, "dinner")
+    assert not holidays.is_slot_closed(db, kitchen, TOMORROW, "breakfast")
 
 
 def test_meals_the_kitchen_does_not_serve_are_refused(client, db):

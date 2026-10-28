@@ -7,7 +7,10 @@ A kitchen (Profile -> Manage Holidays) asks for:
              some of the meals the kitchen serves, optional reason
   regular    weekly days off: add, change (an approved weekly rule) or remove
              (any approved rule, including older date / vacation / monthly
-             ones, which can no longer be added)
+             ones, which can no longer be added). A change or removal that
+             would touch a running subscription is refused (409
+             HOLIDAY_CHANGE_BLOCKED, holiday_policy.change_conflicts) when
+             it is sent and again when an admin approves it.
 
 Every request goes to the admins (notified at once with the date or days and
 what would change) and waits. Nothing changes until an admin approves it:
@@ -99,6 +102,7 @@ def request_view(r: VendorHolidayRequest, targets: dict | None = None, *, db: Se
         # emergency: the meals asked for; None = the whole day
         "meal_slots": r.meal_slots or None,
         "full_day": not r.meal_slots,
+        "meals_label": slots_label(r.meal_slots) if r.meal_slots else "Full day",
         "weekdays": sorted(r.weekdays or []),
         "start_date": r.start_date,
         "reason": r.reason,
@@ -162,6 +166,19 @@ def _weekly_rule(data: dict) -> dict:
     if rule["rule_type"] != "weekly":
         raise DomainError(WEEKLY_ONLY, code="HOLIDAY_WEEKLY_ONLY")
     return rule
+
+
+def _changed(r: VendorHolidayRequest, target: VendorHoliday | None):
+    """`changed(lo, hi)` of a regular update / remove request (None for an addition)."""
+    if r.action == "add" or target is None:
+        return None
+    if r.action == "remove":
+        if r.holiday_date is not None:  # older apps: one date of a dates rule
+            return lambda lo, hi: {r.holiday_date} if lo <= r.holiday_date <= hi else set()
+        return holiday_policy.rule_change(target, None)
+    new = VendorHoliday(provider_reference_id=r.provider_reference_id, holiday_type=holidays.CASUAL,
+                        **_weekly_rule({"rule_type": "weekly", "weekdays": r.weekdays, "start_date": _start(r)}))
+    return holiday_policy.rule_change(target, new)
 
 
 def _target(db: Session, provider_id, holiday_id) -> VendorHoliday:
@@ -320,6 +337,12 @@ class HolidayRequestService:
         ):
             raise DomainError("A change to this holiday is already waiting for approval. Withdraw it first.", 409,
                               code="HOLIDAY_REQUEST_PENDING")
+        if target is not None:
+            # never while it would move a meal day of a running subscription
+            new = (VendorHoliday(provider_reference_id=provider_id, holiday_type=holidays.CASUAL, **rule)
+                   if rule is not None else None)
+            holiday_policy.assert_no_conflicts(db, provider_id, holiday_policy.rule_change(target, new),
+                                               "changed" if action == "update" else "removed")
         impact: dict = {}
         if rule is not None:
             draft = VendorHoliday(provider_reference_id=provider_id, holiday_type=holidays.CASUAL, **rule)
@@ -346,6 +369,9 @@ class HolidayRequestService:
             raise DomainError("Emergency holidays cannot be removed. Contact Orleeno support.", 409)
         if h.rule_type != "dates":
             raise DomainError(f"{on} is part of '{holidays.describe(h)}'. Remove that holiday instead.", 409)
+        holiday_policy.assert_no_conflicts(
+            db, provider_id, lambda lo, hi: {on} if lo <= on <= hi else set(), "removed",
+        )
         kitchen = _kitchen(db, provider_id, lock=True)
         r, created = _create(
             db, kitchen, key=f"regular:date:{on.isoformat()}", request_type=REGULAR, action="remove",
@@ -414,9 +440,19 @@ class HolidayRequestService:
         # what approving it would do now (it may differ from when it was sent)
         if r.status == "pending":
             try:
+                target = db.get(VendorHoliday, r.target_holiday_id) if r.target_holiday_id else None
+                changed = _changed(r, target) if r.request_type == REGULAR else None
+                conflicts = holiday_policy.change_conflicts(db, r.provider_reference_id, changed) if changed else None
                 if r.request_type == EMERGENCY:
                     view["impact_now"] = _json(emergency_holiday.preview(db, r.provider_reference_id, r.holiday_date,
                                                                          r.meal_slots))
+                elif conflicts and conflicts["affected_subscriptions"]:
+                    # approving is refused while it would touch a running subscription
+                    view["impact_now"] = _json({
+                        "error": holiday_policy.blocked_message(
+                            conflicts, "removed" if r.action == "remove" else "changed"),
+                        "blocked": True, **conflicts,
+                    })
                 elif r.action != "remove":
                     draft = VendorHoliday(provider_reference_id=r.provider_reference_id, holiday_type=holidays.CASUAL,
                                           **_weekly_rule({"rule_type": "weekly", "weekdays": r.weekdays,
@@ -477,6 +513,11 @@ class HolidayRequestService:
             )
             holiday_id = holiday.vendor_holiday_id
         else:
+            # a running subscription may have started since the request was sent: checked again
+            changed = _changed(r, db.get(VendorHoliday, r.target_holiday_id) if r.target_holiday_id else None)
+            if changed is not None:
+                holiday_policy.assert_no_conflicts(db, r.provider_reference_id, changed,
+                                                   "removed" if r.action == "remove" else "changed")
             rule = {"rule_type": "weekly", "weekdays": r.weekdays, "start_date": _start(r), "reason": r.reason}
             if r.action == "add":
                 out = VendorHolidayService.add_casual(db, r.provider_reference_id, rule, actor_type="admin",

@@ -6,7 +6,10 @@ service.py), and only for a date after today (business-local); nothing
 changes until an admin approves it. A holiday is for the whole day
 (meal_slots NULL) or only some of the meals the kitchen serves (meal_slots,
 e.g. ['lunch']): only those meals are blocked and the others that day run
-as usual. Choosing every meal the kitchen serves is the full day. Approval
+as usual. The meals chosen are stored exactly as chosen (2026-10-28): only
+breakfast, lunch and dinner together - or the "full day" option - is the
+full day, never fewer meals, even when they are every meal the kitchen
+serves. Approval
 declares it here: the blocked meals are closed at once - no new order,
 subscription meal, preparation task, pickup or delivery can land on them
 (holidays.is_slot_closed; holidays.is_closed for a full day) - and the work
@@ -20,8 +23,9 @@ is listed:
                    or re-priced.
     subscriptions  every active subscription of the kitchen: each gets
                    exactly ONE extra free skip for the holiday, whether or not
-                   it had a meal that day. A FULL-DAY holiday grants it only
-                   when the kitchen normally serves at least two meals a day
+                   it had a meal that day. A FULL-DAY holiday - or one for
+                   every meal the kitchen serves - grants it only when the
+                   kitchen normally serves at least two meals a day
                    (meal_offering.free_skip_eligibility); otherwise the rows
                    are 'not_eligible': no skip, the refunds and the notice
                    stay. Holidays for some meals keep the skip as before.
@@ -208,8 +212,11 @@ def validate_future(on: date) -> None:
 def normalize_slots(db: Session, provider_id, on: date, meal_slots) -> list[str] | None:
     """
     The meals an emergency holiday blocks, validated (DomainError 422):
-    None = the whole day (nothing sent, a 'full_day' option, or every meal
-    the kitchen serves). At least one meal; only meals the kitchen serves.
+    None = the whole day (nothing sent, a 'full_day' option, or breakfast,
+    lunch and dinner together); otherwise exactly the meals chosen, in
+    breakfast, lunch, dinner order - never widened to the whole day, even
+    when they are every meal the kitchen serves. At least one meal; only
+    meals the kitchen serves.
     """
     if meal_slots is None:
         return None
@@ -227,6 +234,8 @@ def normalize_slots(db: Session, provider_id, on: date, meal_slots) -> list[str]
         raise DomainError(f"Unknown meal '{unknown[0]}'. Choose from Breakfast, Lunch and Dinner.", 422,
                           code="HOLIDAY_SLOT_UNKNOWN")
     chosen = ordered_slots(tokens)
+    if chosen == list(SLOTS):
+        return None  # breakfast, lunch and dinner: the full day
     offered = meal_offering.offered_slots(db, provider_id, on)
     missing = [s for s in chosen if s not in offered]
     if missing:
@@ -235,15 +244,20 @@ def normalize_slots(db: Session, provider_id, on: date, meal_slots) -> list[str]
             f"Meals you serve: {slots_label(offered) or 'none'}.",
             422, code="HOLIDAY_SLOT_NOT_OFFERED",
         )
-    if set(offered) <= set(chosen):
-        return None  # every meal the kitchen serves: the full day
     return chosen
 
 
 def skip_decision(db: Session, provider_id, on: date, slots) -> SkipEligibility:
-    """Whether the holiday grants the extra free skip: holidays for some meals always do (unchanged)."""
+    """
+    Whether the holiday grants the extra free skip. A holiday for some meals
+    does (unchanged); one for every meal the kitchen serves leaves its
+    customers nothing that day, so the full-day rule applies
+    (meal_offering.free_skip_eligibility: only kitchens serving 2+ meals).
+    """
     if slots:
-        return SkipEligibility(True, tuple(slots), "a holiday for some meals keeps the free skip")
+        offered = meal_offering.offered_slots(db, provider_id, on)
+        if not offered or not set(offered) <= set(slots):
+            return SkipEligibility(True, tuple(slots), "a holiday for some meals keeps the free skip")
     return meal_offering.free_skip_eligibility(db, provider_id, on)
 
 

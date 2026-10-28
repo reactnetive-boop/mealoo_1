@@ -205,7 +205,8 @@ class EmergencyHolidayRequest(BaseModel):
     """
     A date after today (business-local; a missing date means today and is
     refused). meal_slots: the meals to block (breakfast / lunch / dinner the
-    kitchen serves); missing or "full_day" = the whole day, [] is refused.
+    kitchen serves), kept exactly as chosen; missing, "full_day" or all
+    three = the whole day, [] is refused.
     """
     date: Optional[_dt.date] = None
     reason: Optional[str] = Field(None, max_length=500)

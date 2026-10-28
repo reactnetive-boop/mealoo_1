@@ -105,10 +105,12 @@ def request_detail(request_id: UUID, db: Session = Depends(get_db), current=Depe
     "/requests/{request_id}/approve",
     summary="Approve a Kitchen Holiday Request",
     description=(
-        "Applies the change. Emergency: the kitchen is closed that day, affected meals and one-time orders are "
-        "refunded to the wallet, every active subscription gets 1 extra free skip, customers, the kitchen and "
-        "its delivery partners are notified. Regular: running subscriptions are re-planned (no paid meal lost) "
-        "and customers and partners are notified. Approving twice changes nothing."
+        "Applies the change. Emergency: the kitchen is closed that day - or only for the meals requested "
+        "(`meal_slots` kept as asked) - affected meals and one-time orders are refunded to the wallet, every "
+        "active subscription gets 1 extra free skip, customers, the kitchen and its delivery partners are "
+        "notified. Regular: running subscriptions are re-planned (no paid meal lost) and customers and partners "
+        "are notified; a change or removal that would now touch a running subscription is refused (409 "
+        "HOLIDAY_CHANGE_BLOCKED) and the request stays pending. Approving twice changes nothing."
     ),
 )
 def approve_request(request_id: UUID, request: Request, payload: Optional[HolidayDecisionRequest] = None,

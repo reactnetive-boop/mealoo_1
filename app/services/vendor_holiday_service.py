@@ -184,7 +184,17 @@ class VendorHolidayService:
 
         def rule_with_request(r: VendorHoliday) -> dict:
             req = changing.get(r.vendor_holiday_id)
-            return {**_rule_view(r), "pending_request": request_view(req, targets) if req else None}
+            # changing or removing it is refused while it would touch a running subscription
+            conflicts = holiday_policy.change_conflicts(db, provider_id, holiday_policy.rule_change(r, None))
+            blocked = conflicts["affected_subscriptions"] > 0
+            return {
+                **_rule_view(r),
+                "pending_request": request_view(req, targets) if req else None,
+                "change_blocked": blocked,
+                "change_blocked_reason": (holiday_policy.blocked_message(conflicts, "changed or removed")
+                                          if blocked else None),
+                "running_subscriptions_affected": conflicts["affected_subscriptions"],
+            }
 
         return {
             "success": True,
